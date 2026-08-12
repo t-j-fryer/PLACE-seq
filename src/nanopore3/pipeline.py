@@ -19,7 +19,11 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO,
 from . import __version__
 from .assignment import AssignmentCall, ReferenceIndex, assign_sequence
 from .config import BarcodeSettings, PipelineConfig
-from .consensus import ConsensusRead, build_reference_consensus
+from .consensus import (
+    ConsensusRead,
+    build_reference_consensus,
+    require_mafft_spoa,
+)
 from .demux import BarcodeCall, call_barcode, validate_barcodes
 from .io import FastqRecord, iter_fastq
 from .provenance import (
@@ -27,10 +31,11 @@ from .provenance import (
     atomic_write_json,
     canonical_digest,
     compute_stage_fingerprint,
+    git_provenance,
     sha256_file,
 )
 from .qc import evaluate_consensus
-from .references import ReferenceBundle, read_fasta
+from .references import read_reference_libraries
 from .report import write_html_report
 from .runtime import doctor_report, plan_resources
 from .sequence import reverse_complement
@@ -45,17 +50,34 @@ class PipelineError(RuntimeError):
 
 
 def _trimmed_barcodes(settings: BarcodeSettings) -> dict[str, str]:
-    return {name: sequence[settings.trim_bases :] for name, sequence in settings.sequences.items()}
+    if settings.trim_bases == 0:
+        return dict(settings.sequences)
+    return {
+        name: sequence[settings.trim_bases : -settings.trim_bases]
+        for name, sequence in settings.sequences.items()
+    }
 
 
 def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[str, Any]:
     """Perform complete preflight without creating a run directory."""
 
     missing = [str(item.path) for item in config.inputs if not item.path.is_file()]
-    missing.extend(str(path) for path in config.references.fasta if not path.is_file())
+    missing.extend(
+        str(path)
+        for settings in config.reference_sets.values()
+        for path in settings.fasta
+        if not path.is_file()
+    )
     if missing:
         raise PipelineError("missing input file(s): " + ", ".join(missing))
-    reference_bundle = read_fasta(config.references.fasta)
+    reference_collection = read_reference_libraries(
+        {
+            library_id: settings.fasta
+            for library_id, settings in config.reference_sets.items()
+        }
+    )
+    if config.consensus.backend == "mafft_spoa":
+        require_mafft_spoa()
     for label, settings in (
         ("plate", config.plate_barcodes),
         ("well", config.well_barcodes),
@@ -87,9 +109,18 @@ def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[
         )
     return {
         "inputs": inputs,
-        "references": len(reference_bundle.records),
-        "reference_digest": reference_bundle.digest,
-        "alias_groups": [list(group) for group in reference_bundle.alias_groups],
+        "references": sum(
+            len(bundle.records) for _, bundle in reference_collection.libraries
+        ),
+        "reference_digest": reference_collection.digest,
+        "reference_libraries": {
+            library_id: {
+                "references": len(bundle.records),
+                "digest": bundle.digest,
+                "alias_groups": [list(group) for group in bundle.alias_groups],
+            }
+            for library_id, bundle in reference_collection.libraries
+        },
         "resources": asdict(
             plan_resources(config.parallel.jobs, config.parallel.threads_per_job)
         ),
@@ -244,7 +275,12 @@ def _demux_one(job: tuple[FastqRecord, str, PipelineConfig]) -> tuple[dict[str, 
     return row, accepted
 
 
-def _assignment_row(read: Mapping[str, Any], call: AssignmentCall, k: int) -> dict[str, Any]:
+def _assignment_row(
+    read: Mapping[str, Any],
+    call: AssignmentCall,
+    k: int,
+    reference_library_id: str,
+) -> dict[str, Any]:
     best, second = call.best, call.second
     return {
         "read_uid": read["read_uid"],
@@ -252,6 +288,7 @@ def _assignment_row(read: Mapping[str, Any], call: AssignmentCall, k: int) -> di
         "sample_id": read["sample_id"],
         "plate_id": read["plate_id"],
         "well_id": read["well_id"],
+        "reference_library_id": reference_library_id,
         "assignment_status": call.status,
         "reference_ids": "|".join(call.reference_ids),
         "orientation": call.orientation,
@@ -268,8 +305,41 @@ def _assignment_row(read: Mapping[str, Any], call: AssignmentCall, k: int) -> di
 
 
 def _assign_one(
-    read: Mapping[str, Any], indexes: Sequence[ReferenceIndex], config: PipelineConfig
+    read: Mapping[str, Any],
+    indexes_by_library: Mapping[str, Sequence[ReferenceIndex]],
+    config: PipelineConfig,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    try:
+        library_id = config.reference_library_id_for_plate(str(read["plate_id"]))
+    except KeyError:
+        return (
+            {
+                "read_uid": read["read_uid"],
+                "original_read_id": read["original_read_id"],
+                "sample_id": read["sample_id"],
+                "plate_id": read["plate_id"],
+                "well_id": read["well_id"],
+                "reference_library_id": "",
+                "assignment_status": "unmapped_reference_library",
+                "reference_ids": "",
+                "orientation": "unknown",
+                "motif_status": "not_attempted",
+                "kmer_size": "",
+                "best_identity": "",
+                "second_identity": "",
+                "identity_margin": "",
+                "query_coverage": "",
+                "reference_coverage": "",
+                "edit_distance": "",
+                "reason_code": (
+                    f"plate barcode {read['plate_id']!r} has no configured "
+                    "reference library"
+                ),
+            },
+            None,
+        )
+    indexes = indexes_by_library[library_id]
+    settings = config.reference_sets[library_id]
     final: AssignmentCall | None = None
     used_k = indexes[-1].k
     for index in indexes:
@@ -279,19 +349,19 @@ def _assign_one(
             left_motif=config.library.forward_motif,
             right_motif=config.library.reverse_motif,
             motif_max_edits=config.library.motif_max_edits,
-            top_n=config.references.candidate_count,
-            min_kmer_score=config.references.minimum_kmer_score,
-            min_identity=config.references.minimum_identity,
-            min_query_coverage=config.references.minimum_query_coverage,
-            min_reference_coverage=config.references.minimum_reference_coverage,
-            min_identity_margin=config.references.minimum_identity_margin,
+            top_n=settings.candidate_count,
+            min_kmer_score=settings.minimum_kmer_score,
+            min_identity=settings.minimum_identity,
+            min_query_coverage=settings.minimum_query_coverage,
+            min_reference_coverage=settings.minimum_reference_coverage,
+            min_identity_margin=settings.minimum_identity_margin,
             fallback_align_all=True,
         )
         final, used_k = call, index.k
         if call.status in {"assigned_unique", "assigned_alias_set", "ambiguous", "motif_missing"}:
             break
     assert final is not None
-    row = _assignment_row(read, final, used_k)
+    row = _assignment_row(read, final, used_k, library_id)
     eligible = None
     if final.status in {"assigned_unique", "assigned_alias_set"} and final.query_sequence:
         quality: str | None = str(read["quality"])
@@ -315,6 +385,7 @@ def _assign_one(
             "quality": quality,
             "sequence": final.query_sequence,
             "reference_ids": list(final.reference_ids),
+            "reference_library_id": library_id,
         }
         if len(eligible["quality"]) != len(eligible["sequence"]):
             eligible["quality"] = None
@@ -324,7 +395,7 @@ def _assign_one(
 def _write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fields: Sequence[str]) -> Counter[str]:
     counts: Counter[str] = Counter()
     with _open_gzip_text(path) as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
@@ -333,13 +404,19 @@ def _write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fields: Sequence[s
     return counts
 
 
-def _stage_fingerprint(stage: str, parameters: Mapping[str, Any], inputs: Mapping[str, str]) -> str:
+def _stage_fingerprint(
+    stage: str,
+    parameters: Mapping[str, Any],
+    inputs: Mapping[str, str],
+    *,
+    backend_versions: Mapping[str, str] | None = None,
+) -> str:
     return compute_stage_fingerprint(
         stage,
         pipeline_version=__version__,
         parameters=parameters,
         input_digests=inputs,
-        backend_versions={"portable": "edlib"},
+        backend_versions=backend_versions,
     )
 
 
@@ -364,6 +441,15 @@ def run_pipeline(
     run_dir.mkdir(parents=True, exist_ok=True)
     if not resume and any(run_dir.iterdir()):
         raise PipelineError(f"new run directory is not empty: {run_dir}")
+    runtime_report = doctor_report()
+    edlib_version = str(runtime_report["packages"].get("edlib") or "unknown")
+    edlib_backend_versions = {"edlib": edlib_version}
+    consensus_backend_versions = dict(edlib_backend_versions)
+    if config.consensus.backend == "mafft_spoa":
+        optional = runtime_report["optional_binaries"]
+        for name in ("mafft", "spoa"):
+            details = optional[name]
+            consensus_backend_versions[name] = str(details["version"] or "unknown")
     run_metadata = {
         "schema_version": 1,
         "pipeline_version": __version__,
@@ -371,7 +457,8 @@ def run_pipeline(
         "config_digest": config_digest,
         "config": config.as_dict(),
         "preflight": preflight,
-        "runtime": doctor_report(),
+        "runtime": runtime_report,
+        "source_control": git_provenance(Path(__file__).resolve()),
     }
     metadata_path = run_dir / "run.json"
     if metadata_path.exists():
@@ -385,13 +472,41 @@ def run_pipeline(
     requested_jobs = 1 if config.parallel.backend == "serial" else config.parallel.jobs
     resources = plan_resources(requested_jobs, config.parallel.threads_per_job)
 
-    ingest_fp = _stage_fingerprint("01_ingest", {"schema": 1}, input_digests)
-    with StageDirectory(run_dir, "01_ingest", ingest_fp, pipeline_version=__version__, input_digests=input_digests, resume=resume) as stage:
+    ingest_parameters = {"schema": 1}
+    ingest_fp = _stage_fingerprint("01_ingest", ingest_parameters, input_digests)
+    with StageDirectory(
+        run_dir,
+        "01_ingest",
+        ingest_fp,
+        pipeline_version=__version__,
+        parameters=ingest_parameters,
+        input_digests=input_digests,
+        resume=resume,
+    ) as stage:
         if not stage.reused:
             atomic_write_json(stage.output_path("inputs.json"), preflight)
 
-    demux_fp = _stage_fingerprint("02_demux", {"plate": asdict(config.plate_barcodes), "well": asdict(config.well_barcodes), "library": asdict(config.library)}, input_digests)
-    with StageDirectory(run_dir, "02_demux", demux_fp, pipeline_version=__version__, input_digests=input_digests, resume=resume) as stage:
+    demux_parameters = {
+        "plate": asdict(config.plate_barcodes),
+        "well": asdict(config.well_barcodes),
+        "library": asdict(config.library),
+    }
+    demux_fp = _stage_fingerprint(
+        "02_demux",
+        demux_parameters,
+        input_digests,
+        backend_versions=edlib_backend_versions,
+    )
+    with StageDirectory(
+        run_dir,
+        "02_demux",
+        demux_fp,
+        pipeline_version=__version__,
+        parameters=demux_parameters,
+        input_digests=input_digests,
+        backend_versions=edlib_backend_versions,
+        resume=resume,
+    ) as stage:
         if not stage.reused:
             calls_path = stage.output_path("demux_calls.csv.gz")
             reads_path = stage.output_path("demuxed_reads.jsonl.gz")
@@ -415,12 +530,55 @@ def run_pipeline(
 
     demux_dir = run_dir / "stages" / "02_demux"
     demux_reads = demux_dir / "demuxed_reads.jsonl.gz"
-    reference_bundle = read_fasta(config.references.fasta)
-    references = {record.id: record.sequence for record in reference_bundle.records}
-    indexes = tuple(ReferenceIndex(references, k=k, max_kmer_owners=config.references.max_kmer_owners) for k in config.references.kmer_sizes)
-    assignment_inputs = {"demuxed_reads": sha256_file(demux_reads), "references": reference_bundle.digest}
-    assign_fp = _stage_fingerprint("03_assignment", asdict(config.references), assignment_inputs)
-    with StageDirectory(run_dir, "03_assignment", assign_fp, pipeline_version=__version__, input_digests=assignment_inputs, resume=resume) as stage:
+    reference_collection = read_reference_libraries(
+        {
+            library_id: settings.fasta
+            for library_id, settings in config.reference_sets.items()
+        }
+    )
+    references_by_library = {
+        library_id: {record.id: record.sequence for record in bundle.records}
+        for library_id, bundle in reference_collection.libraries
+    }
+    indexes_by_library = {
+        library_id: tuple(
+            ReferenceIndex(
+                references_by_library[library_id],
+                k=k,
+                max_kmer_owners=config.reference_sets[library_id].max_kmer_owners,
+            )
+            for k in config.reference_sets[library_id].kmer_sizes
+        )
+        for library_id in reference_collection.ids
+    }
+    reference_parameters = {
+        library_id: asdict(settings)
+        for library_id, settings in config.reference_sets.items()
+    }
+    assignment_inputs = {
+        "demuxed_reads": sha256_file(demux_reads),
+        "references": reference_collection.digest,
+    }
+    assignment_parameters = {
+        "reference_libraries": reference_parameters,
+        "plate_reference_map": dict(config.plate_reference_map),
+    }
+    assign_fp = _stage_fingerprint(
+        "03_assignment",
+        assignment_parameters,
+        assignment_inputs,
+        backend_versions=edlib_backend_versions,
+    )
+    with StageDirectory(
+        run_dir,
+        "03_assignment",
+        assign_fp,
+        pipeline_version=__version__,
+        parameters=assignment_parameters,
+        input_digests=assignment_inputs,
+        backend_versions=edlib_backend_versions,
+        resume=resume,
+    ) as stage:
         if not stage.reused:
             calls_path = stage.output_path("assignment_calls.csv.gz")
             eligible_path = stage.output_path("consensus_eligible.jsonl.gz")
@@ -428,7 +586,7 @@ def run_pipeline(
             with _open_gzip_text(calls_path) as call_handle, _open_gzip_text(eligible_path) as eligible_handle:
                 writer: csv.DictWriter[str] | None = None
                 jobs = _iter_gzip_json(demux_reads)
-                fn = lambda read: _assign_one(read, indexes, config)
+                fn = lambda read: _assign_one(read, indexes_by_library, config)
                 for row, eligible in _ordered_map(fn, jobs, resources.jobs):
                     if writer is None:
                         writer = csv.DictWriter(call_handle, fieldnames=list(row), lineterminator="\n")
@@ -441,16 +599,44 @@ def run_pipeline(
 
     assignment_dir = run_dir / "stages" / "03_assignment"
     eligible_path = assignment_dir / "consensus_eligible.jsonl.gz"
-    consensus_inputs = {"eligible": sha256_file(eligible_path), "references": reference_bundle.digest}
+    consensus_inputs = {
+        "eligible": sha256_file(eligible_path),
+        "references": reference_collection.digest,
+    }
     consensus_parameters = {**asdict(config.consensus), "seed": config.random_seed}
-    consensus_fp = _stage_fingerprint("04_consensus", consensus_parameters, consensus_inputs)
-    with StageDirectory(run_dir, "04_consensus", consensus_fp, pipeline_version=__version__, input_digests=consensus_inputs, resume=resume) as stage:
+    consensus_fp = _stage_fingerprint(
+        "04_consensus",
+        consensus_parameters,
+        consensus_inputs,
+        backend_versions=consensus_backend_versions,
+    )
+    with StageDirectory(
+        run_dir,
+        "04_consensus",
+        consensus_fp,
+        pipeline_version=__version__,
+        parameters=consensus_parameters,
+        input_digests=consensus_inputs,
+        backend_versions=consensus_backend_versions,
+        resume=resume,
+    ) as stage:
         if not stage.reused:
-            groups: dict[tuple[str, str, str, tuple[str, ...]], list[tuple[int, str, ConsensusRead]]] = defaultdict(list)
-            available: Counter[tuple[str, str, str, tuple[str, ...]]] = Counter()
+            groups: dict[
+                tuple[str, str, str, str, tuple[str, ...]],
+                list[tuple[int, str, ConsensusRead]],
+            ] = defaultdict(list)
+            available: Counter[
+                tuple[str, str, str, str, tuple[str, ...]]
+            ] = Counter()
             for row in _iter_gzip_json(eligible_path):
                 aliases = tuple(row["reference_ids"])
-                key = (row["sample_id"], row["plate_id"], row["well_id"], aliases)
+                key = (
+                    row["sample_id"],
+                    row["plate_id"],
+                    row["well_id"],
+                    row["reference_library_id"],
+                    aliases,
+                )
                 available[key] += 1
                 rank = int(hashlib.sha256(f"{config.random_seed}\0{key}\0{row['read_uid']}".encode()).hexdigest(), 16)
                 qualities = None if row["quality"] is None else tuple(ord(c) - 33 for c in row["quality"])
@@ -464,10 +650,10 @@ def run_pipeline(
             contributor_rows: list[dict[str, Any]] = []
             fasta_parts: list[str] = []
             for key in sorted(groups):
-                sample, plate, well, aliases = key
+                sample, plate, well, library_id, aliases = key
                 reads = tuple(item[2] for item in groups[key])
-                ref = references[aliases[0]]
-                group_id = "|".join((sample, plate, well, *aliases))
+                ref = references_by_library[library_id][aliases[0]]
+                group_id = "|".join((sample, plate, well, library_id, *aliases))
                 result = build_reference_consensus(
                     ref,
                     reads,
@@ -476,10 +662,13 @@ def run_pipeline(
                     max_reads=config.consensus.maximum_reads,
                     min_support=config.consensus.minimum_support,
                     seed=config.random_seed,
+                    backend=config.consensus.backend,
+                    threads=config.parallel.threads_per_job,
                 )
                 consensus_id = "cons-" + canonical_digest({"group": group_id, "sequence": result.sequence})[:16]
                 row = {
                     "consensus_id": consensus_id, "sample_id": sample, "plate_id": plate, "well_id": well,
+                    "reference_library_id": library_id,
                     "reference_ids": "|".join(aliases), "status": result.status,
                     "n_reads_available": available[key], "n_reads_used": result.n_reads_used,
                     "mean_depth": f"{result.mean_depth:.4f}", "min_depth": result.min_depth,
@@ -489,7 +678,11 @@ def run_pipeline(
                 }
                 consensus_rows.append(row)
                 if result.sequence:
-                    fasta_parts.append(f">{consensus_id} reference_ids={'|'.join(aliases)} sample={sample} plate={plate} well={well}\n{result.sequence}\n")
+                    fasta_parts.append(
+                        f">{consensus_id} reference_library={library_id} "
+                        f"reference_ids={'|'.join(aliases)} sample={sample} "
+                        f"plate={plate} well={well}\n{result.sequence}\n"
+                    )
                 for rank, read_uid in enumerate(result.contributor_ids, start=1):
                     contributor_rows.append({"consensus_id": consensus_id, "read_uid": read_uid, "selection_rank": rank})
             fields = list(consensus_rows[0]) if consensus_rows else ["consensus_id", "status"]
@@ -499,9 +692,27 @@ def run_pipeline(
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["status"] for row in consensus_rows).items())))
 
     consensus_dir = run_dir / "stages" / "04_consensus"
-    qc_inputs = {"consensus": sha256_file(consensus_dir / "consensus.fasta"), "references": reference_bundle.digest}
-    qc_fp = _stage_fingerprint("05_qc", asdict(config.qc), qc_inputs)
-    with StageDirectory(run_dir, "05_qc", qc_fp, pipeline_version=__version__, input_digests=qc_inputs, resume=resume) as stage:
+    qc_inputs = {
+        "consensus": sha256_file(consensus_dir / "consensus.fasta"),
+        "references": reference_collection.digest,
+    }
+    qc_parameters = asdict(config.qc)
+    qc_fp = _stage_fingerprint(
+        "05_qc",
+        qc_parameters,
+        qc_inputs,
+        backend_versions=edlib_backend_versions,
+    )
+    with StageDirectory(
+        run_dir,
+        "05_qc",
+        qc_fp,
+        pipeline_version=__version__,
+        parameters=qc_parameters,
+        input_digests=qc_inputs,
+        backend_versions=edlib_backend_versions,
+        resume=resume,
+    ) as stage:
         if not stage.reused:
             sequences: dict[str, str] = {}
             current = None
@@ -515,19 +726,57 @@ def run_pipeline(
                 for row in csv.DictReader(handle):
                     sequence = sequences.get(row["consensus_id"])
                     if not sequence:
-                        qc_rows.append({"consensus_id": row["consensus_id"], "overall": "not_evaluable", "reason": "consensus sequence unavailable"})
+                        qc_rows.append(
+                            {
+                                "consensus_id": row["consensus_id"],
+                                "reference_library_id": row["reference_library_id"],
+                                "reference_ids": row["reference_ids"],
+                                "full_amplicon": "not_evaluable",
+                                "expected_length": "not_evaluable",
+                                "reading_frame": "not_evaluable",
+                                "internal_stops": "not_evaluable",
+                                "overall": "not_evaluable",
+                                "alignment_edit_distance": "",
+                                "alignment_identity": "",
+                                "alignment_query_coverage": "",
+                                "alignment_reference_coverage": "",
+                                "reason": "consensus sequence unavailable",
+                            }
+                        )
                         continue
                     aliases = tuple(row["reference_ids"].split("|"))
+                    library_id = row["reference_library_id"]
                     result = evaluate_consensus(
                         sequence,
-                        references[aliases[0]],
+                        references_by_library[library_id][aliases[0]],
                         min_identity=config.qc.minimum_identity,
                         min_query_coverage=config.qc.minimum_query_coverage,
                         min_reference_coverage=config.qc.minimum_reference_coverage,
                         length_tolerance=config.qc.length_tolerance,
                     )
-                    qc_rows.append({"consensus_id": row["consensus_id"], "reference_ids": row["reference_ids"], **result.to_dict()})
-            fields = list(qc_rows[0]) if qc_rows else ["consensus_id", "overall", "reason"]
+                    qc_rows.append(
+                        {
+                            "consensus_id": row["consensus_id"],
+                            "reference_library_id": library_id,
+                            "reference_ids": row["reference_ids"],
+                            **result.to_dict(),
+                        }
+                    )
+            fields = [
+                "consensus_id",
+                "reference_library_id",
+                "reference_ids",
+                "full_amplicon",
+                "expected_length",
+                "reading_frame",
+                "internal_stops",
+                "overall",
+                "alignment_edit_distance",
+                "alignment_identity",
+                "alignment_query_coverage",
+                "alignment_reference_coverage",
+                "reason",
+            ]
             _write_csv(stage.output_path("qc.csv.gz"), qc_rows, fields)
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["overall"] for row in qc_rows).items())))
 
@@ -537,8 +786,17 @@ def run_pipeline(
         "consensus": sha256_file(consensus_dir / "summary.json"),
         "qc": sha256_file(run_dir / "stages" / "05_qc" / "summary.json"),
     }
-    report_fp = _stage_fingerprint("06_report", {"format": "html-v1"}, report_inputs)
-    with StageDirectory(run_dir, "06_report", report_fp, pipeline_version=__version__, input_digests=report_inputs, resume=resume) as stage:
+    report_parameters = {"format": "html-v1"}
+    report_fp = _stage_fingerprint("06_report", report_parameters, report_inputs)
+    with StageDirectory(
+        run_dir,
+        "06_report",
+        report_fp,
+        pipeline_version=__version__,
+        parameters=report_parameters,
+        input_digests=report_inputs,
+        resume=resume,
+    ) as stage:
         if not stage.reused:
             sections = {
                 name: json.loads((path).read_text(encoding="utf-8"))

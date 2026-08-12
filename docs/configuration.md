@@ -7,16 +7,25 @@ default. Start with `nanopore3 init` and edit the generated example.
 ## Main sections
 
 - `inputs`: one or more FASTQ/FASTQ.gz paths with stable sample IDs.
-- `references`: FASTA paths and the k-mer shortlist plus alignment decision thresholds.
+- `references`: one legacy/default FASTA set, or `reference_libraries` plus a
+  `plate_reference_map` for multiplexed experiments.
 - `library`: required ordered boundary motifs and optional length/mean-quality filters.
-- `barcodes.plate` and `barcodes.well`: sequences, search ends, edit limits and score margins.
+- `barcodes.plate` and `barcodes.well`: inline sequences or one CSV
+  `registry_csv`/`family_id`, plus search ends, edit limits and score margins.
 - `parallel`: `auto`, `thread`, or `serial`, with a bounded job and nested-thread budget.
-- `consensus`: portable backend, depth cap, minimum depth and support fraction.
+- `consensus`: explicit `portable` or optional `mafft_spoa` backend, depth cap,
+  minimum depth and support fraction.
 - `qc`: independent whole-sequence identity, coverage and length thresholds.
 
 Configured motifs are mandatory evidence. A missing pair produces `motif_missing`; it does not
 fall back to full-read/vector assignment. References with identical sequences are emitted as one
 alias set because the sequence evidence cannot distinguish their names.
+
+With more than one reference library, every processed plate must be mapped. An
+unmapped plate remains visible as `unmapped_reference_library` and is excluded
+from consensus; reference sets are never pooled as an implicit fallback. CSV
+registry paths are resolved relative to the YAML, and their contents and digest
+are included in the resolved run configuration.
 
 ## Conservative assignment
 

@@ -10,6 +10,8 @@ import unittest
 
 from nanopore3.config import load_config
 from nanopore3.pipeline import run_pipeline
+from nanopore3.pipeline import _trimmed_barcodes
+from nanopore3.config import BarcodeSettings
 from nanopore3.provenance import (
     StageDirectory,
     StageValidationError,
@@ -22,6 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProvenancePipelineTests(unittest.TestCase):
+    def test_barcode_trimming_matches_legacy_two_ended_rule(self) -> None:
+        settings = BarcodeSettings(sequences={"x": "AACCGGTT"}, trim_bases=2)
+        self.assertEqual(_trimmed_barcodes(settings), {"x": "CCGG"})
+
     def test_stage_publication_resume_and_corruption_detection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -59,6 +65,15 @@ class ProvenancePipelineTests(unittest.TestCase):
                 {row["reference_ids"] for row in rows},
                 {"ref_A|ref_A_alias", "ref_B"},
             )
+            with gzip.open(
+                run / "stages" / "05_qc" / "qc.csv.gz",
+                "rt",
+                encoding="utf-8",
+                newline="",
+            ) as handle:
+                qc_reader = csv.DictReader(handle)
+                self.assertIn("alignment_identity", qc_reader.fieldnames or [])
+                self.assertTrue(any(row["alignment_identity"] for row in qc_reader))
             resumed = run_pipeline(
                 config, output_root=Path(directory), run_id="golden", resume=True
             )

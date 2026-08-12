@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import subprocess
 import sys
 from typing import Any, Mapping
 from uuid import uuid4
@@ -307,6 +308,45 @@ def runtime_provenance() -> dict[str, Any]:
     }
 
 
+def git_provenance(path: str | Path) -> dict[str, Any]:
+    """Return commit and dirty-state evidence without requiring GitPython."""
+
+    directory = Path(path).expanduser().resolve(strict=False)
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+            shell=False,
+        ).stdout.strip()
+        commit = subprocess.run(
+            ["git", "-C", top, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+            shell=False,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "-C", top, "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+            shell=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {"available": False, "root": None, "commit": None, "dirty": None}
+    return {
+        "available": True,
+        "root": top,
+        "commit": commit,
+        "dirty": bool(status),
+    }
+
+
 def _safe_artifact_path(stage_dir: Path, relative: str) -> Path:
     relative_path = Path(relative)
     if relative_path.is_absolute() or ".." in relative_path.parts or relative_path == Path("."):
@@ -577,6 +617,7 @@ __all__ = [
     "canonical_digest",
     "canonical_json",
     "compute_stage_fingerprint",
+    "git_provenance",
     "runtime_provenance",
     "sha256_bytes",
     "sha256_file",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .io import open_text_auto
 from .provenance import canonical_digest, sha256_bytes, sha256_file
@@ -79,6 +79,34 @@ class ReferenceBundle:
         return tuple(record.id for record in self.records)
 
 
+@dataclass(frozen=True, slots=True)
+class ReferenceLibraryCollection:
+    """A deterministic collection of independently validated reference sets.
+
+    Identifiers must be unique within a library, while the same biological ID
+    may intentionally occur in two libraries that are never searched together.
+    ``libraries`` is stored as sorted pairs to make iteration and provenance
+    independent of input mapping order.
+    """
+
+    libraries: tuple[tuple[str, ReferenceBundle], ...]
+    digest: str
+
+    @property
+    def ids(self) -> tuple[str, ...]:
+        """Library identifiers in deterministic lexical order."""
+
+        return tuple(library_id for library_id, _ in self.libraries)
+
+    def get(self, library_id: str) -> ReferenceBundle:
+        """Return one library bundle, raising ``KeyError`` when absent."""
+
+        for candidate, bundle in self.libraries:
+            if candidate == library_id:
+                return bundle
+        raise KeyError(library_id)
+
+
 def _coerce_paths(paths: str | Path | Iterable[str | Path]) -> tuple[Path, ...]:
     if isinstance(paths, (str, Path)):
         values = (paths,)
@@ -92,6 +120,10 @@ def _coerce_paths(paths: str | Path | Iterable[str | Path]) -> tuple[Path, ...]:
         if not path.is_file():
             raise FastaFormatError(f"Reference path is not a regular file: {path}")
         result.append(path)
+    if len(set(result)) != len(result):
+        raise FastaFormatError(
+            "A reference FASTA path must not occur more than once in one library"
+        )
     return tuple(result)
 
 
@@ -218,9 +250,53 @@ def read_fasta(paths: str | Path | Iterable[str | Path]) -> ReferenceBundle:
     )
 
 
+def read_reference_libraries(
+    libraries: Mapping[str, str | Path | Iterable[str | Path]],
+) -> ReferenceLibraryCollection:
+    """Read named reference libraries without merging their namespaces.
+
+    Each value accepts the same path forms as :func:`read_fasta`.  Validation
+    (including duplicate paths and duplicate record IDs) is performed within
+    each library.  Library identifiers and output ordering are normalized for
+    stable manifests and fingerprints.
+    """
+
+    if not isinstance(libraries, Mapping) or not libraries:
+        raise FastaFormatError(
+            "At least one named reference library is required"
+        )
+    bundles: list[tuple[str, ReferenceBundle]] = []
+    for raw_library_id in sorted(libraries, key=str):
+        if not isinstance(raw_library_id, str) or not raw_library_id.strip():
+            raise FastaFormatError(
+                "Reference library identifiers must be non-empty strings"
+            )
+        library_id = raw_library_id.strip()
+        if library_id != raw_library_id:
+            raise FastaFormatError(
+                f"Reference library identifier {raw_library_id!r} has surrounding whitespace"
+            )
+        bundles.append((library_id, read_fasta(libraries[raw_library_id])))
+    collection_digest = canonical_digest(
+        {
+            "schema_version": 1,
+            "reference_libraries": [
+                {"id": library_id, "digest": bundle.digest}
+                for library_id, bundle in bundles
+            ],
+        }
+    )
+    return ReferenceLibraryCollection(
+        libraries=tuple(bundles),
+        digest=collection_digest,
+    )
+
+
 __all__ = [
     "FastaFormatError",
     "ReferenceBundle",
+    "ReferenceLibraryCollection",
     "ReferenceRecord",
     "read_fasta",
+    "read_reference_libraries",
 ]

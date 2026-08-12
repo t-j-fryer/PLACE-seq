@@ -14,6 +14,8 @@ from typing import Any, Mapping, Sequence
 
 import yaml
 
+from .barcodes import BarcodeRegistryError, read_barcode_panel
+
 
 DNA_IUPAC = frozenset("ACGTRYSWKMBDHVN")
 
@@ -103,6 +105,9 @@ class BarcodeSettings:
     search_ends: tuple[str, ...] = ("head", "tail")
     allow_reverse_complement: bool = True
     minimum_margin: int = 1
+    registry_csv: Path | None = None
+    family_id: str | None = None
+    registry_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if self.max_edits < 0:
@@ -124,9 +129,9 @@ class BarcodeSettings:
         for barcode_id, sequence in self.sequences.items():
             _nonempty_string(barcode_id, "barcode identifier")
             _dna(sequence, f"barcode {barcode_id!r}")
-            if self.trim_bases >= len(sequence):
+            if 2 * self.trim_bases >= len(sequence):
                 raise ConfigError(
-                    f"barcode {barcode_id!r} is not longer than trim_bases"
+                    f"barcode {barcode_id!r} is not longer than twice trim_bases"
                 )
 
 
@@ -147,6 +152,8 @@ class ReferenceSettings:
     def __post_init__(self) -> None:
         if not self.fasta:
             raise ConfigError("references.fasta must contain at least one path")
+        if len(set(self.fasta)) != len(self.fasta):
+            raise ConfigError("references.fasta must not contain duplicate paths")
         if not self.kmer_sizes:
             raise ConfigError("references.kmer_sizes must not be empty")
         if any(k < 3 for k in self.kmer_sizes):
@@ -251,8 +258,10 @@ class ConsensusSettings:
             raise ConfigError("consensus.minimum_depth must not exceed maximum_reads")
         if not 0.5 <= self.minimum_support <= 1.0:
             raise ConfigError("consensus.minimum_support must be between 0.5 and 1")
-        if self.backend != "portable":
-            raise ConfigError("v0.1 currently supports consensus.backend: portable")
+        if self.backend not in {"portable", "mafft_spoa"}:
+            raise ConfigError(
+                "consensus.backend must be portable or mafft_spoa"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,7 +293,9 @@ class PipelineConfig:
     run_name: str
     output_root: Path
     inputs: tuple[InputSettings, ...]
-    references: ReferenceSettings
+    references: ReferenceSettings | None
+    reference_libraries: Mapping[str, ReferenceSettings] = field(default_factory=dict)
+    plate_reference_map: Mapping[str, str] = field(default_factory=dict)
     library: LibrarySettings = field(default_factory=LibrarySettings)
     plate_barcodes: BarcodeSettings = field(default_factory=BarcodeSettings)
     well_barcodes: BarcodeSettings = field(default_factory=BarcodeSettings)
@@ -310,11 +321,92 @@ class PipelineConfig:
             raise ConfigError("the same input FASTQ path is listed more than once")
         if isinstance(self.random_seed, bool) or not isinstance(self.random_seed, int):
             raise ConfigError("random_seed must be an integer")
+        if self.references is not None and self.reference_libraries:
+            raise ConfigError(
+                "configuration must use either references or reference_libraries, not both"
+            )
+        if self.references is None and not self.reference_libraries:
+            raise ConfigError(
+                "configuration must define references or reference_libraries"
+            )
+        for library_id in self.reference_libraries:
+            _nonempty_string(library_id, "reference_libraries identifier")
+        for plate_id, library_id in self.plate_reference_map.items():
+            _nonempty_string(plate_id, "plate_reference_map identifier")
+            clean_library_id = _nonempty_string(
+                library_id, f"plate_reference_map.{plate_id}"
+            )
+            if clean_library_id not in self.reference_libraries:
+                raise ConfigError(
+                    f"plate_reference_map.{plate_id} names unknown reference "
+                    f"library {clean_library_id!r}"
+                )
+        if self.references is not None and self.plate_reference_map:
+            raise ConfigError(
+                "plate_reference_map is only valid with reference_libraries"
+            )
+
+    @property
+    def reference_sets(self) -> Mapping[str, ReferenceSettings]:
+        """Return all reference settings under stable library identifiers.
+
+        Legacy configurations with one ``references`` section are exposed as a
+        single library named ``default``.  Multi-library mappings are sorted so
+        manifests and stage fingerprints do not depend on YAML key order.
+        """
+
+        if self.references is not None:
+            return {"default": self.references}
+        return {
+            library_id: self.reference_libraries[library_id]
+            for library_id in sorted(self.reference_libraries)
+        }
+
+    def reference_library_id_for_plate(self, plate_barcode_id: str) -> str:
+        """Resolve a plate barcode to its configured reference-library ID.
+
+        A single reference set is an unambiguous fallback.  Configurations with
+        multiple sets must map every plate encountered by the pipeline.
+        """
+
+        plate_id = _nonempty_string(plate_barcode_id, "plate barcode identifier")
+        mapped = self.plate_reference_map.get(plate_id)
+        if mapped is not None:
+            return mapped
+        reference_sets = self.reference_sets
+        if len(reference_sets) == 1:
+            return next(iter(reference_sets))
+        raise KeyError(
+            f"No reference library is configured for plate barcode {plate_id!r}"
+        )
+
+    def reference_library_for_plate(
+        self, plate_barcode_id: str
+    ) -> ReferenceSettings:
+        """Return the reference settings applicable to one plate barcode."""
+
+        return self.reference_sets[
+            self.reference_library_id_for_plate(plate_barcode_id)
+        ]
 
     def as_dict(self) -> dict[str, Any]:
         """Return a serialization-friendly resolved representation."""
 
-        return asdict(self)
+        result = asdict(self)
+        # The YAML's own location is loader context, not a scientific parameter.
+        # All data paths above are already resolved, so retaining source_path would
+        # make otherwise identical copied configs hash differently.
+        result.pop("source_path", None)
+        result["reference_libraries"] = {
+            library_id: asdict(settings)
+            for library_id, settings in self.reference_sets.items()
+            if self.references is None
+        }
+        result["plate_reference_map"] = {
+            plate_id: self.plate_reference_map[plate_id]
+            for plate_id in sorted(self.plate_reference_map)
+        }
+        return result
 
 
 # Public name used by the CLI and workflow layers.  ``PipelineConfig`` remains
@@ -345,7 +437,7 @@ def _parse_inputs(value: Any, base_dir: Path) -> tuple[InputSettings, ...]:
     return tuple(result)
 
 
-def _parse_barcodes(value: Any, location: str) -> BarcodeSettings:
+def _parse_barcodes(value: Any, location: str, base_dir: Path | None = None) -> BarcodeSettings:
     if value is None:
         return BarcodeSettings()
     mapping = _mapping(value, location)
@@ -357,16 +449,45 @@ def _parse_barcodes(value: Any, location: str) -> BarcodeSettings:
         "search_ends",
         "allow_reverse_complement",
         "minimum_margin",
+        "registry_csv",
+        "family_id",
     }
     _reject_unknown(mapping, allowed, location)
-    sequences_value = mapping.get("sequences", {})
-    sequences_mapping = _mapping(sequences_value, f"{location}.sequences")
-    sequences: dict[str, str] = {}
-    for barcode_id, sequence in sequences_mapping.items():
-        clean_id = _nonempty_string(barcode_id, f"{location}.sequences key")
-        sequences[clean_id] = _dna(
-            sequence, f"{location}.sequences.{clean_id}"
+    has_inline = "sequences" in mapping
+    has_registry = "registry_csv" in mapping or "family_id" in mapping
+    if has_inline and has_registry:
+        raise ConfigError(
+            f"{location} must use either sequences or registry_csv/family_id, not both"
         )
+    registry_path: Path | None = None
+    family_id: str | None = None
+    registry_sha256: str | None = None
+    if has_registry:
+        if "registry_csv" not in mapping or "family_id" not in mapping:
+            raise ConfigError(
+                f"{location}.registry_csv and {location}.family_id must be provided together"
+            )
+        raw_path = Path(_nonempty_string(mapping["registry_csv"], f"{location}.registry_csv")).expanduser()
+        registry_path = (
+            raw_path if raw_path.is_absolute() else (base_dir or Path.cwd()) / raw_path
+        ).resolve(strict=False)
+        family_id = _nonempty_string(mapping["family_id"], f"{location}.family_id")
+        try:
+            panel = read_barcode_panel(registry_path, family_id)
+        except (BarcodeRegistryError, OSError) as exc:
+            raise ConfigError(f"invalid {location} registry: {exc}") from exc
+        sequences = panel.sequences
+        registry_path = panel.source_path
+        registry_sha256 = panel.source_sha256
+    else:
+        sequences_value = mapping.get("sequences", {})
+        sequences_mapping = _mapping(sequences_value, f"{location}.sequences")
+        sequences = {}
+        for barcode_id, sequence in sequences_mapping.items():
+            clean_id = _nonempty_string(barcode_id, f"{location}.sequences key")
+            sequences[clean_id] = _dna(
+                sequence, f"{location}.sequences.{clean_id}"
+            )
     ends_value = mapping.get("search_ends", ("head", "tail"))
     if not isinstance(ends_value, Sequence) or isinstance(ends_value, (str, bytes)):
         raise ConfigError(f"{location}.search_ends must be a list")
@@ -392,11 +513,15 @@ def _parse_barcodes(value: Any, location: str) -> BarcodeSettings:
             f"{location}.minimum_margin",
             minimum=0,
         ),
+        registry_csv=registry_path,
+        family_id=family_id,
+        registry_sha256=registry_sha256,
     )
 
 
-def _parse_references(value: Any, base_dir: Path) -> ReferenceSettings:
-    location = "references"
+def _parse_references(
+    value: Any, base_dir: Path, *, location: str = "references"
+) -> ReferenceSettings:
     mapping = _mapping(value, location)
     allowed = {
         "fasta",
@@ -416,58 +541,88 @@ def _parse_references(value: Any, base_dir: Path) -> ReferenceSettings:
     elif isinstance(fasta_value, Sequence):
         fasta_items = list(fasta_value)
     else:
-        raise ConfigError("references.fasta must be a path or list of paths")
+        raise ConfigError(f"{location}.fasta must be a path or list of paths")
     fasta = tuple(
-        _path(item, base_dir, f"references.fasta[{index}]")
+        _path(item, base_dir, f"{location}.fasta[{index}]")
         for index, item in enumerate(fasta_items)
     )
     kmer_value = mapping.get("kmer_sizes", (15, 11, 9))
     if not isinstance(kmer_value, Sequence) or isinstance(kmer_value, (str, bytes)):
-        raise ConfigError("references.kmer_sizes must be a list")
+        raise ConfigError(f"{location}.kmer_sizes must be a list")
     kmer_sizes = tuple(
-        _positive_int(item, f"references.kmer_sizes[{index}]", minimum=3)
+        _positive_int(item, f"{location}.kmer_sizes[{index}]", minimum=3)
         for index, item in enumerate(kmer_value)
     )
     return ReferenceSettings(
         fasta=fasta,
         kmer_sizes=kmer_sizes,
         max_kmer_owners=_positive_int(
-            mapping.get("max_kmer_owners", 10), "references.max_kmer_owners"
+            mapping.get("max_kmer_owners", 10), f"{location}.max_kmer_owners"
         ),
         candidate_count=_positive_int(
-            mapping.get("candidate_count", 5), "references.candidate_count"
+            mapping.get("candidate_count", 5), f"{location}.candidate_count"
         ),
         minimum_kmer_score=_number(
             mapping.get("minimum_kmer_score", 2.0),
-            "references.minimum_kmer_score",
+            f"{location}.minimum_kmer_score",
             minimum=0,
             maximum=1_000_000,
         ),
         minimum_identity=_number(
             mapping.get("minimum_identity", 0.80),
-            "references.minimum_identity",
+            f"{location}.minimum_identity",
             minimum=0,
             maximum=1,
         ),
         minimum_query_coverage=_number(
             mapping.get("minimum_query_coverage", 0.70),
-            "references.minimum_query_coverage",
+            f"{location}.minimum_query_coverage",
             minimum=0,
             maximum=1,
         ),
         minimum_reference_coverage=_number(
             mapping.get("minimum_reference_coverage", 0.70),
-            "references.minimum_reference_coverage",
+            f"{location}.minimum_reference_coverage",
             minimum=0,
             maximum=1,
         ),
         minimum_identity_margin=_number(
             mapping.get("minimum_identity_margin", 0.02),
-            "references.minimum_identity_margin",
+            f"{location}.minimum_identity_margin",
             minimum=0,
             maximum=1,
         ),
     )
+
+
+def _parse_reference_libraries(
+    value: Any, base_dir: Path
+) -> Mapping[str, ReferenceSettings]:
+    location = "reference_libraries"
+    mapping = _mapping(value, location)
+    if not mapping:
+        raise ConfigError("reference_libraries must contain at least one library")
+    result: dict[str, ReferenceSettings] = {}
+    for raw_library_id in sorted(mapping, key=str):
+        library_id = _nonempty_string(raw_library_id, f"{location} identifier")
+        result[library_id] = _parse_references(
+            mapping[raw_library_id],
+            base_dir,
+            location=f"{location}.{library_id}",
+        )
+    return result
+
+
+def _parse_plate_reference_map(value: Any) -> Mapping[str, str]:
+    location = "plate_reference_map"
+    mapping = _mapping(value, location)
+    result: dict[str, str] = {}
+    for raw_plate_id in sorted(mapping, key=str):
+        plate_id = _nonempty_string(raw_plate_id, f"{location} identifier")
+        result[plate_id] = _nonempty_string(
+            mapping[raw_plate_id], f"{location}.{plate_id}"
+        )
+    return result
 
 
 def _parse_library(value: Any, base_dir: Path) -> LibrarySettings:
@@ -616,6 +771,8 @@ def load_config(path: str | Path) -> PipelineConfig:
         "output_root",
         "inputs",
         "references",
+        "reference_libraries",
+        "plate_reference_map",
         "library",
         "barcodes",
         "parallel",
@@ -634,6 +791,27 @@ def load_config(path: str | Path) -> PipelineConfig:
     random_seed = root.get("random_seed", 0)
     if isinstance(random_seed, bool) or not isinstance(random_seed, int):
         raise ConfigError("random_seed must be an integer")
+    has_references = "references" in root
+    has_reference_libraries = "reference_libraries" in root
+    if has_references == has_reference_libraries:
+        raise ConfigError(
+            "configuration must define exactly one of references or "
+            "reference_libraries"
+        )
+    reference_libraries = (
+        _parse_reference_libraries(root["reference_libraries"], base_dir)
+        if has_reference_libraries
+        else {}
+    )
+    plate_reference_map = (
+        _parse_plate_reference_map(root.get("plate_reference_map", {}))
+        if has_reference_libraries
+        else {}
+    )
+    if not has_reference_libraries and "plate_reference_map" in root:
+        raise ConfigError(
+            "plate_reference_map is only valid with reference_libraries"
+        )
     return PipelineConfig(
         schema_version=schema_version,
         run_name=_nonempty_string(root.get("run_name", source_path.stem), "run_name"),
@@ -643,12 +821,20 @@ def load_config(path: str | Path) -> PipelineConfig:
             "output_root",
         ),
         inputs=_parse_inputs(_required(root, "inputs", "configuration"), base_dir),
-        references=_parse_references(
-            _required(root, "references", "configuration"), base_dir
+        references=(
+            _parse_references(root["references"], base_dir)
+            if has_references
+            else None
         ),
+        reference_libraries=reference_libraries,
+        plate_reference_map=plate_reference_map,
         library=_parse_library(root.get("library"), base_dir),
-        plate_barcodes=_parse_barcodes(barcodes.get("plate"), "barcodes.plate"),
-        well_barcodes=_parse_barcodes(barcodes.get("well"), "barcodes.well"),
+        plate_barcodes=_parse_barcodes(
+            barcodes.get("plate"), "barcodes.plate", base_dir
+        ),
+        well_barcodes=_parse_barcodes(
+            barcodes.get("well"), "barcodes.well", base_dir
+        ),
         parallel=_parse_parallel(root.get("parallel")),
         consensus=_parse_consensus(root.get("consensus")),
         qc=_parse_qc(root.get("qc")),

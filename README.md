@@ -5,8 +5,8 @@ portable, reproducible, and inspectable pipeline for demultiplexing Nanopore amp
 assigning reads to references, constructing consensuses, and reporting quality-control
 evidence.
 
-> **Status: v0.1 pre-alpha.** The current release implements a portable end-to-end synthetic
-> workflow and the contracts needed for experimental validation. It is not yet a
+> **Status: v0.2 pre-alpha.** The current release implements a portable end-to-end workflow,
+> explicit multi-library plate routing, and the contracts needed for experimental validation. It is not yet a
 > production-validated replacement for Nanopore2. Keep Nanopore2 and its results unchanged
 > while outputs are compared against synthetic controls and held-out experimental runs.
 
@@ -93,11 +93,12 @@ python -m pip install -e ".[report,notebook]"
 python -m pip install -e ".[dev]"             # tests, coverage, and linting
 ```
 
-MAFFT, SPOA, minimap2, and the mappy Python binding are optional acceleration or consensus
-backends. They are intentionally not installed by the core package because availability differs
-across operating systems. Nanopore3 must locate them explicitly, report their versions, and fail
-preflight when a requested backend is unavailable. An `auto` backend may choose an available
-implementation, but the actual choice is part of the run manifest.
+MAFFT and SPOA provide the opt-in `mafft_spoa` consensus backend used by the legacy
+notebook; `portable` is the default reference-guided edlib pileup. Minimap2 and mappy are
+reserved optional accelerators. These tools are intentionally not installed by the core package
+because availability differs across operating systems. Nanopore3 locates requested executables,
+reports their versions, and fails preflight when a selected backend is unavailable. The actual
+consensus backend is recorded with each result.
 
 For scientifically locked production runs, use a platform-specific environment lock or a
 versioned Linux container in addition to the portable package metadata.
@@ -112,6 +113,11 @@ nanopore3 run --config configs/example.yaml --output runs
 
 The same workflow is available to Python and notebooks through `load_config()` and
 `run_pipeline()`. See [Configuration](docs/configuration.md) and the clean quick-start notebook.
+
+Barcode panels live in reviewable CSV registries and run profiles select one primer family
+explicitly. Named reference libraries are routed by plate barcode rather than pooled. See
+[Barcode registry](docs/barcode_registry.md) and the
+[20260506 pilot report](docs/20260506_lab_biotin_pilot.md).
 
 ## Repository layout
 
@@ -132,7 +138,7 @@ be versioned; raw sequencing data should be managed by the laboratory's durable 
 Do not point experimental development at the only copy of a dataset. Nanopore3 treats inputs as
 read-only and should write intermediate files atomically. It must not infer completion merely
 because some output files exist, and it must not delete or move prior evidence during analysis.
-Nanopore3 v0.1 intentionally does not make final biological chimera calls. It reports uncertain
+Nanopore3 v0.2 intentionally does not make final biological chimera calls. It reports uncertain
 reads conservatively while breakpoint-aware classification is developed and validated. Until
 the experimental validation suite is complete, compare every result with controls and retain the
 original Nanopore2 analysis.

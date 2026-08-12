@@ -28,6 +28,8 @@ htmlcov/
 
 # Generated pipeline state. Runs are immutable working products, not source.
 runs/
+!configs/runs/
+!configs/runs/*.yaml
 outputs/
 work/
 *.partial

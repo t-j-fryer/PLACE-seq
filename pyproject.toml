@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nanopore3"
-version = "0.1.0"
+version = "0.2.0"
 description = "A portable, reproducible pipeline for demultiplexing and consensus analysis of Nanopore amplicons"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"

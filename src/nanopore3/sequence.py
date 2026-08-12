@@ -7,9 +7,14 @@ process state.  They are safe to call inside workers created with the Windows
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterator
 from functools import lru_cache
 
 IUPAC_DNA_BASES = frozenset("ACGTRYSWKMBDHVN")
+
+# Anything outside the unambiguous alphabet separates canonical k-mer runs.
+_AMBIGUOUS_RUN = re.compile("[^ACGT]+")
 
 _IUPAC_MEMBERS: dict[str, frozenset[str]] = {
     "A": frozenset("A"),
@@ -120,17 +125,37 @@ def canonical_kmer(kmer: str) -> str:
     return min(normalized, reverse)
 
 
+def _iter_run_canonical_kmers(run: str, k: int) -> Iterator[str]:
+    """Yield canonical k-mers of one unambiguous A/C/G/T run.
+
+    The reverse complement of the whole run is built once, so each window costs
+    two slices and one comparison rather than a per-window normalization and
+    reverse complement.  ``run[start:start + k]`` reverse-complements to
+    ``reverse[n - start - k:n - start]``, so the strand chosen here is identical
+    to :func:`canonical_kmer` while the per-window validation is removed.
+    """
+
+    length = len(run)
+    reverse = run.translate(_COMPLEMENT)[::-1]
+    for start in range(length - k + 1):
+        forward = run[start : start + k]
+        complement = reverse[length - start - k : length - start]
+        yield forward if forward < complement else complement
+
+
 def canonical_unique_kmers(sequence: str, k: int) -> frozenset[str]:
     """Return distinct canonical A/C/G/T k-mers, skipping ambiguous windows."""
 
-    normalized = normalize_sequence(sequence, allow_empty=True)
     if k < 1:
         raise ValueError("k must be at least 1")
+    normalized = normalize_sequence(sequence, allow_empty=True)
     if len(normalized) < k:
         return frozenset()
-    return frozenset(
-        canonical_kmer(window)
-        for start in range(len(normalized) - k + 1)
-        if not set(window := normalized[start : start + k]).difference("ACGT")
-    )
+    # An ambiguity code can never occur inside a canonical k-mer, so it simply
+    # splits the sequence into independent unambiguous runs.
+    kmers: set[str] = set()
+    for run in _AMBIGUOUS_RUN.split(normalized):
+        if len(run) >= k:
+            kmers.update(_iter_run_canonical_kmers(run, k))
+    return frozenset(kmers)
 

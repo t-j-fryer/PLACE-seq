@@ -58,10 +58,20 @@ cutoffs, A/C/G/T fast paths and coarse batching, a direct full matcher benchmark
 processed 20,000 reads in 50.116 seconds (399.1 reads/s) with two 10k thread
 batches. On a 2,000-read worker sweep, serial, four-thread and 14-thread rates
 were 370.9, 413.4 and 388.5 reads/s respectively, with identical call counts.
-This machine's current thread knee is therefore about 2–4 workers, not all 14.
+
+> **Superseded on 2026-08-12.** The sentence that previously followed — that this
+> machine's thread knee is about 2–4 workers — read a thread *overhead* curve as a
+> hardware limit. A full-pilot sweep over all 20,000 reads measured 591 reads/s
+> serial against 396 reads/s with four threads: threads are **slower than serial**
+> here. Demultiplexing spends most of its time in Python-level work that holds the
+> GIL, not in the GIL-releasing edlib calls, so only process workers scale it:
+> 1,517 reads/s at four processes and 1,818 at eight, with identical call counts
+> throughout. The run profiles now default to `backend: process, jobs: 8`. See
+> [assignment_optimisation.md](assignment_optimisation.md) and the
+> [lab notebook](../LAB_NOTEBOOK.md) entry for 2026-08-12.
 
 Use `scripts/benchmark_demux.py` to test a fixed profile and input subset on each
-machine. Test serial and threads first. The explicit process backend is intended
-for CLI use and uses spawn semantics for macOS, Windows and Linux; it must pass
-the platform CI matrix before becoming an automatic default. Avoid nested pools
-and enforce `jobs × threads_per_job` within the CPU budget.
+machine, and benchmark the real stage rather than a synthetic edlib proxy — the
+two disagree sharply. The process backend uses spawn semantics for macOS, Windows
+and Linux. Avoid nested pools and enforce `jobs × threads_per_job` within the CPU
+budget.

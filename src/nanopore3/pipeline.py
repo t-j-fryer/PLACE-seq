@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO, TypeVar
 
 from . import __version__
-from .assignment import AssignmentCall, ReferenceIndex, assign_sequence
+from .assignment import AssignmentCall, ReferenceIndex, assign_read
 from .config import BarcodeSettings, PipelineConfig
 from .consensus import (
     ConsensusRead,
@@ -50,6 +50,11 @@ from .sequence import reverse_complement
 
 T = TypeVar("T")
 U = TypeVar("U")
+
+# Assignment costs milliseconds per read, so a small batch already dwarfs the
+# per-future overhead while keeping the tail of the run evenly balanced across
+# workers.  Demultiplexing is far cheaper per read and uses config.chunk_reads.
+_ASSIGNMENT_BATCH_READS = 32
 
 
 class PipelineError(RuntimeError):
@@ -104,7 +109,14 @@ def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[
         digest = sha256_file(item.path)
         count = None
         if scan_fastq:
-            count = sum(1 for _ in iter_fastq(item.path, source_sha256=digest))
+            count = sum(
+                1
+                for _ in iter_fastq(
+                    item.path,
+                    source_sha256=digest,
+                    allow_empty_sequence=config.library.allow_empty_reads,
+                )
+            )
         inputs.append(
             {
                 "sample_id": item.sample_id,
@@ -162,7 +174,17 @@ def _ordered_map(
     jobs: int,
     *,
     backend: str = "thread",
+    initializer: Callable[..., None] | None = None,
+    initargs: tuple[Any, ...] = (),
 ) -> Iterator[U]:
+    """Map ``function`` over ``values`` in input order, bounded by ``jobs``.
+
+    ``initializer`` runs once in each process worker, which lets a stage build
+    expensive per-worker state such as reference indexes without pickling it
+    with every task.  It is ignored by the serial path, which already has that
+    state in the parent.
+    """
+
     if jobs == 1:
         yield from map(function, values)
         return
@@ -173,6 +195,8 @@ def _ordered_map(
         pool_context = ProcessPoolExecutor(
             max_workers=jobs,
             mp_context=get_context("spawn"),
+            initializer=initializer,
+            initargs=initargs,
         )
     else:
         pool_context = ThreadPoolExecutor(
@@ -263,6 +287,25 @@ def _demux_one(
     ]
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     record, sample_id, config, plate_panel, well_panel = job
+    if not record.sequence:
+        # A zero-length basecall carries no evidence. It is reported as its own
+        # state so it is counted rather than silently dropped or mistaken for a
+        # barcode failure.
+        row: dict[str, Any] = {
+            "read_uid": record.read_uid,
+            "original_read_id": record.name,
+            "sample_id": sample_id,
+            "record_index": record.record_index,
+            "length": 0,
+            "mean_q": "0.0000",
+            "length_status": "empty_read",
+            "quality_status": "not_evaluable",
+            "call_status": "empty_read",
+            "reason_code": "the basecaller emitted a zero-length read",
+        }
+        row.update(_call_dict(_disabled_barcode("not_attempted"), "plate"))
+        row.update(_call_dict(_disabled_barcode("not_attempted"), "well"))
+        return row, None
     length_status = "pass"
     if config.library.minimum_read_length is not None and len(record.sequence) < config.library.minimum_read_length:
         length_status = "out_of_length"
@@ -414,27 +457,21 @@ def _assign_one(
         )
     indexes = indexes_by_library[library_id]
     settings = config.reference_sets[library_id]
-    final: AssignmentCall | None = None
-    used_k = indexes[-1].k
-    for index in indexes:
-        call = assign_sequence(
-            str(read["sequence"]),
-            index,
-            left_motif=config.library.forward_motif,
-            right_motif=config.library.reverse_motif,
-            motif_max_edits=config.library.motif_max_edits,
-            top_n=settings.candidate_count,
-            min_kmer_score=settings.minimum_kmer_score,
-            min_identity=settings.minimum_identity,
-            min_query_coverage=settings.minimum_query_coverage,
-            min_reference_coverage=settings.minimum_reference_coverage,
-            min_identity_margin=settings.minimum_identity_margin,
-            fallback_align_all=True,
-        )
-        final, used_k = call, index.k
-        if call.status in {"assigned_unique", "assigned_alias_set", "ambiguous", "motif_missing"}:
-            break
-    assert final is not None
+    final, used_k = assign_read(
+        str(read["sequence"]),
+        indexes,
+        left_motif=config.library.forward_motif,
+        right_motif=config.library.reverse_motif,
+        motif_max_edits=config.library.motif_max_edits,
+        top_n=settings.candidate_count,
+        min_kmer_score=settings.minimum_kmer_score,
+        min_identity=settings.minimum_identity,
+        min_query_coverage=settings.minimum_query_coverage,
+        min_reference_coverage=settings.minimum_reference_coverage,
+        min_identity_margin=settings.minimum_identity_margin,
+        rescue=settings.rescue_policy,
+        rescue_candidates=settings.rescue_candidates,
+    )
     row = _assignment_row(read, final, used_k, library_id)
     eligible = None
     if final.status in {"assigned_unique", "assigned_alias_set"} and final.query_sequence:
@@ -464,6 +501,51 @@ def _assign_one(
         if len(eligible["quality"]) != len(eligible["sequence"]):
             eligible["quality"] = None
     return row, eligible
+
+
+def _build_reference_indexes(
+    config: PipelineConfig,
+    references_by_library: Mapping[str, Mapping[str, str]],
+) -> dict[str, tuple[ReferenceIndex, ...]]:
+    """Build one k-mer index per declared k-mer size, per reference library."""
+
+    return {
+        library_id: tuple(
+            ReferenceIndex(
+                references_by_library[library_id],
+                k=k,
+                max_kmer_owners=config.reference_sets[library_id].max_kmer_owners,
+            )
+            for k in config.reference_sets[library_id].kmer_sizes
+        )
+        for library_id in references_by_library
+    }
+
+
+# Assignment is dominated by Python-level k-mer work rather than by the
+# GIL-releasing edlib calls, so process workers are the only way it scales.
+# Each worker builds its own indexes once instead of receiving them per task.
+_ASSIGNMENT_WORKER: dict[str, Any] = {}
+
+
+def _init_assignment_worker(
+    config: PipelineConfig,
+    references_by_library: Mapping[str, Mapping[str, str]],
+) -> None:
+    """Prepare one process worker. Safe under the spawn start method."""
+
+    _ASSIGNMENT_WORKER["config"] = config
+    _ASSIGNMENT_WORKER["indexes"] = _build_reference_indexes(config, references_by_library)
+
+
+def _assign_batch_worker(
+    batch: Sequence[Mapping[str, Any]],
+) -> tuple[tuple[dict[str, Any], dict[str, Any] | None], ...]:
+    """Assign one coarse batch inside a process worker."""
+
+    config = _ASSIGNMENT_WORKER["config"]
+    indexes = _ASSIGNMENT_WORKER["indexes"]
+    return tuple(_assign_one(read, indexes, config) for read in batch)
 
 
 def _write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fields: Sequence[str]) -> Counter[str]:
@@ -602,7 +684,11 @@ def run_pipeline(
                     digest = input_digests[item.sample_id]
                     jobs = (
                         (record, item.sample_id, config, plate_panel, well_panel)
-                        for record in iter_fastq(item.path, source_sha256=digest)
+                        for record in iter_fastq(
+                            item.path,
+                            source_sha256=digest,
+                            allow_empty_sequence=config.library.allow_empty_reads,
+                        )
                     )
                     batches = _batched(jobs, config.parallel.chunk_reads)
                     for results in _ordered_map(
@@ -649,17 +735,7 @@ def run_pipeline(
         library_id: {record.id: record.sequence for record in bundle.records}
         for library_id, bundle in reference_collection.libraries
     }
-    indexes_by_library = {
-        library_id: tuple(
-            ReferenceIndex(
-                references_by_library[library_id],
-                k=k,
-                max_kmer_owners=config.reference_sets[library_id].max_kmer_owners,
-            )
-            for k in config.reference_sets[library_id].kmer_sizes
-        )
-        for library_id in reference_collection.ids
-    }
+    indexes_by_library = _build_reference_indexes(config, references_by_library)
     reference_parameters = {
         library_id: asdict(settings)
         for library_id, settings in config.reference_sets.items()
@@ -694,16 +770,35 @@ def run_pipeline(
             counts: Counter[str] = Counter()
             with _open_gzip_text(calls_path) as call_handle, _open_gzip_text(eligible_path) as eligible_handle:
                 writer: csv.DictWriter[str] | None = None
-                jobs = _iter_gzip_json(demux_reads)
-                fn = lambda read: _assign_one(read, indexes_by_library, config)
-                for row, eligible in _ordered_map(fn, jobs, resources.jobs):
-                    if writer is None:
-                        writer = csv.DictWriter(call_handle, fieldnames=list(row), lineterminator="\n")
-                        writer.writeheader()
-                    writer.writerow(row)
-                    counts[row["assignment_status"]] += 1
-                    if eligible is not None:
-                        eligible_handle.write(json.dumps(eligible, sort_keys=True, separators=(",", ":")) + "\n")
+                batches = _batched(_iter_gzip_json(demux_reads), _ASSIGNMENT_BATCH_READS)
+
+                def assign_batch(
+                    batch: Sequence[Mapping[str, Any]],
+                ) -> tuple[tuple[dict[str, Any], dict[str, Any] | None], ...]:
+                    return tuple(
+                        _assign_one(read, indexes_by_library, config) for read in batch
+                    )
+
+                # Threads cannot speed this stage up: its cost is Python-level
+                # k-mer work, not the GIL-releasing alignment calls. Only the
+                # explicitly requested process backend runs workers in parallel.
+                use_processes = config.parallel.backend == "process"
+                for results in _ordered_map(
+                    _assign_batch_worker if use_processes else assign_batch,
+                    batches,
+                    resources.jobs if use_processes else 1,
+                    backend="process" if use_processes else "thread",
+                    initializer=_init_assignment_worker if use_processes else None,
+                    initargs=(config, references_by_library) if use_processes else (),
+                ):
+                    for row, eligible in results:
+                        if writer is None:
+                            writer = csv.DictWriter(call_handle, fieldnames=list(row), lineterminator="\n")
+                            writer.writeheader()
+                        writer.writerow(row)
+                        counts[row["assignment_status"]] += 1
+                        if eligible is not None:
+                            eligible_handle.write(json.dumps(eligible, sort_keys=True, separators=(",", ":")) + "\n")
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(counts.items())))
 
     assignment_dir = run_dir / "stages" / "03_assignment"

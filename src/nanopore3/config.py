@@ -8,7 +8,7 @@ working directory.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -47,6 +47,12 @@ def _required(value: Mapping[str, Any], key: str, location: str) -> Any:
 def _positive_int(value: Any, location: str, *, minimum: int = 1) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ConfigError(f"{location} must be an integer >= {minimum}")
+    return value
+
+
+def _boolean(value: Any, location: str) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigError(f"{location} must be true or false")
     return value
 
 
@@ -158,6 +164,11 @@ class ReferenceSettings:
     minimum_query_coverage: float = 0.70
     minimum_reference_coverage: float = 0.70
     minimum_identity_margin: float = 0.02
+    # How hard to look when no k-mer size proposes an acceptable reference.
+    # "kmer" widens the shortlist using any k-mer evidence; "all" restores the
+    # exhaustive whole-library sweep; "none" accepts the shortlist verdict.
+    rescue_policy: str = "kmer"
+    rescue_candidates: int = 25
 
     def __post_init__(self) -> None:
         if not self.fasta:
@@ -170,12 +181,24 @@ class ReferenceSettings:
             raise ConfigError("all references.kmer_sizes values must be >= 3")
         if len(set(self.kmer_sizes)) != len(self.kmer_sizes):
             raise ConfigError("references.kmer_sizes must not contain duplicates")
+        # The cascade consults the most specific k first and rescues with the
+        # most sensitive one, so the declared order is load-bearing.
+        if list(self.kmer_sizes) != sorted(self.kmer_sizes, reverse=True):
+            raise ConfigError(
+                "references.kmer_sizes must be listed in descending order, "
+                "most specific first"
+            )
         for name in (
             "max_kmer_owners",
             "candidate_count",
+            "rescue_candidates",
         ):
             if getattr(self, name) < 1:
                 raise ConfigError(f"references.{name} must be >= 1")
+        if self.rescue_policy not in ("none", "kmer", "all"):
+            raise ConfigError(
+                "references.rescue_policy must be 'none', 'kmer', or 'all'"
+            )
         if self.minimum_kmer_score < 0:
             raise ConfigError("references.minimum_kmer_score must be non-negative")
         for name in (
@@ -201,6 +224,11 @@ class LibrarySettings:
     maximum_read_length: int | None = None
     minimum_mean_quality: float | None = None
     metadata: Path | None = None
+    # Basecallers occasionally emit zero-length reads. They are rejected as
+    # malformed input by default, because a run should not silently depend on
+    # how a parser treats them. Enabling this keeps them as a counted
+    # `empty_read` demultiplexing state instead of failing the whole file.
+    allow_empty_reads: bool = False
 
     def __post_init__(self) -> None:
         _nonempty_string(self.name, "library.name")
@@ -373,6 +401,25 @@ class PipelineConfig:
             library_id: self.reference_libraries[library_id]
             for library_id in sorted(self.reference_libraries)
         }
+
+    def with_rescue_policy(self, rescue_policy: str) -> "PipelineConfig":
+        """Return a copy whose reference libraries all use one rescue policy.
+
+        This exists so a benchmark or audit can compare rescue policies against
+        the very configuration a run used, without editing the run file.
+        """
+
+        if self.references is not None:
+            return replace(
+                self, references=replace(self.references, rescue_policy=rescue_policy)
+            )
+        return replace(
+            self,
+            reference_libraries={
+                library_id: replace(settings, rescue_policy=rescue_policy)
+                for library_id, settings in self.reference_libraries.items()
+            },
+        )
 
     def reference_library_id_for_plate(self, plate_barcode_id: str) -> str:
         """Resolve a plate barcode to its configured reference-library ID.
@@ -656,6 +703,7 @@ def _parse_library(value: Any, base_dir: Path) -> LibrarySettings:
         "maximum_read_length",
         "minimum_mean_quality",
         "metadata",
+        "allow_empty_reads",
     }
     _reject_unknown(mapping, allowed, location)
     forward = mapping.get("forward_motif")
@@ -697,6 +745,9 @@ def _parse_library(value: Any, base_dir: Path) -> LibrarySettings:
             None
             if mapping.get("metadata") is None
             else _path(mapping["metadata"], base_dir, "library.metadata")
+        ),
+        allow_empty_reads=_boolean(
+            mapping.get("allow_empty_reads", False), "library.allow_empty_reads"
         ),
     )
 

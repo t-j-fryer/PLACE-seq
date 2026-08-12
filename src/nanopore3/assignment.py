@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Mapping
+from typing import Any, Literal
 
 import edlib
 
@@ -22,6 +23,8 @@ AssignmentStatus = Literal[
     "no_match",
     "motif_missing",
 ]
+
+RescuePolicy = Literal["none", "kmer", "all"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,16 +279,24 @@ class ReferenceIndex:
         if top_n < 1:
             raise ValueError("top_n must be at least 1")
         query_kmers = canonical_unique_kmers(sequence, self.k)
-        scores: dict[tuple[str, ...], float] = defaultdict(float)
+        # Distinct k-mers arrive in set order, which depends on string hashing
+        # and therefore on PYTHONHASHSEED.  Adding 1/owners as floats in that
+        # order makes the score depend on which process computed it, so k-mers
+        # are tallied as exact integers per specificity class and summed in a
+        # canonical order instead.
+        tally: dict[tuple[tuple[str, ...], int], int] = defaultdict(int)
         hits: dict[tuple[str, ...], int] = defaultdict(int)
         for kmer in query_kmers:
             owners = self._owners.get(kmer, ())
             if not owners:
                 continue
-            weight = 1.0 / len(owners)
+            owner_count = len(owners)
             for aliases in owners:
-                scores[aliases] += weight
+                tally[(aliases, owner_count)] += 1
                 hits[aliases] += 1
+        scores: dict[tuple[str, ...], float] = defaultdict(float)
+        for (aliases, owner_count), matches in sorted(tally.items()):
+            scores[aliases] += matches / owner_count
         ranked = sorted(scores, key=lambda aliases: (-scores[aliases], aliases))
         return tuple(
             CandidateScore(aliases, scores[aliases], hits[aliases])
@@ -303,11 +314,21 @@ class ReferenceIndex:
         return tuple(aliases for aliases, _ in self.references)
 
 
-def _align_candidate(
-    query: str,
-    reference: str,
-    candidate: CandidateScore,
-) -> AlignmentEvidence:
+@dataclass(frozen=True, slots=True)
+class _Geometry:
+    """Alignment measurements that depend only on the query and reference."""
+
+    edit_distance: int
+    identity: float
+    query_coverage: float
+    reference_coverage: float
+    query_start: int
+    query_end: int
+    reference_start: int
+    reference_end: int
+
+
+def _align_geometry(query: str, reference: str) -> _Geometry:
     # Align the shorter complete sequence inside the longer one. This exposes
     # truncation through coverage while avoiding an arbitrary terminal-gap cost.
     if len(query) <= len(reference):
@@ -345,10 +366,7 @@ def _align_candidate(
     reference_aligned = reference_end - reference_start
     denominator = max(query_aligned, reference_aligned, 1)
     identity = max(0.0, 1.0 - edit_distance / denominator)
-    return AlignmentEvidence(
-        aliases=candidate.aliases,
-        kmer_score=candidate.kmer_score,
-        matching_kmers=candidate.matching_kmers,
+    return _Geometry(
         edit_distance=edit_distance,
         identity=identity,
         query_coverage=query_aligned / len(query),
@@ -357,6 +375,278 @@ def _align_candidate(
         query_end=query_end,
         reference_start=reference_start,
         reference_end=reference_end,
+    )
+
+
+def _evidence(candidate: CandidateScore, geometry: _Geometry) -> AlignmentEvidence:
+    return AlignmentEvidence(
+        aliases=candidate.aliases,
+        kmer_score=candidate.kmer_score,
+        matching_kmers=candidate.matching_kmers,
+        edit_distance=geometry.edit_distance,
+        identity=geometry.identity,
+        query_coverage=geometry.query_coverage,
+        reference_coverage=geometry.reference_coverage,
+        query_start=geometry.query_start,
+        query_end=geometry.query_end,
+        reference_start=geometry.reference_start,
+        reference_end=geometry.reference_end,
+    )
+
+
+def _align_candidate(
+    query: str,
+    reference: str,
+    candidate: CandidateScore,
+) -> AlignmentEvidence:
+    return _evidence(candidate, _align_geometry(query, reference))
+
+
+def _alignment_order(hit: AlignmentEvidence) -> tuple[Any, ...]:
+    """Rank by evidence strength, then by a deterministic identifier."""
+
+    return (
+        -hit.identity,
+        -min(hit.query_coverage, hit.reference_coverage),
+        hit.edit_distance,
+        -hit.kmer_score,
+        hit.aliases,
+    )
+
+
+def _rank_candidates(
+    query: str,
+    index: ReferenceIndex,
+    candidates: Iterable[CandidateScore],
+    cache: dict[tuple[str, ...], _Geometry],
+) -> tuple[AlignmentEvidence, ...]:
+    """Align each candidate once per read, reusing geometry across k-mer sizes."""
+
+    alignments = []
+    for candidate in candidates:
+        geometry = cache.get(candidate.aliases)
+        if geometry is None:
+            geometry = _align_geometry(query, index.sequence_for(candidate.aliases))
+            cache[candidate.aliases] = geometry
+        alignments.append(_evidence(candidate, geometry))
+    return tuple(sorted(alignments, key=_alignment_order))
+
+
+def _meets_thresholds(
+    hit: AlignmentEvidence,
+    min_identity: float,
+    min_query_coverage: float,
+    min_reference_coverage: float,
+) -> bool:
+    return (
+        hit.identity >= min_identity
+        and hit.query_coverage >= min_query_coverage
+        and hit.reference_coverage >= min_reference_coverage
+    )
+
+
+def _decide(
+    query: str,
+    orientation: Literal["forward", "reverse", "unknown"],
+    extraction: InsertExtraction | None,
+    candidates: tuple[CandidateScore, ...],
+    alignments: tuple[AlignmentEvidence, ...],
+    *,
+    min_identity: float,
+    min_query_coverage: float,
+    min_reference_coverage: float,
+    min_identity_margin: float,
+) -> AssignmentCall:
+    """Apply the identity, coverage, and margin policy to ranked alignments."""
+
+    best = alignments[0]
+    second = alignments[1] if len(alignments) > 1 else None
+    margin = best.identity - second.identity if second is not None else None
+    if not _meets_thresholds(best, min_identity, min_query_coverage, min_reference_coverage):
+        return AssignmentCall(
+            "no_match", (), orientation, query, best, second, margin,
+            "best alignment did not meet identity and coverage thresholds",
+            candidates, alignments, extraction,
+        )
+    second_is_plausible = second is not None and _meets_thresholds(
+        second, min_identity, min_query_coverage, min_reference_coverage
+    )
+    if second_is_plausible and margin is not None and margin < min_identity_margin:
+        return AssignmentCall(
+            "ambiguous", (), orientation, query, best, second, margin,
+            "best and second alignments do not meet the identity margin",
+            candidates, alignments, extraction,
+        )
+    status: AssignmentStatus = (
+        "assigned_alias_set" if len(best.aliases) > 1 else "assigned_unique"
+    )
+    return AssignmentCall(
+        status, best.aliases, orientation, query, best, second, margin,
+        "best alignment met identity, coverage, and margin thresholds",
+        candidates, alignments, extraction,
+    )
+
+
+def _prepare_query(
+    sequence: str,
+    left_motif: str | None,
+    right_motif: str | None,
+    motif_max_edits: int,
+    min_insert_length: int,
+    max_insert_length: int | None,
+    expected_insert_length: int | None,
+) -> tuple[str, Literal["forward", "reverse", "unknown"], InsertExtraction | None] | AssignmentCall:
+    """Normalize a read and extract its insert once, or return a terminal call."""
+
+    if (left_motif is None) != (right_motif is None):
+        raise ValueError("left_motif and right_motif must be supplied together")
+    read = normalize_sequence(sequence)
+    if left_motif is None or right_motif is None:
+        return read, "forward", None
+    extraction = extract_insert(
+        read,
+        left_motif,
+        right_motif,
+        max_edits=motif_max_edits,
+        min_insert_length=min_insert_length,
+        max_insert_length=max_insert_length,
+        expected_insert_length=expected_insert_length,
+    )
+    if extraction.status == "motif_missing":
+        return AssignmentCall(
+            "motif_missing", (), "unknown", None, None, None, None,
+            extraction.reason, (), (), extraction,
+        )
+    if extraction.status == "ambiguous":
+        return AssignmentCall(
+            "ambiguous", (), "unknown", None, None, None, None,
+            extraction.reason, (), (), extraction,
+        )
+    assert extraction.sequence is not None
+    return extraction.sequence, extraction.orientation, extraction
+
+
+def _validate_thresholds(**values: float) -> None:
+    for name, value in values.items():
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{name} must be between 0 and 1")
+
+
+def assign_read(
+    sequence: str,
+    indexes: Sequence[ReferenceIndex],
+    *,
+    left_motif: str | None = None,
+    right_motif: str | None = None,
+    motif_max_edits: int = 2,
+    min_insert_length: int = 0,
+    max_insert_length: int | None = None,
+    expected_insert_length: int | None = None,
+    top_n: int = 5,
+    min_kmer_score: float = 1.0,
+    min_identity: float = 0.90,
+    min_query_coverage: float = 0.90,
+    min_reference_coverage: float = 0.90,
+    min_identity_margin: float = 0.02,
+    rescue: RescuePolicy = "kmer",
+    rescue_candidates: int = 25,
+) -> tuple[AssignmentCall, int]:
+    """Assign one read through a descending k-mer cascade, returning the call and k.
+
+    The insert is extracted once and each candidate reference is aligned at most
+    once per read, no matter how many k-mer sizes are consulted.  A k-mer size is
+    only consulted when it proposes a reference the larger sizes did not, because
+    alignment evidence does not otherwise depend on k.
+
+    When no k-mer size yields an accepted call, ``rescue`` decides how hard to
+    look.  ``"kmer"`` widens the shortlist at the smallest k to
+    ``rescue_candidates`` references with any k-mer evidence at all; ``"all"``
+    reproduces the exhaustive whole-library sweep; ``"none"`` accepts the
+    shortlist verdict.  A read sharing no k-mer with any reference cannot reach
+    the identity floor, so ``"kmer"`` is the default.
+    """
+
+    if not indexes:
+        raise ValueError("at least one reference index is required")
+    if rescue not in ("none", "kmer", "all"):
+        raise ValueError("rescue must be 'none', 'kmer', or 'all'")
+    if rescue_candidates < 1:
+        raise ValueError("rescue_candidates must be positive")
+    _validate_thresholds(
+        min_identity=min_identity,
+        min_query_coverage=min_query_coverage,
+        min_reference_coverage=min_reference_coverage,
+        min_identity_margin=min_identity_margin,
+    )
+
+    prepared = _prepare_query(
+        sequence, left_motif, right_motif, motif_max_edits,
+        min_insert_length, max_insert_length, expected_insert_length,
+    )
+    if isinstance(prepared, AssignmentCall):
+        return prepared, indexes[0].k
+    query, orientation, extraction = prepared
+    if not query:
+        return (
+            AssignmentCall(
+                "no_match", (), orientation, query, None, None, None,
+                "the extracted query is empty", (), (), extraction,
+            ),
+            indexes[0].k,
+        )
+
+    thresholds = {
+        "min_identity": min_identity,
+        "min_query_coverage": min_query_coverage,
+        "min_reference_coverage": min_reference_coverage,
+        "min_identity_margin": min_identity_margin,
+    }
+    cache: dict[tuple[str, ...], _Geometry] = {}
+    considered: dict[tuple[str, ...], CandidateScore] = {}
+    last_call: AssignmentCall | None = None
+    last_k = indexes[0].k
+
+    for index in indexes:
+        shortlist = index.shortlist(query, top_n=top_n, min_kmer_score=min_kmer_score)
+        fresh = [item for item in shortlist if item.aliases not in considered]
+        if not fresh and considered:
+            # This k proposes nothing new, so the ranked evidence is unchanged.
+            continue
+        for item in shortlist:
+            considered.setdefault(item.aliases, item)
+        if not considered:
+            continue
+        candidates = tuple(considered.values())
+        alignments = _rank_candidates(query, index, candidates, cache)
+        call = _decide(query, orientation, extraction, candidates, alignments, **thresholds)
+        last_call, last_k = call, index.k
+        if call.status != "no_match":
+            return call, index.k
+
+    rescue_index = indexes[-1]
+    if rescue == "kmer":
+        widened = rescue_index.shortlist(query, top_n=rescue_candidates, min_kmer_score=0.0)
+    elif rescue == "all":
+        widened = tuple(CandidateScore(aliases, 0.0, 0) for aliases in rescue_index.alias_groups)
+    else:
+        widened = ()
+    if any(item.aliases not in considered for item in widened):
+        for item in widened:
+            considered.setdefault(item.aliases, item)
+        candidates = tuple(considered.values())
+        alignments = _rank_candidates(query, rescue_index, candidates, cache)
+        return (
+            _decide(query, orientation, extraction, candidates, alignments, **thresholds),
+            rescue_index.k,
+        )
+    if last_call is not None:
+        return last_call, last_k
+    return (
+        AssignmentCall(
+            "no_match", (), orientation, query, None, None, None,
+            "no reference met the k-mer evidence threshold", (), (), extraction,
+        ),
+        rescue_index.k,
     )
 
 
@@ -378,147 +668,29 @@ def assign_sequence(
     min_identity_margin: float = 0.02,
     fallback_align_all: bool = True,
 ) -> AssignmentCall:
-    """Assign one sequence using k-mer candidates followed by edlib validation.
+    """Assign one sequence against a single k-mer index.
 
     Supplying motifs makes successful extraction mandatory. Missing motifs are
-    never silently replaced with full-read classification.
+    never silently replaced with full-read classification.  This is the
+    single-index form of :func:`assign_read`, which should be preferred when a
+    configuration declares several k-mer sizes.
     """
 
-    if (left_motif is None) != (right_motif is None):
-        raise ValueError("left_motif and right_motif must be supplied together")
-    for name, value in (
-        ("min_identity", min_identity),
-        ("min_query_coverage", min_query_coverage),
-        ("min_reference_coverage", min_reference_coverage),
-        ("min_identity_margin", min_identity_margin),
-    ):
-        if not 0.0 <= value <= 1.0:
-            raise ValueError(f"{name} must be between 0 and 1")
-    read = normalize_sequence(sequence)
-    extraction: InsertExtraction | None = None
-    orientation: Literal["forward", "reverse", "unknown"] = "forward"
-    query = read
-    if left_motif is not None and right_motif is not None:
-        extraction = extract_insert(
-            read,
-            left_motif,
-            right_motif,
-            max_edits=motif_max_edits,
-            min_insert_length=min_insert_length,
-            max_insert_length=max_insert_length,
-            expected_insert_length=expected_insert_length,
-        )
-        if extraction.status == "motif_missing":
-            return AssignmentCall(
-                "motif_missing", (), "unknown", None, None, None, None,
-                extraction.reason, (), (), extraction,
-            )
-        if extraction.status == "ambiguous":
-            return AssignmentCall(
-                "ambiguous", (), "unknown", None, None, None, None,
-                extraction.reason, (), (), extraction,
-            )
-        assert extraction.sequence is not None
-        query = extraction.sequence
-        orientation = extraction.orientation
-    if not query:
-        return AssignmentCall(
-            "no_match", (), orientation, query, None, None, None,
-            "the extracted query is empty", (), (), extraction,
-        )
-
-    candidates = index.shortlist(query, top_n=top_n, min_kmer_score=min_kmer_score)
-    if not candidates and fallback_align_all:
-        candidates = tuple(CandidateScore(aliases, 0.0, 0) for aliases in index.alias_groups)
-    if not candidates:
-        return AssignmentCall(
-            "no_match", (), orientation, query, None, None, None,
-            "no reference met the k-mer evidence threshold", (), (), extraction,
-        )
-
-    alignments = tuple(
-        sorted(
-            (
-                _align_candidate(query, index.sequence_for(candidate.aliases), candidate)
-                for candidate in candidates
-            ),
-            key=lambda hit: (
-                -hit.identity,
-                -min(hit.query_coverage, hit.reference_coverage),
-                hit.edit_distance,
-                -hit.kmer_score,
-                hit.aliases,
-            ),
-        )
+    call, _ = assign_read(
+        sequence,
+        (index,),
+        left_motif=left_motif,
+        right_motif=right_motif,
+        motif_max_edits=motif_max_edits,
+        min_insert_length=min_insert_length,
+        max_insert_length=max_insert_length,
+        expected_insert_length=expected_insert_length,
+        top_n=top_n,
+        min_kmer_score=min_kmer_score,
+        min_identity=min_identity,
+        min_query_coverage=min_query_coverage,
+        min_reference_coverage=min_reference_coverage,
+        min_identity_margin=min_identity_margin,
+        rescue="all" if fallback_align_all else "none",
     )
-    best = alignments[0]
-    second = alignments[1] if len(alignments) > 1 else None
-    margin = best.identity - second.identity if second is not None else None
-    passes = (
-        best.identity >= min_identity
-        and best.query_coverage >= min_query_coverage
-        and best.reference_coverage >= min_reference_coverage
-    )
-    if not passes and fallback_align_all and len(candidates) < len(index.alias_groups):
-        already_aligned = {candidate.aliases for candidate in candidates}
-        fallback_candidates = tuple(
-            CandidateScore(aliases, 0.0, 0)
-            for aliases in index.alias_groups
-            if aliases not in already_aligned
-        )
-        candidates = (*candidates, *fallback_candidates)
-        alignments = tuple(
-            sorted(
-                (
-                    *alignments,
-                    *(
-                        _align_candidate(
-                            query,
-                            index.sequence_for(candidate.aliases),
-                            candidate,
-                        )
-                        for candidate in fallback_candidates
-                    ),
-                ),
-                key=lambda hit: (
-                    -hit.identity,
-                    -min(hit.query_coverage, hit.reference_coverage),
-                    hit.edit_distance,
-                    -hit.kmer_score,
-                    hit.aliases,
-                ),
-            )
-        )
-        best = alignments[0]
-        second = alignments[1] if len(alignments) > 1 else None
-        margin = best.identity - second.identity if second is not None else None
-        passes = (
-            best.identity >= min_identity
-            and best.query_coverage >= min_query_coverage
-            and best.reference_coverage >= min_reference_coverage
-        )
-    if not passes:
-        return AssignmentCall(
-            "no_match", (), orientation, query, best, second, margin,
-            "best alignment did not meet identity and coverage thresholds",
-            candidates, alignments, extraction,
-        )
-    second_is_plausible = second is not None and (
-        second.identity >= min_identity
-        and second.query_coverage >= min_query_coverage
-        and second.reference_coverage >= min_reference_coverage
-    )
-    if second_is_plausible and margin is not None and margin < min_identity_margin:
-        return AssignmentCall(
-            "ambiguous", (), orientation, query, best, second, margin,
-            "best and second alignments do not meet the identity margin",
-            candidates, alignments, extraction,
-        )
-    status: AssignmentStatus = (
-        "assigned_alias_set" if len(best.aliases) > 1 else "assigned_unique"
-    )
-    return AssignmentCall(
-        status, best.aliases, orientation, query, best, second, margin,
-        "best alignment met identity, coverage, and margin thresholds",
-        candidates, alignments, extraction,
-    )
+    return call

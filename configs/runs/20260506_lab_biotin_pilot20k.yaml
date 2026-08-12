@@ -1,10 +1,10 @@
 schema_version: 1
-run_name: 20260506-LAB-BIOTIN-R1
+run_name: 20260506-LAB-BIOTIN-R1-pilot20k
 output_root: ../../runs
 
 inputs:
-  - path: /Users/thomasfryer/Library/CloudStorage/OneDrive-MassachusettsInstituteofTechnology/Science/Sequencing/Data_analysis/20260506_LAB_BIOTIN_R1/None_sample_1.fastq
-    sample_id: LAB_BIOTIN_R1
+  - path: ../../runs/pilot_inputs/20260506_lab_biotin_byte_sample_20000.fastq
+    sample_id: LAB_BIOTIN_R1_DIAGNOSTIC
 
 # These libraries contain designed insert sequences, not whole vectors.  Plate
 # routing is mandatory because conserved coding k-mers occur between libraries.
@@ -59,10 +59,6 @@ library:
   # Initial characterization deliberately has no length gate: the source median
   # is 1,232 nt and the notebook's displayed 1,500-nt minimum is inappropriate.
   minimum_mean_quality: 10
-  # This FASTQ contains zero-length basecalls (for example record 91,708).  They
-  # are counted as `empty_read` in the demultiplexing summary instead of failing
-  # the whole file.  Check that count before reporting any yield.
-  allow_empty_reads: true
 
 barcodes:
   plate:
@@ -87,11 +83,9 @@ barcodes:
     decision_policy: legacy_unique_best
 
 parallel:
-  # Measured on this 16-logical-CPU Mac with scripts/benchmark_*.py.  Both
-  # demultiplexing and assignment are bound by Python-level work rather than by
-  # the GIL-releasing edlib calls, so threads do not help and can be slower than
-  # serial: demux ran at 591 reads/s serial, 396 with 4 threads, and 1818 with
-  # 8 processes.  Every backend produced identical calls.
+  # See the production profile for the measurement.  Process workers cost about
+  # one second each to start, so a short pilot favours fewer workers than a
+  # full run does; 8 is used here to match production behaviour.
   backend: process
   jobs: 8
   threads_per_job: 1

@@ -119,13 +119,35 @@ explicitly. Named reference libraries are routed by plate barcode rather than po
 [Barcode registry](docs/barcode_registry.md) and the
 [20260506 pilot report](docs/20260506_lab_biotin_pilot.md). The recovered
 thresholds, decision rules and parallel benchmarks are documented in the
-[demultiplex optimisation audit](docs/demultiplex_optimisation.md).
+[demultiplex optimisation audit](docs/demultiplex_optimisation.md) and the
+[assignment optimisation note](docs/assignment_optimisation.md).
+
+## Lab notebook
+
+[`LAB_NOTEBOOK.md`](LAB_NOTEBOOK.md) is the dated, append-only record of what changed in this
+repository, why, what was learned, and what to do next. **Read the most recent entry before
+starting work, and add an entry when you finish.** It is written so that a person or an agent with
+no prior context can pick up the work. Entries separate scientific changes, which can alter
+results, from performance changes, which must not.
+
+## Performance
+
+Reads are matched to references with a k-mer prefilter before any alignment: a specificity-weighted
+index proposes a few candidates and only those are aligned, which costs about four alignments per
+read instead of one per reference. Both demultiplexing and assignment are bound by Python-level work
+rather than by the GIL-releasing edlib calls, so **process workers scale this pipeline and threads do
+not** — on a 16-CPU Mac, four threads demultiplexed *slower* than serial, while eight processes were
+roughly three times faster than serial. Benchmark your own machine with `scripts/benchmark_demux.py`
+and `scripts/benchmark_assignment.py` before changing `parallel` in a run profile, and confirm the
+call counts are unchanged.
 
 ## Repository layout
 
 ```text
+LAB_NOTEBOOK.md    dated record of changes, rationale, lessons, and next steps
 src/nanopore3/     installable library and CLI
 configs/           versioned run and assay configuration examples
+scripts/           benchmarking and diagnostic utilities
 fixtures/          small synthetic data suitable for version control
 tests/             unit, integration, and golden tests
 docs/              architecture and operating guidance

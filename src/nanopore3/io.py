@@ -7,16 +7,15 @@ record number rather than silently truncating a run.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
 import gzip
 import hashlib
 import io
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
 from .provenance import atomic_write_bytes, sha256_file
-
 
 FASTQ_DNA_IUPAC = frozenset("ACGTRYSWKMBDHVN.-")
 
@@ -103,6 +102,7 @@ def iter_fastq(
     *,
     source_sha256: str | None = None,
     validate_sequence: bool = True,
+    allow_empty_sequence: bool = False,
 ) -> Iterator[FastqRecord]:
     """Stream strict four-line FASTQ records from a plain or gzip file.
 
@@ -110,6 +110,12 @@ def iter_fastq(
     Passing a digest previously obtained during ingest avoids a second hashing
     pass.  Stable UIDs depend on the physical input digest and record position,
     so duplicate or blank FASTQ identifiers remain unambiguous.
+
+    A zero-length read is structurally valid FASTQ and basecallers do emit them,
+    but it is indistinguishable from a truncated file at the point of parsing.
+    It is therefore rejected unless ``allow_empty_sequence`` is set, in which
+    case the record is yielded and later stages classify it explicitly rather
+    than dropping it silently.
     """
 
     source = Path(path).expanduser().resolve(strict=True)
@@ -140,8 +146,13 @@ def iter_fastq(
                 if not description or not description.split(maxsplit=1)[0]:
                     raise FastqFormatError(source, record_index, "read identifier is empty")
                 name = description.split(maxsplit=1)[0]
-                if not sequence:
-                    raise FastqFormatError(source, record_index, "sequence is empty")
+                if not sequence and not allow_empty_sequence:
+                    raise FastqFormatError(
+                        source,
+                        record_index,
+                        "sequence is empty; set library.allow_empty_reads to keep "
+                        "zero-length basecalls as an explicit rejected state",
+                    )
                 if any(character.isspace() for character in sequence):
                     raise FastqFormatError(
                         source, record_index, "sequence contains whitespace"

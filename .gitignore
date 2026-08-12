@@ -1,0 +1,53 @@
+# Python environments and package artifacts
+.venv/
+.mamba/
+env/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+dist-ci/
+
+# Tests, coverage, and tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Generated pipeline state. Runs are immutable working products, not source.
+runs/
+outputs/
+work/
+*.partial
+*.tmp
+
+# Large local input data. Small, intentional test data belongs under fixtures/.
+data/
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+!fixtures/**/*.fastq
+!fixtures/**/*.fastq.gz
+!fixtures/**/*.fq
+!fixtures/**/*.fq.gz
+!src/nanopore3/example_data/*.fastq
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

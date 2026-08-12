@@ -1,0 +1,59 @@
+schema_version: 1
+run_name: synthetic-example
+output_root: ../runs
+inputs:
+  - path: ../fixtures/reads.fastq
+    sample_id: synthetic
+references:
+  fasta: ../fixtures/references.fasta
+  kmer_sizes: [7, 5]
+  max_kmer_owners: 2
+  candidate_count: 3
+  minimum_kmer_score: 2.0
+  minimum_identity: 0.90
+  minimum_query_coverage: 0.90
+  minimum_reference_coverage: 0.90
+  minimum_identity_margin: 0.02
+library:
+  name: synthetic-library
+  forward_motif: GATTACA
+  reverse_motif: CCGGAAT
+  motif_max_edits: 1
+  minimum_read_length: 50
+  maximum_read_length: 100
+  minimum_mean_quality: 10
+barcodes:
+  plate:
+    sequences:
+      P1: AAAACCCC
+      P2: CCAATTGG
+    max_edits: 1
+    search_window: 20
+    search_ends: [head]
+    allow_reverse_complement: true
+    minimum_margin: 2
+  well:
+    sequences:
+      A1: ACGTACGT
+      B1: TGCATGCA
+    max_edits: 1
+    search_window: 30
+    search_ends: [head]
+    allow_reverse_complement: false
+    minimum_margin: 2
+parallel:
+  backend: auto
+  jobs: 2
+  threads_per_job: 1
+  chunk_reads: 1000
+random_seed: 20260811
+consensus:
+  backend: portable
+  minimum_depth: 3
+  maximum_reads: 100
+  minimum_support: 0.60
+qc:
+  minimum_identity: 0.98
+  minimum_query_coverage: 0.95
+  minimum_reference_coverage: 0.95
+  length_tolerance: 10

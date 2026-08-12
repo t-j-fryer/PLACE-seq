@@ -58,6 +58,29 @@ is the first threshold/primer representation to calibrate. A production run at
 the measured demultiplex rate would take roughly nine hours on this Mac, so the
 demultiplexer requires optimization before full-scale execution.
 
+## Legacy-compatible optimisation follow-up
+
+The optimisation notebook was subsequently audited cell by cell. A new
+immutable run, `20260506-lab-biotin-pilot-20k-legacy-optimised`, uses the
+recovered conservative RP settings (`12/400/6`, threshold-unique calling) and
+rescored well settings (`12/400/7`, active production unique-best calling). It
+does not alter or replace either earlier pilot.
+
+Compiled barcode panels, edit cutoffs, an A/C/G/T fast path and bounded in-memory
+batches reduced the complete demultiplex stage from 299 to 55 seconds (5.4×),
+including FASTQ parsing and deterministic compressed output writes. Its counts
+were 15,126 assigned, 2,032 plate-unassigned, 34 plate-ambiguous, 2,807
+well-unassigned and one well-ambiguous. Downstream assignment produced 12,145
+unique, 107 ambiguous, 973 motif-missing and 1,901 no-match calls; portable
+consensus produced 603 pass, 149 heterogeneous and 1,731 low-depth groups; QC
+reported 286 pass, 466 fail and 1,731 not-evaluable.
+
+The increase from 5,440 to 15,126 demultiplexed reads is a scientific policy
+change, not merely a speedup. The sweep used proxy labels from earlier runs and
+did not provide per-read ground truth, so the profile remains a strong
+legacy-compatible candidate rather than a universally validated optimum. See
+`demultiplex_optimisation.md` for the exact alternatives and caveats.
+
 ## Consensus backend comparison
 
 Nanopore2 used MAFFT followed by SPOA. Nanopore3 now implements that exact command

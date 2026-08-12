@@ -105,6 +105,7 @@ class BarcodeSettings:
     search_ends: tuple[str, ...] = ("head", "tail")
     allow_reverse_complement: bool = True
     minimum_margin: int = 1
+    decision_policy: str = "best_margin"
     registry_csv: Path | None = None
     family_id: str | None = None
     registry_sha256: str | None = None
@@ -118,6 +119,15 @@ class BarcodeSettings:
             raise ConfigError("barcode search_window must be >= 1")
         if self.minimum_margin < 0:
             raise ConfigError("barcode minimum_margin must be >= 0")
+        if self.decision_policy not in {
+            "best_margin",
+            "legacy_unique_threshold",
+            "legacy_unique_best",
+        }:
+            raise ConfigError(
+                "barcode decision_policy must be best_margin, "
+                "legacy_unique_threshold, or legacy_unique_best"
+            )
         if not self.search_ends or set(self.search_ends) - {"head", "tail"}:
             raise ConfigError(
                 "barcode search_ends must contain only 'head' and/or 'tail'"
@@ -222,9 +232,9 @@ class LibrarySettings:
 
 @dataclass(frozen=True, slots=True)
 class ParallelSettings:
-    """Portable process-level resource limits.
+    """Portable worker and nested-thread resource limits.
 
-    ``jobs`` is the maximum number of independent Python worker processes.
+    ``jobs`` is the maximum number of independent Python workers.
     ``threads_per_job`` limits native/external-tool threads within each worker so
     callers can prevent nested oversubscription.
     """
@@ -238,8 +248,10 @@ class ParallelSettings:
         for name in ("jobs", "threads_per_job", "chunk_reads"):
             if getattr(self, name) < 1:
                 raise ConfigError(f"parallel.{name} must be >= 1")
-        if self.backend not in {"auto", "serial", "thread"}:
-            raise ConfigError("parallel.backend must be auto, serial, or thread")
+        if self.backend not in {"auto", "serial", "thread", "process"}:
+            raise ConfigError(
+                "parallel.backend must be auto, serial, thread, or process"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,6 +461,7 @@ def _parse_barcodes(value: Any, location: str, base_dir: Path | None = None) -> 
         "search_ends",
         "allow_reverse_complement",
         "minimum_margin",
+        "decision_policy",
         "registry_csv",
         "family_id",
     }
@@ -512,6 +525,10 @@ def _parse_barcodes(value: Any, location: str, base_dir: Path | None = None) -> 
             mapping.get("minimum_margin", 1),
             f"{location}.minimum_margin",
             minimum=0,
+        ),
+        decision_policy=_nonempty_string(
+            mapping.get("decision_policy", "best_margin"),
+            f"{location}.decision_policy",
         ),
         registry_csv=registry_path,
         family_id=family_id,

@@ -1,9 +1,9 @@
-"""Safe, portable orchestration for the conservative Nanopore3 v0.1 workflow."""
+"""Safe, portable orchestration for the Nanopore3 workflow."""
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
 import csv
 from dataclasses import asdict
@@ -13,6 +13,7 @@ import hashlib
 import heapq
 import io
 import json
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO, TypeVar
 
@@ -24,7 +25,13 @@ from .consensus import (
     build_reference_consensus,
     require_mafft_spoa,
 )
-from .demux import BarcodeCall, call_barcode, validate_barcodes
+from .demux import (
+    BarcodeCall,
+    PreparedBarcodePanel,
+    call_barcode,
+    prepare_barcode_panel,
+    validate_barcodes,
+)
 from .io import FastqRecord, iter_fastq
 from .provenance import (
     StageDirectory,
@@ -82,7 +89,7 @@ def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[
         ("plate", config.plate_barcodes),
         ("well", config.well_barcodes),
     ):
-        if settings.sequences:
+        if settings.sequences and settings.decision_policy == "best_margin":
             try:
                 validate_barcodes(
                     _trimmed_barcodes(settings),
@@ -149,14 +156,33 @@ def _iter_gzip_json(path: Path) -> Iterator[dict[str, Any]]:
             yield value
 
 
-def _ordered_map(function: Callable[[T], U], values: Iterable[T], jobs: int) -> Iterator[U]:
+def _ordered_map(
+    function: Callable[[T], U],
+    values: Iterable[T],
+    jobs: int,
+    *,
+    backend: str = "thread",
+) -> Iterator[U]:
     if jobs == 1:
         yield from map(function, values)
         return
+    if backend not in {"thread", "process"}:
+        raise ValueError("parallel map backend must be thread or process")
     iterator = iter(values)
-    with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="nanopore3") as pool:
+    if backend == "process":
+        pool_context = ProcessPoolExecutor(
+            max_workers=jobs,
+            mp_context=get_context("spawn"),
+        )
+    else:
+        pool_context = ThreadPoolExecutor(
+            max_workers=jobs,
+            thread_name_prefix="nanopore3",
+        )
+    with pool_context as pool:
         pending = deque()
-        for _ in range(jobs * 4):
+        # One pending unit per worker bounds memory when units are coarse batches.
+        for _ in range(jobs):
             try:
                 pending.append(pool.submit(function, next(iterator)))
             except StopIteration:
@@ -167,6 +193,21 @@ def _ordered_map(function: Callable[[T], U], values: Iterable[T], jobs: int) -> 
                 pending.append(pool.submit(function, next(iterator)))
             except StopIteration:
                 pass
+
+
+def _batched(values: Iterable[T], size: int) -> Iterator[tuple[T, ...]]:
+    """Yield bounded immutable work batches without reading the input eagerly."""
+
+    if size < 1:
+        raise ValueError("batch size must be positive")
+    batch: list[T] = []
+    for value in values:
+        batch.append(value)
+        if len(batch) == size:
+            yield tuple(batch)
+            batch = []
+    if batch:
+        yield tuple(batch)
 
 
 def _call_dict(call: BarcodeCall, prefix: str) -> dict[str, Any]:
@@ -191,7 +232,12 @@ def _disabled_barcode(identifier: str) -> BarcodeCall:
     )
 
 
-def _barcode_call(sequence: str, settings: BarcodeSettings, disabled_id: str) -> BarcodeCall:
+def _barcode_call(
+    sequence: str,
+    settings: BarcodeSettings,
+    disabled_id: str,
+    prepared_panel: PreparedBarcodePanel | None = None,
+) -> BarcodeCall:
     if not settings.sequences:
         return _disabled_barcode(disabled_id)
     return call_barcode(
@@ -202,11 +248,21 @@ def _barcode_call(sequence: str, settings: BarcodeSettings, disabled_id: str) ->
         min_margin=settings.minimum_margin,
         search_ends=settings.search_ends,
         allow_reverse_complement=settings.allow_reverse_complement,
+        decision_policy=settings.decision_policy,
+        prepared_panel=prepared_panel,
     )
 
 
-def _demux_one(job: tuple[FastqRecord, str, PipelineConfig]) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    record, sample_id, config = job
+def _demux_one(
+    job: tuple[
+        FastqRecord,
+        str,
+        PipelineConfig,
+        PreparedBarcodePanel | None,
+        PreparedBarcodePanel | None,
+    ]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    record, sample_id, config, plate_panel, well_panel = job
     length_status = "pass"
     if config.library.minimum_read_length is not None and len(record.sequence) < config.library.minimum_read_length:
         length_status = "out_of_length"
@@ -219,12 +275,14 @@ def _demux_one(job: tuple[FastqRecord, str, PipelineConfig]) -> tuple[dict[str, 
     ):
         quality_status = "low_quality"
 
-    plate = _barcode_call(record.sequence, config.plate_barcodes, sample_id)
+    plate = _barcode_call(
+        record.sequence, config.plate_barcodes, sample_id, plate_panel
+    )
     sequence, quality = record.sequence, record.quality
     if plate.status == "assigned" and plate.orientation == "reverse":
         sequence, quality = reverse_complement(sequence), quality[::-1]
     well = (
-        _barcode_call(sequence, config.well_barcodes, "well")
+        _barcode_call(sequence, config.well_barcodes, "well", well_panel)
         if plate.status == "assigned"
         else _disabled_barcode("not_attempted")
     )
@@ -273,6 +331,22 @@ def _demux_one(job: tuple[FastqRecord, str, PipelineConfig]) -> tuple[dict[str, 
         "quality": quality,
     }
     return row, accepted
+
+
+def _demux_batch(
+    jobs: Sequence[
+        tuple[
+            FastqRecord,
+            str,
+            PipelineConfig,
+            PreparedBarcodePanel | None,
+            PreparedBarcodePanel | None,
+        ]
+    ],
+) -> tuple[tuple[dict[str, Any], dict[str, Any] | None], ...]:
+    """Process one coarse deterministic batch, amortizing executor overhead."""
+
+    return tuple(_demux_one(job) for job in jobs)
 
 
 def _assignment_row(
@@ -427,7 +501,7 @@ def run_pipeline(
     run_id: str | None = None,
     resume: bool = False,
 ) -> Path:
-    """Execute the v0.1 portable workflow into a new immutable run directory."""
+    """Execute the portable workflow into a new immutable run directory."""
 
     preflight = validate_inputs(config, scan_fastq=True)
     config_digest = canonical_digest(config.as_dict())
@@ -512,20 +586,55 @@ def run_pipeline(
             reads_path = stage.output_path("demuxed_reads.jsonl.gz")
             fields: list[str] | None = None
             counts: Counter[str] = Counter()
+            plate_panel = (
+                prepare_barcode_panel(_trimmed_barcodes(config.plate_barcodes))
+                if config.plate_barcodes.sequences
+                else None
+            )
+            well_panel = (
+                prepare_barcode_panel(_trimmed_barcodes(config.well_barcodes))
+                if config.well_barcodes.sequences
+                else None
+            )
             with _open_gzip_text(calls_path) as call_handle, _open_gzip_text(reads_path) as read_handle:
                 writer: csv.DictWriter[str] | None = None
                 for item in config.inputs:
                     digest = input_digests[item.sample_id]
-                    jobs = ((record, item.sample_id, config) for record in iter_fastq(item.path, source_sha256=digest))
-                    for row, accepted in _ordered_map(_demux_one, jobs, resources.jobs):
-                        if writer is None:
-                            fields = list(row)
-                            writer = csv.DictWriter(call_handle, fieldnames=fields, lineterminator="\n")
-                            writer.writeheader()
-                        writer.writerow(row)
-                        counts[row["call_status"]] += 1
-                        if accepted is not None:
-                            read_handle.write(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\n")
+                    jobs = (
+                        (record, item.sample_id, config, plate_panel, well_panel)
+                        for record in iter_fastq(item.path, source_sha256=digest)
+                    )
+                    batches = _batched(jobs, config.parallel.chunk_reads)
+                    for results in _ordered_map(
+                        _demux_batch,
+                        batches,
+                        resources.jobs,
+                        backend=(
+                            "process"
+                            if config.parallel.backend == "process"
+                            else "thread"
+                        ),
+                    ):
+                        for row, accepted in results:
+                            if writer is None:
+                                fields = list(row)
+                                writer = csv.DictWriter(
+                                    call_handle,
+                                    fieldnames=fields,
+                                    lineterminator="\n",
+                                )
+                                writer.writeheader()
+                            writer.writerow(row)
+                            counts[row["call_status"]] += 1
+                            if accepted is not None:
+                                read_handle.write(
+                                    json.dumps(
+                                        accepted,
+                                        sort_keys=True,
+                                        separators=(",", ":"),
+                                    )
+                                    + "\n"
+                                )
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(counts.items())))
 
     demux_dir = run_dir / "stages" / "02_demux"

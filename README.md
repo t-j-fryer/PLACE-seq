@@ -5,7 +5,7 @@ portable, reproducible, and inspectable pipeline for demultiplexing Nanopore amp
 assigning reads to references, constructing consensuses, and reporting quality-control
 evidence.
 
-> **Status: v0.2 pre-alpha.** The current release implements a portable end-to-end workflow,
+> **Status: v0.3 pre-alpha.** The current release implements a portable end-to-end workflow,
 > explicit multi-library plate routing, and the contracts needed for experimental validation. It is not yet a
 > production-validated replacement for Nanopore2. Keep Nanopore2 and its results unchanged
 > while outputs are compared against synthetic controls and held-out experimental runs.
@@ -117,7 +117,9 @@ The same workflow is available to Python and notebooks through `load_config()` a
 Barcode panels live in reviewable CSV registries and run profiles select one primer family
 explicitly. Named reference libraries are routed by plate barcode rather than pooled. See
 [Barcode registry](docs/barcode_registry.md) and the
-[20260506 pilot report](docs/20260506_lab_biotin_pilot.md).
+[20260506 pilot report](docs/20260506_lab_biotin_pilot.md). The recovered
+thresholds, decision rules and parallel benchmarks are documented in the
+[demultiplex optimisation audit](docs/demultiplex_optimisation.md).
 
 ## Repository layout
 
@@ -138,7 +140,7 @@ be versioned; raw sequencing data should be managed by the laboratory's durable 
 Do not point experimental development at the only copy of a dataset. Nanopore3 treats inputs as
 read-only and should write intermediate files atomically. It must not infer completion merely
 because some output files exist, and it must not delete or move prior evidence during analysis.
-Nanopore3 v0.2 intentionally does not make final biological chimera calls. It reports uncertain
+Nanopore3 v0.3 intentionally does not make final biological chimera calls. It reports uncertain
 reads conservatively while breakpoint-aware classification is developed and validated. Until
 the experimental validation suite is complete, compare every result with controls and retain the
 original Nanopore2 analysis.

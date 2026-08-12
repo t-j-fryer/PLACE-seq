@@ -47,6 +47,28 @@ class BarcodeCall:
     evidence: tuple[BarcodeEvidence, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedBarcodePanel:
+    """Normalized immutable barcode forms safe to reuse across all reads."""
+
+    sequences: tuple[tuple[str, str, str], ...]
+    uses_iupac: bool
+
+
+def prepare_barcode_panel(barcodes: Mapping[str, str]) -> PreparedBarcodePanel:
+    """Normalize a panel and precompute reverse complements exactly once."""
+
+    normalized = _normalized_barcodes(barcodes)
+    sequences = tuple(
+        (barcode_id, sequence, reverse_complement(sequence))
+        for barcode_id, sequence in normalized.items()
+    )
+    return PreparedBarcodePanel(
+        sequences=sequences,
+        uses_iupac=any(set(sequence) - set("ACGT") for sequence in normalized.values()),
+    )
+
+
 def _normalized_barcodes(barcodes: Mapping[str, str]) -> dict[str, str]:
     if not barcodes:
         raise BarcodeValidationError("at least one barcode is required")
@@ -119,13 +141,25 @@ def validate_barcodes(
     return normalized
 
 
-def _best_location(pattern: str, target: str) -> tuple[int, int, int] | None:
+def _best_location(
+    pattern: str,
+    target: str,
+    *,
+    uses_iupac: bool,
+    target_uses_iupac: bool,
+    max_edits: int | None = None,
+) -> tuple[int, int, int] | None:
+    kwargs = {}
+    if uses_iupac or target_uses_iupac:
+        kwargs["additionalEqualities"] = edlib_iupac_equalities()
+    if max_edits is not None:
+        kwargs["k"] = max_edits
     result = edlib.align(
         pattern,
         target,
         mode="HW",
         task="locations",
-        additionalEqualities=edlib_iupac_equalities(),
+        **kwargs,
     )
     distance = int(result["editDistance"])
     locations = [
@@ -144,20 +178,24 @@ def _best_location(pattern: str, target: str) -> tuple[int, int, int] | None:
 
 def _end_evidence(
     read: str,
-    barcodes: Mapping[str, str],
+    panel: PreparedBarcodePanel,
     window_size: int,
     search_ends: tuple[ReadEnd, ...],
     allow_reverse_complement: bool,
+    max_edits: int | None,
 ) -> tuple[BarcodeEvidence, ...]:
     all_windows: tuple[tuple[ReadEnd, str, int], ...] = (
         ("head", read[:window_size], 0),
         ("tail", read[-window_size:], max(0, len(read) - window_size)),
     )
-    windows = tuple(window for window in all_windows if window[0] in search_ends)
+    windows = tuple(
+        (read_end, window, offset, bool(set(window) - set("ACGT")))
+        for read_end, window, offset in all_windows
+        if read_end in search_ends
+    )
     evidence: list[BarcodeEvidence] = []
-    for barcode_id, barcode in barcodes.items():
-        reverse = reverse_complement(barcode)
-        for read_end, window, offset in windows:
+    for barcode_id, barcode, reverse in panel.sequences:
+        for read_end, window, offset, window_uses_iupac in windows:
             # A forward barcode at the head or its reverse complement at the
             # tail supports forward read orientation; the inverse supports reverse.
             forms: tuple[tuple[str, Literal["forward", "reverse"]], ...]
@@ -168,7 +206,13 @@ def _end_evidence(
             if not allow_reverse_complement:
                 forms = tuple(form for form in forms if form[1] == "forward")
             for pattern, orientation in forms:
-                match = _best_location(pattern, window)
+                match = _best_location(
+                    pattern,
+                    window,
+                    uses_iupac=panel.uses_iupac,
+                    target_uses_iupac=window_uses_iupac,
+                    max_edits=max_edits,
+                )
                 if match is None:
                     continue
                 distance, start, end = match
@@ -228,6 +272,8 @@ def call_barcode(
     min_margin: int = 1,
     search_ends: tuple[ReadEnd, ...] = ("head", "tail"),
     allow_reverse_complement: bool = True,
+    decision_policy: str = "best_margin",
+    prepared_panel: PreparedBarcodePanel | None = None,
 ) -> BarcodeCall:
     """Call a barcode from both read ends using IUPAC-aware semi-global matches.
 
@@ -240,17 +286,27 @@ def call_barcode(
         raise ValueError("window_size must be at least 1")
     if max_edits < 0 or min_margin < 0:
         raise ValueError("max_edits and min_margin must be non-negative")
+    if decision_policy not in {
+        "best_margin",
+        "legacy_unique_threshold",
+        "legacy_unique_best",
+    }:
+        raise ValueError(
+            "decision_policy must be best_margin, legacy_unique_threshold, "
+            "or legacy_unique_best"
+        )
     if not search_ends or set(search_ends) - {"head", "tail"}:
         raise ValueError("search_ends must contain only 'head' and/or 'tail'")
     read = normalize_sequence(sequence)
-    normalized = _normalized_barcodes(barcodes)
+    panel = prepared_panel or prepare_barcode_panel(barcodes)
     all_evidence = _representatives(
         _end_evidence(
             read,
-            normalized,
+            panel,
             min(window_size, len(read)),
             search_ends,
             allow_reverse_complement,
+            max_edits if decision_policy.startswith("legacy_") else None,
         )
     )
     eligible = tuple(hit for hit in all_evidence if hit.distance <= max_edits)
@@ -259,6 +315,77 @@ def call_barcode(
         return BarcodeCall(
             "unassigned", None, "unknown", best_distance, None, None, None, None, None,
             "no barcode met the maximum edit distance", all_evidence,
+        )
+
+    if decision_policy.startswith("legacy_"):
+        owners = sorted({hit.barcode_id for hit in eligible})
+        best = eligible[0]
+        alternatives = [hit for hit in all_evidence if hit.barcode_id != best.barcode_id]
+        second = alternatives[0] if alternatives else None
+        second_distance = None if second is None else second.distance
+        margin = (
+            None if second_distance is None else second_distance - best.distance
+        )
+        best_owners = sorted(
+            {hit.barcode_id for hit in eligible if hit.distance == best.distance}
+        )
+        ambiguous = (
+            len(owners) != 1
+            if decision_policy == "legacy_unique_threshold"
+            else len(best_owners) != 1
+        )
+        if ambiguous:
+            return BarcodeCall(
+                "ambiguous",
+                None,
+                "unknown",
+                best.distance,
+                second_distance,
+                margin,
+                best.read_end,
+                best.start,
+                best.end,
+                (
+                    "multiple barcode identities met the legacy edit threshold"
+                    if decision_policy == "legacy_unique_threshold"
+                    else "multiple barcode identities tied at the best legacy distance"
+                ),
+                all_evidence,
+            )
+        owner = owners[0] if decision_policy == "legacy_unique_threshold" else best_owners[0]
+        owner_hits = [hit for hit in eligible if hit.barcode_id == owner]
+        # The legacy plate code resolves equal head/tail evidence in favour of
+        # the tail (``tail_best <= head_best``), retaining the original read.
+        owner_best = min(
+            owner_hits,
+            key=lambda hit: (
+                hit.distance,
+                0 if hit.read_end == "tail" else 1,
+                hit.start,
+                hit.orientation,
+            ),
+        )
+        # Nanopore2 plate demultiplexing defined orientation by the winning end:
+        # tail evidence retained the read, while head evidence reverse-complemented it.
+        orientation = "forward" if owner_best.read_end == "tail" else "reverse"
+        if not allow_reverse_complement:
+            orientation = "forward"
+        return BarcodeCall(
+            "assigned",
+            owner,
+            orientation,
+            owner_best.distance,
+            second_distance,
+            margin,
+            owner_best.read_end,
+            owner_best.start,
+            owner_best.end,
+            (
+                "exactly one barcode identity met the legacy edit threshold"
+                if decision_policy == "legacy_unique_threshold"
+                else "one barcode identity had the unique best legacy distance"
+            ),
+            all_evidence,
         )
 
     # Each end may independently establish a confident identity.  Conflicting

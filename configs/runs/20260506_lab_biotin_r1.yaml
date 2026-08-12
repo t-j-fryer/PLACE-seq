@@ -41,7 +41,7 @@ reference_libraries:
     minimum_identity_margin: 0.02
 
 # Inferred from the original 20260506 consensus filenames and demultiplexed
-# outputs.  RP07+ are intentionally absent until their sample sheet is confirmed.
+# outputs. RP07 was subsequently confirmed by the experiment owner.
 plate_reference_map:
   RP01: aaseq_biotin
   RP02: aaseq_biotin
@@ -64,27 +64,31 @@ barcodes:
   plate:
     registry_csv: ../barcodes/reverse_primer_families.csv
     family_id: rp_amplicon
-    trim_bases: 8
-    max_edits: 5
+    trim_bases: 12
+    max_edits: 6
     search_window: 400
     search_ends: [head, tail]
     allow_reverse_complement: true
-    minimum_margin: 1
+    minimum_margin: 0
+    decision_policy: legacy_unique_threshold
   well:
     registry_csv: ../barcodes/well_forward_primers_a1_h12.csv
     family_id: well_forward_full
-    trim_bases: 10
-    max_edits: 3
+    trim_bases: 12
+    max_edits: 7
     search_window: 400
     search_ends: [head]
     allow_reverse_complement: false
-    minimum_margin: 1
+    minimum_margin: 0
+    decision_policy: legacy_unique_best
 
 parallel:
   backend: thread
+  # Four threads is the measured knee on this 16-logical-CPU Mac; experts can
+  # benchmark and override it. Processes are also available from the CLI.
   jobs: 4
   threads_per_job: 1
-  chunk_reads: 25000
+  chunk_reads: 1000
 
 random_seed: 141142
 

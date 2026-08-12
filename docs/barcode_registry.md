@@ -37,7 +37,10 @@ and RP06–RP07 to SUMO LAB. The first six mappings were inferred from the origi
 demultiplexed tree and consensus filenames; the RP07 mapping was confirmed by the
 experiment owner on 2026-08-12. RP08+ remain explicitly unmapped until confirmed.
 
-Thresholds in the notebook changed between experiments and were not captured in
-a run manifest. The initial profile therefore uses conservative, panel-separable
-limits (`RP max_edits=5`, well `max_edits=3`) and retains best/second distances
-and margins for later calibration.
+The optimisation notebook recovered two distinct legacy decision rules. Plate
+demultiplexing assigns only when exactly one RP identity is under its threshold;
+the active well demultiplexer assigns the unique minimum-distance well and calls
+only a best-distance tie ambiguous. The profile makes those policies explicit
+and uses the recovered conservative RP setting (`trim=12`, `window=400`,
+`max_edits=6`) and rescored well setting (`12/400/7`). See
+`demultiplex_optimisation.md` for validation limitations and alternatives.

@@ -15,6 +15,118 @@ Conventions:
 
 ---
 
+## 2026-08-12 (fifth) — Golden Gate fragment model and assembly-error detection
+
+### What changed
+
+The experiment owner supplied the oPool design tables and confirmed the critical
+detail: **the oligo sequences in the pool are not what ends up in the gene.** Each
+oligo carries a BsaI site and primer padding at both ends.
+
+**1. New module `src/nanopore3/fragments.py`.** Models the Golden Gate assembly:
+
+- Excises each oligo at `GGTCTC N <4 nt overhang> ... <4 nt overhang> N GAGACC`,
+  keeping the overhangs and discarding the recognition sites and padding.
+- Joins neighbours *through* their shared overhang, so a junction overhang
+  appears once in the product, and strips the two outermost overhangs, which are
+  contributed by the vector.
+- Validates every gene by reconstruction and **raises rather than guessing**. A
+  silently wrong fragment model would misreport every assembly call downstream.
+- Groups fragments by overhang pair. Two designs can only mis-assemble where they
+  share a pair, so those variants are exactly the set a chimera is drawn from.
+
+A subtlety worth recording: **taking the first `GGTCTC` in an oligo is wrong.**
+Primer padding sometimes contains one, which silently produced an over-long
+fragment. Reconstruction rates were 174/192 and 642/651 with naive selection.
+Choosing the BsaI pair that actually reconstructs the gene gives **100% on all
+four design tables**.
+
+**2. `scripts/detect_assembly_errors.py`.** Projects a gene's designed fragment
+boundaries onto each read through an alignment, then re-matches each observed
+fragment against the interchangeable variants for that slot's overhang pair.
+
+### Which SUMO design table is correct
+
+The experiment owner was unsure between two candidates. Resolved by matching
+sequences against the `sumo_lab` reference FASTA:
+
+| Candidate | sequences matching the 332 references |
+| --- | --- |
+| `opTF001/dTF017_..._FULL_INFO.csv` | **332 / 332** |
+| `opTF005/LAB/LAB_FULL_INFO.csv` | 26 / 332 |
+
+**`opTF001/dTF017_dTF018_dTF020_dTF083_dTF084_dTF086_dTF082_dTF023_dTF024` is the
+correct table.** Note that all three libraries match by *sequence* but **0 by
+name** — the reference FASTA identifiers carry a `Block_N_` prefix that the design
+tables do not. Joins between the two must be sequence-based.
+
+### Design structure
+
+| Library | genes | fragments/gene | overhang pairs | interchangeable |
+| --- | --- | --- | --- | --- |
+| aaseq_biotin | 651 | 1:135, 2:509, 3:7 | 72 | 65 |
+| dtf141_dtf142 | 192 | 1:63, 2:129 | 65 | 65 |
+| sumo_lab | 332 | 1:60, 2:272 | 65 | 65 |
+
+Fragments are ~205 nt median. Interchangeable sets hold 4-18 variants, plus one
+large class per library (60-135) formed by the single-fragment genes, which all
+share the vector overhang pair `GCTT`/`AGTG`.
+
+`VectorOH1` is `GCTT` and `VectorOH2` is `AGTG`, independently confirming the
+boundary work in the earlier entries: `ATGCAGCTT` ends with the 5' vector
+overhang and `AGTGGATCC` begins with the 3' one.
+
+### Result on 3,000 pilot reads
+
+| Outcome | reads | share |
+| --- | --- | --- |
+| intact | 1,819 | 60.6% |
+| single-fragment gene (no junction to mis-pair) | 581 | 19.4% |
+| unresolved | 241 | 8.0% |
+| fragment_missing | 181 | 6.0% |
+| no insert extracted | 163 | 5.4% |
+| **chimeric** | 15 | 0.5% |
+
+**0.8% of reads with a decided outcome are chimeric**, with donors named, e.g.
+`dTF142_199_c5 >> dTF141_23_c5` and `dLK10_719_1 >> dLK10_862_1` — recombination
+between designs, across the two dTF14x families in the first case.
+
+This supersedes the crude split-half figure in the previous entry. That probe
+reported 48% discordance *among resolvable `no_match` reads only*, which is a
+small and heavily selected subset; it is not a library-wide chimera rate. The
+fragment-aware number is the one to quote.
+
+`fragment_missing` at 6% is a real and separate assembly failure class.
+
+### Lessons
+
+**The reagent is not the product.** The single most important fact here was that
+an oligo contains a BsaI site and padding that never reach the assembled gene.
+Any analysis matching reads against raw pool oligos would be wrong by ~40 nt per
+fragment, and would have looked plausible.
+
+**Validate a derived model by reconstruction, not by inspection.** The naive BsaI
+excision looked correct on the first row examined and was wrong on 9% of genes.
+Requiring every gene to reconstruct exactly turned a plausible parser into a
+verified one and located the padding-site problem immediately.
+
+### Next steps
+
+1. **Decide whether to promote this into the pipeline** as a `chimera` state in
+   `03_assignment`, which `docs/architecture.md` already reserves. It is
+   deliberately a separate script for now, so the validated pipeline outputs do
+   not change before the calls have been reviewed.
+2. **Review a handful of the 15 chimeric reads by eye** before trusting the class.
+3. Add fragment CSV paths to the run profile once integrated, keyed per library.
+4. Investigate the 8% `unresolved` and 6% `fragment_missing`; some will be
+   nanopore noise on ~205 nt fragments rather than genuine assembly failures.
+5. Chimera detection currently needs >=2 fragments, so 19.4% of reads (single
+   fragment genes) cannot be assessed this way at all. For those, mis-assembly
+   would have to be detected as recombination *within* a fragment, which the
+   overhang model cannot see.
+
+---
+
 ## 2026-08-12 (fourth) — Assembly failure modes: chimeras are not detected
 
 **No code changed in this entry.** It records a measured gap, so the next person

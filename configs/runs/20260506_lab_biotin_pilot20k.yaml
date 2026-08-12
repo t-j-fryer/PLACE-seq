@@ -118,11 +118,13 @@ qc:
   minimum_query_coverage: 0.95
   minimum_reference_coverage: 0.95
   length_tolerance: 10
-  # Coding QC.  The consensus produced by this profile is the reference-guided
-  # insert preceded by the constant CAGCTT linker, so the full reading frame is
-  # ATG + consensus + the constant region 3' of the insert.  `upstream_constant`
-  # must begin at the start codon; both are required together, because a frame
-  # assumed rather than declared would make the stop-codon check meaningless.
-  # Change these whenever the motifs or the construct change.
+  # Coding QC.  forward_motif now runs through the constant ATGCAGCTT, so the
+  # consensus is the bare insert and the full reading frame is
+  # ATGCAGCTT + consensus + the constant region 3' of the insert.
+  # `upstream_constant` must begin at the start codon and must cover exactly the
+  # coding sequence between it and where forward_motif ends; both constants are
+  # required together, because a frame assumed rather than declared would make
+  # the stop-codon check meaningless.  Revisit these whenever a motif changes:
+  # shortening forward_motif back to ...AGCTATG would make this ATG alone.
   upstream_constant: ATGCAGCTT
   downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA

@@ -84,7 +84,7 @@ class AssemblyTests(unittest.TestCase):
 _CSV = """Block,Sequence Name,Overhang1,Overhang2,DNA Fragment 1,DNA Fragment 2,Full Sequence
 1,geneA,,,{a1},,{ga}
 1,geneB,CATG,,{b1},{b2},{gb}
-1,geneC,CATG,,{c1},{c2},{gc}
+2,geneC,CATG,,{c1},{c2},{gc}
 """
 
 
@@ -124,22 +124,38 @@ class FragmentLibraryTests(unittest.TestCase):
         self.assertEqual(self.library.gene_for_sequence(self.gb).name, "geneB")
         self.assertIsNone(self.library.gene_for_sequence("ACGTACGTACGT"))
 
-    def test_fragments_sharing_an_overhang_pair_are_interchangeable(self) -> None:
-        gene_b = self.library.gene_for_sequence(self.gb)
-        # geneB and geneC share both junctions, so each slot has two variants:
-        # exactly the mis-assembly a chimera is drawn from.
-        for fragment in gene_b.fragments:
-            variants = self.library.interchangeable(fragment)
-            owners = {name for names in variants.values() for name in names}
-            self.assertIn("geneB", owners)
-            self.assertIn("geneC", owners)
-        self.assertEqual(self.library.summary()["interchangeable_pairs"], 2)
+    def test_overhangs_reused_across_blocks_are_not_interchangeable(self) -> None:
+        """geneB and geneC share both junctions but sit in different blocks.
 
-    def test_a_unique_gene_shares_no_slot(self) -> None:
-        gene_a = self.library.gene_for_sequence(self.ga)
-        variants = self.library.interchangeable(gene_a.fragments[0])
-        owners = {name for names in variants.values() for name in names}
-        self.assertEqual(owners, {"geneA"})
+        Overhangs are unique within a block and deliberately reused between
+        blocks, which is safe because two blocks never share a tube. Treating
+        them as interchangeable invents recombinants that cannot exist.
+        """
+
+        gene_b = self.library.gene_for_sequence(self.gb)
+        gene_c = self.library.gene_for_sequence(self.gc)
+        self.assertEqual(gene_b.block, "1")
+        self.assertEqual(gene_c.block, "2")
+        self.assertEqual(gene_b.fragments[0].overhang_pair, gene_c.fragments[0].overhang_pair)
+        for fragment in gene_b.fragments:
+            owners = {
+                name
+                for names in self.library.interchangeable("1", fragment).values()
+                for name in names
+            }
+            self.assertEqual(owners, {"geneB"})
+
+    def test_genes_in_block_bounds_the_recombination_space(self) -> None:
+        self.assertEqual({g.name for g in self.library.genes_in_block("1")}, {"geneA", "geneB"})
+        self.assertEqual({g.name for g in self.library.genes_in_block("2")}, {"geneC"})
+        self.assertEqual(self.library.blocks, ("1", "2"))
+        self.assertEqual(self.library.genes_in_block("nope"), ())
+
+    def test_summary_counts_overhang_pairs_within_blocks(self) -> None:
+        summary = self.library.summary()
+        self.assertEqual(summary["blocks"], 2)
+        # No two genes in one block share a junction pair, which is the design.
+        self.assertEqual(summary["shared_within_block"], 0)
 
     def test_a_missing_column_is_reported_clearly(self) -> None:
         bad = self.path.with_name("bad.csv")

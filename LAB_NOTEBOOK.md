@@ -15,6 +15,110 @@ Conventions:
 
 ---
 
+## 2026-08-12 (sixth) — CORRECTION: blocks bound recombination, not overhangs
+
+**This entry corrects the 2026-08-12 (fifth) entry. Every chimera call it
+reported was a false positive.**
+
+### What was wrong
+
+The fifth entry grouped interchangeable fragments by overhang pair across a whole
+reference library. The experiment owner corrected the model: `Block` is the
+**sub-pool** a gene is assembled in. Golden Gate overhangs are unique *within* a
+block and deliberately **reused between** blocks, which is safe because each block
+is separately PCR-amplified with its own primer pair and ligated in its own
+reaction. Two blocks never share a tube.
+
+Confirmed in the design tables — every block has exactly **one** primer pair:
+
+| Library | genes | blocks | within-block overhang pairs | shared within a block |
+| --- | --- | --- | --- | --- |
+| aaseq_biotin | 651 | 20 | 1,041 | 2 |
+| dtf141_dtf142 | 192 | 6 | 259 | 1 |
+| sumo_lab | 332 | 10 | 545 | 1 |
+
+Within a block, junction overhangs are **unique**: 1,039 of 1,041 pairs have a
+single variant. The handful of exceptions are the vector pair `GCTT`/`AGTG`
+shared by single-fragment genes, which is not a junction at all.
+
+So the previous model's "4–18 interchangeable variants per overhang pair" were
+genes from *different blocks*. All 15 reported chimeras were checked against the
+block assignments: **0 same-block, 15 cross-block — every one physically
+impossible.** The number was not merely imprecise, it was meaningless.
+
+### The corrected model
+
+Two consequences, and the second is the interesting one:
+
+1. `FragmentLibrary` is now block-aware. `interchangeable()` requires a block and
+   `Gene` carries its block. Overhang identity alone no longer implies anything.
+2. **A chimera cannot be a legitimate overhang swap.** Since within-block
+   overhangs are unique, correct ligation cannot mis-pair. Real chimeras must come
+   from mis-ligation of *similar but non-identical* overhangs, or from PCR
+   template switching during block amplification. Either way the recombination
+   space is **the whole block**, not the overhang class.
+
+The detector therefore now compares each observed fragment against the
+corresponding slot of **every gene in the same block**.
+
+### Corrected result on the same 3,000 pilot reads
+
+| Outcome | before (wrong) | after (block-scoped) |
+| --- | --- | --- |
+| intact | 1,819 | 1,819 |
+| single-fragment gene | 581 | 581 |
+| unresolved | 241 | 232 |
+| fragment_missing | 181 | 181 |
+| no insert | 163 | 163 |
+| **chimeric** | 15 (all bogus) | **24** |
+
+**24 chimeric reads, 1.3% of decided reads, and all 24 have same-block donors.**
+Per-slot identities are 0.91–0.98, so each fragment confidently matches a
+different gene in the same reaction. Examples:
+
+```
+block  3  dLK27_325_c3   >> binder_dLK38_422_model   identity 0.927 / 0.978
+block  3  dTF142_19_c5   >> dTF141_91_c5             identity 0.963 / 0.975
+block  7  dTF082_dTF080_l125_... >> dTF083_152_4     identity 0.926 / 0.912
+block  5  dTF083_451_3   >> dTF086_432_1
+```
+
+The last two independently reproduce pairs found by the crude split-half probe in
+the fourth entry, which reported `Block_5 dTF083 + dTF086` and
+`Block_7 dTF082 + dTF083`. Two methods with different assumptions agreeing on the
+same recombinants is the strongest evidence so far that these are real.
+
+### Lessons
+
+**A biological constraint I did not know about silently defined the answer.** The
+overhang model was internally consistent, reconstructed all 1,175 genes exactly,
+and produced confident, plausible, named chimeras. It was still entirely wrong,
+because physical separation into sub-pools — a fact recorded in a column I had
+read but treated as a label — determines what can recombine. No amount of
+internal validation would have caught it; only the domain owner could.
+
+**"Plausible and named" is not "verified".** The false calls looked more credible
+than the true ones because they came with donor names and identities. The check
+that mattered was trivial once the constraint was known: are the two donors in the
+same block? It took one query and invalidated the whole result.
+
+**Ask what makes a hypothesis physically impossible, not just unlikely.** The
+useful question was not "how similar are these sequences" but "were these two
+molecules ever in the same tube".
+
+### Next steps
+
+1. Review a few of the 24 same-block chimeras by eye before trusting the class.
+2. Check whether chimeric donors have *similar* junction overhangs, which would
+   distinguish mis-ligation from PCR template switching. If overhangs differ
+   greatly, template switching is the likelier mechanism.
+3. Consider reporting per-block assembly quality: blocks with more recombination
+   may have poorly separated overhangs.
+4. Unchanged from before: 19.4% of reads are single-fragment genes and cannot be
+   assessed for mis-assembly by this method at all.
+
+---
+
 ## 2026-08-12 (fifth) — Golden Gate fragment model and assembly-error detection
 
 ### What changed

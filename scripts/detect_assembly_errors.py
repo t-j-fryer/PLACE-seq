@@ -3,9 +3,15 @@
 
 For each demultiplexed read this projects the designed fragment boundaries of the
 best-matching gene onto the read, then asks which design each fragment actually
-came from.  Because two designs can only mis-assemble where they share an
-overhang pair, the candidate donors for a slot are exactly the variants carrying
-that pair.
+came from.
+
+Candidate donors are restricted to the **same block** — the sub-pool the gene was
+amplified and ligated in.  Junction overhangs are unique within a block and are
+reused between blocks, so two genes from different blocks share overhangs by
+design yet never share a tube.  Searching across blocks reports recombinants that
+cannot physically exist.  Within a block overhangs are unique, so a chimera is
+not a legitimate overhang swap: it comes from mis-ligation of similar overhangs
+or from PCR template switching, and every gene in the block is a candidate.
 
 Outcomes: ``intact``, ``chimeric`` (fragments from different designs, with the
 junction and donors named), ``fragment_missing``, ``fragment_extra``, and
@@ -63,16 +69,25 @@ def project_spans(query: str, gene: str, spans: list[tuple[int, int]]) -> list[t
     return projected
 
 
-def best_variant(
-    observed: str, variants: dict[str, tuple[str, ...]]
+def best_slot_owner(
+    observed: str, slot: int, block_genes: tuple
 ) -> tuple[tuple[str, ...], float, float]:
-    """Return the owners of the closest variant, its identity, and its margin."""
+    """Closest gene in the block at this fragment slot, with identity and margin.
 
+    Every gene in the block is a candidate, not only those sharing an overhang
+    pair, because within a block overhangs are unique and cannot be swapped
+    legitimately.
+    """
+
+    by_sequence: dict[str, list[str]] = {}
+    for gene in block_genes:
+        if slot < len(gene.fragments):
+            by_sequence.setdefault(gene.fragments[slot].sequence, []).append(gene.name)
     scored = []
-    for sequence, owners in variants.items():
+    for sequence, owners in by_sequence.items():
         distance = edlib.align(observed, sequence, mode="NW", task="distance")["editDistance"]
         identity = max(0.0, 1.0 - distance / max(len(observed), len(sequence), 1))
-        scored.append((identity, owners))
+        scored.append((identity, tuple(sorted(owners))))
     scored.sort(key=lambda item: (-item[0], item[1]))
     if not scored:
         return (), 0.0, 0.0
@@ -166,6 +181,7 @@ def main() -> int:
             if len(gene.fragments) < 2:
                 outcomes["single_fragment_gene"] += 1
                 continue
+            block_genes = fragments.genes_in_block(gene.block)
             spans = [(f.start, f.end) for f in gene.fragments]
             projected = project_spans(query, gene.sequence, spans)
             slot_owners: list[tuple[str, ...]] = []
@@ -177,8 +193,8 @@ def main() -> int:
                     outcomes["fragment_missing"] += 1
                     resolved = False
                     break
-                owners, identity, margin = best_variant(
-                    observed, fragments.interchangeable(fragment)
+                owners, identity, margin = best_slot_owner(
+                    observed, fragment.slot, block_genes
                 )
                 if identity < args.min_fragment_identity or margin < args.min_fragment_margin:
                     resolved = False
@@ -210,6 +226,8 @@ def main() -> int:
                                 "reference_library_id": library,
                                 "assignment_status": call.status,
                                 "reported_reference": "|".join(call.reference_ids),
+                                "block": gene.block,
+                                "anchor_gene": gene.name,
                                 "slot_owners": " >> ".join(
                                     sorted(o)[0] for o in slot_owners
                                 ),

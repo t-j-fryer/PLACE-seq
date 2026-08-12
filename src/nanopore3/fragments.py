@@ -10,8 +10,12 @@ start of the 5' overhang to the end of the 3' overhang.  Adjacent fragments are
 joined *through* a shared overhang, which therefore appears once in the product,
 and the outermost overhangs are contributed by the vector.
 
-Two designs can only mis-assemble where they share an overhang pair, so the
-variants sharing one pair are exactly the set a chimera can be drawn from.
+Genes are assembled in **blocks**: sub-pools amplified with their own primer
+pair and ligated in separate reactions.  Junction overhangs are designed to be
+unique *within* a block and are deliberately reused *between* blocks, which is
+safe because two blocks never share a tube.  Any interchangeability question is
+therefore only meaningful within one block; comparing across blocks invents
+recombinants that cannot physically exist.
 """
 
 from __future__ import annotations
@@ -65,6 +69,9 @@ class Gene:
     name: str
     sequence: str
     fragments: tuple[Fragment, ...]
+    # The sub-pool this gene was amplified and assembled in. Mis-assembly is
+    # confined to one block, so this bounds every recombination hypothesis.
+    block: str = ""
 
 
 def _occurrences(text: str, motif: str) -> list[int]:
@@ -157,18 +164,26 @@ class FragmentLibrary:
         self._by_sequence: dict[str, Gene] = {}
         for gene in genes:
             self._by_sequence.setdefault(gene.sequence, gene)
-        variants: dict[tuple[str, str], dict[str, list[str]]] = defaultdict(
+        self._by_block: dict[str, list[Gene]] = defaultdict(list)
+        for gene in genes:
+            self._by_block[gene.block].append(gene)
+        # Keyed by (block, overhang pair): a shared pair only permits
+        # mis-assembly when both genes were in the same reaction.
+        variants: dict[tuple[str, tuple[str, str]], dict[str, list[str]]] = defaultdict(
             lambda: defaultdict(list)
         )
         for gene in genes:
             for fragment in gene.fragments:
-                variants[fragment.overhang_pair][fragment.sequence].append(gene.name)
-        self.variants_by_overhang: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {
-            pair: {
+                key = (gene.block, fragment.overhang_pair)
+                variants[key][fragment.sequence].append(gene.name)
+        self.variants_by_overhang: dict[
+            tuple[str, tuple[str, str]], dict[str, tuple[str, ...]]
+        ] = {
+            key: {
                 sequence: tuple(sorted(owners))
                 for sequence, owners in sorted(by_sequence.items())
             }
-            for pair, by_sequence in sorted(variants.items())
+            for key, by_sequence in sorted(variants.items())
         }
 
     @classmethod
@@ -202,7 +217,14 @@ class FragmentLibrary:
                     fragments = assemble_fragments(oligos, gene)
                 except (FragmentError, ValueError) as exc:
                     raise FragmentError(f"{source}:{number} ({name}): {exc}") from exc
-                genes.append(Gene(name, normalize_sequence(gene), fragments))
+                genes.append(
+                    Gene(
+                        name,
+                        normalize_sequence(gene),
+                        fragments,
+                        block=(row.get("Block") or "").strip(),
+                    )
+                )
         return cls(tuple(genes))
 
     def gene_for_sequence(self, sequence: str) -> Gene | None:
@@ -214,18 +236,39 @@ class FragmentLibrary:
 
         return self._by_sequence.get(normalize_sequence(sequence, allow_empty=True))
 
-    def interchangeable(self, fragment: Fragment) -> dict[str, tuple[str, ...]]:
-        """Return every fragment variant that could occupy this fragment's slot."""
+    def interchangeable(self, block: str, fragment: Fragment) -> dict[str, tuple[str, ...]]:
+        """Fragment variants that could occupy this slot *in the same block*.
 
-        return self.variants_by_overhang.get(fragment.overhang_pair, {})
+        Overhangs repeat across blocks by design, so this must be scoped to one
+        block. Scoping it globally reports recombinants between genes that were
+        never in the same tube.
+        """
+
+        return self.variants_by_overhang.get((block, fragment.overhang_pair), {})
+
+    def genes_in_block(self, block: str) -> tuple[Gene, ...]:
+        """Every gene assembled in one sub-pool: the full recombination space.
+
+        Junction overhangs are unique within a block, so a chimera cannot arise
+        from a legitimate overhang swap. Real ones come from mis-ligation of
+        similar overhangs or from PCR template switching, and both are bounded
+        by the block rather than by the overhang pair.
+        """
+
+        return tuple(self._by_block.get(block, ()))
+
+    @property
+    def blocks(self) -> tuple[str, ...]:
+        return tuple(sorted(self._by_block))
 
     def summary(self) -> dict[str, int]:
         pairs = self.variants_by_overhang
         return {
             "genes": len(self.genes),
+            "blocks": len(self._by_block),
             "fragments": sum(len(gene.fragments) for gene in self.genes),
-            "overhang_pairs": len(pairs),
-            "interchangeable_pairs": sum(1 for v in pairs.values() if len(v) > 1),
+            "within_block_overhang_pairs": len(pairs),
+            "shared_within_block": sum(1 for v in pairs.values() if len(v) > 1),
         }
 
 

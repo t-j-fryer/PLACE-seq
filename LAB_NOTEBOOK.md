@@ -105,6 +105,18 @@ rather than being dropped or mistaken for a barcode failure. It is enabled in
 `configs/runs/20260506_lab_biotin_r1.yaml` only. With it set, the production
 profile validates: **2,167,558 records**.
 
+A direct scan of the source FASTQ counts **91 zero-length reads in 2,167,558**
+(0.004%), the first at record 91,708:
+
+```bash
+awk 'NR%4==2 && length($0)==0 {n++} END {print n+0}' None_sample_1.fastq
+```
+
+The yield impact is negligible; the availability impact was total, since one such
+record aborted the entire run. Confirm the `empty_read` count in the
+demultiplexing summary matches 91 after the full run — a larger number would mean
+the reader is now accepting something it should not.
+
 **7. New tests and tooling.**
 `tests/test_assignment_determinism.py` (5 tests) covers hash-seed stability,
 shortlist order-independence, k-mer rescue versus exhaustive alignment, and the
@@ -227,8 +239,8 @@ regression test detects the bug it claims to cover.
    assignment, versus an estimated 10+ hours before this session. Note that
    preflight alone takes about 5 min, because it hashes and scans the whole file.
    Confirm memory stays bounded with 8 workers — each holds its own reference
-   indexes (~3 libraries, 1,175 references). Check the `empty_read` count in the
-   demultiplexing summary before quoting any yield.
+   indexes (~3 libraries, 1,175 references). The demultiplexing summary should
+   report exactly 91 `empty_read` calls.
 2. **Investigate the 973 `motif_missing` and 1,901 `no_match` reads.** That is
    19% of demultiplexed reads discarded. Determine whether they are genuine
    off-target/chimeric molecules or a motif/threshold artefact before treating

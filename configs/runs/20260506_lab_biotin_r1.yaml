@@ -56,8 +56,14 @@ library:
   forward_motif: TAAGAAGGAGAGCAGCTATG
   reverse_motif: TCCGAAACACCAGGCACGTC
   motif_max_edits: 2
-  # Initial characterization deliberately has no length gate: the source median
-  # is 1,232 nt and the notebook's displayed 1,500-nt minimum is inappropriate.
+  # Conservative gate supplied by the experiment owner to exclude fragments and
+  # primer dimers.  It is deliberately wide: on the 20k pilot the assigned reads
+  # span 974 nt (p1) to 1,462 nt (p99), so 500-2,000 sits well outside the real
+  # distribution.  It removes 5.1% of reads, 86% of which were already failing
+  # demultiplexing, and only 0.94% of reads that would otherwise be assigned.
+  # The notebook's displayed 1,500-nt minimum would have been far too strict.
+  minimum_read_length: 500
+  maximum_read_length: 2000
   minimum_mean_quality: 10
   # This FASTQ contains zero-length basecalls (for example record 91,708).  They
   # are counted as `empty_read` in the demultiplexing summary instead of failing

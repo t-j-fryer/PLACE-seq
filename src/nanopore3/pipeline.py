@@ -318,6 +318,30 @@ def _demux_one(
     ):
         quality_status = "low_quality"
 
+    if length_status != "pass" or quality_status != "pass":
+        # These read-level gates already override any barcode verdict below, so
+        # matching barcodes against a fragment, a dimer, or an unreadable read
+        # only costs time. Rejecting here is what makes a length filter cheap.
+        row = {
+            "read_uid": record.read_uid,
+            "original_read_id": record.name,
+            "sample_id": sample_id,
+            "record_index": record.record_index,
+            "length": len(record.sequence),
+            "mean_q": f"{record.mean_quality:.4f}",
+            "length_status": length_status,
+            "quality_status": quality_status,
+            "call_status": length_status if length_status != "pass" else quality_status,
+            "reason_code": (
+                "read length outside configured range"
+                if length_status != "pass"
+                else "mean read quality below configured minimum"
+            ),
+        }
+        row.update(_call_dict(_disabled_barcode("not_attempted"), "plate"))
+        row.update(_call_dict(_disabled_barcode("not_attempted"), "well"))
+        return row, None
+
     plate = _barcode_call(
         record.sequence, config.plate_barcodes, sample_id, plate_panel
     )

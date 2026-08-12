@@ -15,6 +15,141 @@ Conventions:
 
 ---
 
+## 2026-08-12 (later) — Read-length gate, and the QC failures are a 6-base offset
+
+### What changed
+
+**1. Read-length gate of 500–2,000 nt (scientific, requested).**
+The experiment owner supplied a conservative range to exclude fragments and
+primer dimers. Set in both 20260506 profiles as `library.minimum_read_length`
+and `maximum_read_length`.
+
+Calibration on the 20k pilot: assigned reads span **974 nt (p1) to 1,462 nt
+(p99)**, median 1,247, so 500–2,000 sits well outside the real distribution and
+is genuinely conservative. It removes 1,021 of 20,000 reads (5.1%), but **86% of
+those were already failing demultiplexing** — only 142 reads (0.94%) that would
+otherwise have been assigned are affected.
+
+Effect on the pilot:
+
+| | no gate | 500–2,000 |
+| --- | --- | --- |
+| demux assigned | 15,126 | 14,984 |
+| assignment `assigned_unique` | 12,145 | 12,141 |
+| assignment `ambiguous` | 107 | **50** |
+| assignment `motif_missing` | 973 | 899 |
+| `consensus_pass` | 603 | 603 |
+| QC pass | 286 | 286 |
+| demux + assignment wall time | 30 s + 20 s | **19 s + 13 s** |
+
+Four assigned reads lost, assignment ambiguity **halved**, and the run about a
+third faster. The gate is close to free scientifically and clearly worth it.
+
+**2. Read-level gates now short-circuit before barcode matching (performance).**
+`_demux_one` computed `length_status` and `quality_status` up front but still ran
+both barcode panels before applying them, so a length filter cost full compute.
+Length and quality already override any barcode verdict, so a failing read now
+returns immediately with `plate`/`well` recorded as `not_attempted`. This is what
+makes the filter cheap; it is also why filtered reads no longer carry barcode
+evidence columns. No previously-configured run had a length gate, so no existing
+result changes.
+
+### The QC failures are not a depth problem — they are a constant 6-base offset
+
+The previous entry's next-steps list called the 1,731 `low_depth` groups and 466
+QC failures a "reads-per-well problem". **Both halves of that were wrong.**
+
+**`low_depth` is an artefact of the pilot's size.** The pilot is 20,000 of
+2,167,558 reads (0.92%). Median depth is 3 reads per group and only 752 of 2,483
+groups reach the `minimum_depth: 6` threshold. At full scale each group receives
+roughly 100× more reads. `minimum_depth: 6` is unchanged and appropriate; nothing
+needs adjusting.
+
+**The QC failures are a systematic boundary offset.** QC pass rate does not
+improve with depth — it plateaus around 48% and median identity is flat at
+~0.978 in every depth bucket from 6 to 30+. Aligning each consensus to its
+reference shows why:
+
+```
+cigar: 2I1=1I1=3I238=      cons 5' CAGCTTGTCGTTGGTGGAGTG...
+                           ref  5' ------GTCGTTGGTGGAGTG...
+```
+
+Six inserted bases at the 5' end, then a **perfect** match for the entire
+remainder. **707 of 752 consensuses (94%) carry the identical prefix `CAGCTT`
+that the reference sequences do not include**, across all three libraries.
+
+This also explains the pass/fail split, which is otherwise puzzling. Identity is
+`1 - 6/length`, so a reference of 300 nt or more still clears the 0.98 gate with
+those 6 edits while a shorter one cannot. **QC outcome was being determined by
+insert length, not by consensus quality.** The `minimum_identity: 0.98` threshold
+is not too strict; the sequences being compared were misaligned by 6 bases.
+
+Two diagnostic runs testing `forward_motif: TAAGAAGGAGAGCAGCTATG` **+ `CAGCTT`**:
+
+| | baseline | +CAGCTT, edits 2 | +CAGCTT, edits 3 |
+| --- | --- | --- | --- |
+| `assigned_unique` | 12,141 | 12,011 | **12,233** |
+| `ambiguous` | 50 | 138 | 167 |
+| `motif_missing` | 899 | 968 | **668** |
+| QC pass | 286 | 665 | **680** |
+| QC fail | 466 | 74 | **74** |
+
+Extending the motif alone costs assignment yield, because a 26 nt motif at
+`motif_max_edits: 2` is proportionally stricter than a 20 nt one. Raising the
+budget to 3 recovers it and then some: against the baseline it rescues 231 reads
+that were discarded as `motif_missing`, assigns 92 more, conservatively flags 117
+more as `ambiguous`, and **more than doubles QC passes**.
+
+**This change is deliberately not applied.** It depends on a fact only the
+experiment owner can confirm: whether `CAGCTT` is a constant linker between the
+ATG and every designed insert — in which case trimming it is correct and lossless
+— or whether it varies for some designs, in which case trimming would corrupt
+them. Evidence is preserved in `runs/20260506-diag-motif-cagctt` and
+`runs/20260506-diag-motif-cagctt-e3`.
+
+The alternative fix is to prepend `CAGCTT` to the reference FASTAs instead, which
+keeps the linker in the consensus. Both make consensus and reference describe the
+same molecule; extending the motif is a pure configuration change and is cheaper.
+
+### What QC actually evaluates
+
+`evaluate_consensus` in `src/nanopore3/qc.py` scores four independent criteria and
+fails `overall` if any **evaluable** one fails:
+
+| Criterion | Test | Status here |
+| --- | --- | --- |
+| `full_amplicon` | global NW identity ≥ 0.98, and both length-ratio coverages ≥ 0.95 | the only one that ever fails |
+| `expected_length` | `abs(len(consensus) - len(reference)) <= 10` | passes 738/752 |
+| `reading_frame` | coding length divisible by 3 | **never runs** |
+| `internal_stops` | no TAA/TAG/TGA before the final codon | **never runs** |
+
+Two gaps worth knowing about:
+
+- **Half of the advertised QC never executes.** `reading_frame` and
+  `internal_stops` require `coding_start`/`coding_end`, and the pipeline never
+  passes them — there is no configuration field for them at all. They are
+  permanently `not_evaluable`. For a protein-design assay these are the checks
+  that matter most, so this is a real gap, not a cosmetic one.
+- **`query_coverage` and `reference_coverage` are length ratios, not coverage.**
+  `global_alignment_metrics` computes `min(1, len(ref)/len(query))` and its
+  inverse. Under a global NW alignment that is a reasonable proxy, but the names
+  promise alignment-derived coverage and do not deliver it. It is not what failed
+  here — identity was — but it should be renamed or computed properly.
+
+### Next steps
+
+1. **Confirm the `CAGCTT` question** above, then apply the motif change (or the
+   reference change) and re-baseline. This is the single highest-value open item:
+   it more than doubles QC yield.
+2. **Wire `coding_start`/`coding_end` into configuration** so reading-frame and
+   internal-stop QC actually run. Until then, no result is checked for frameshifts
+   or premature stops.
+3. Re-check `low_depth` after the full run rather than on a 0.92% sample.
+4. Rename or fix the coverage metrics in `qc.py`.
+
+---
+
 ## 2026-08-12 — Standalone repository, k-mer prefilter, and a reproducibility fix
 
 ### Context inherited at the start of this session
@@ -245,9 +380,11 @@ regression test detects the bug it claims to cover.
    19% of demultiplexed reads discarded. Determine whether they are genuine
    off-target/chimeric molecules or a motif/threshold artefact before treating
    any yield number as final.
-3. **Consensus is the next optimisation target** now that it is no longer
-   dominated: 1,731 of 2,483 groups fail as `low_depth` and only 286 pass QC.
-   That is a scientific yield question (reads per well) more than a speed one.
+3. ~~**Consensus is the next optimisation target**: 1,731 of 2,483 groups fail as
+   `low_depth` and only 286 pass QC. That is a scientific yield question (reads
+   per well) more than a speed one.~~ **Wrong on both counts — corrected by the
+   2026-08-12 (later) entry.** `low_depth` is an artefact of sampling 0.92% of the
+   dataset, and the QC failures are a constant 6-base boundary offset, not depth.
 4. **`_ordered_map` still starves workers by design.** It keeps exactly `jobs`
    futures in flight. Increasing the queue depth was measured and made no
    difference at current batch sizes, but it will matter if per-batch cost drops.

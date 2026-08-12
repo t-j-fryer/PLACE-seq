@@ -15,6 +15,116 @@ Conventions:
 
 ---
 
+## 2026-08-12 (fourth) — Assembly failure modes: chimeras are not detected
+
+**No code changed in this entry.** It records a measured gap, so the next person
+does not assume assignment handles oligo-pool assembly errors.
+
+### Context
+
+The experiment owner clarified that this is Nanopore sequencing of an **oligo-pool
+assembly**. Molecules are physically assembled from fragments, so the expected
+failure modes are a **missing fragment**, an **extra fragment**, and
+**mis-pairing** — a chimera whose fragments come from different references.
+
+### How the current pipeline actually behaves
+
+Constructed from two real 372 nt `aaseq_biotin` references and run through the
+production thresholds (identity 0.80, coverage 0.70/0.70, margin 0.02):
+
+| Construct | Assignment | QC (assuming a perfect consensus) |
+| --- | --- | --- |
+| intact | `assigned_unique`, identity 1.000 | pass |
+| 1/6 fragment missing | `assigned_unique`, identity 0.833 | **fail** (length, frame) |
+| 1/3 missing | `no_match`, ref coverage 0.637 | — |
+| 1/2 missing | `no_match`, ref coverage 0.468 | — |
+| 1/6 extra inserted | `assigned_unique`, identity 0.857 | **fail** (length, frame) |
+| 1/3 extra inserted | `assigned_unique`, query coverage 0.742 | **fail** (length, frame) |
+| chimera 50% A + 50% B | `no_match`, margin 0.005 | — |
+| chimera 67/33 | **`assigned_unique` → A**, margin 0.175 | fail (identity only) |
+| chimera 75/25 | **`assigned_unique` → A**, margin 0.250 | fail (identity only) |
+| chimera 90/10 | **`assigned_unique` → A**, identity 0.941, margin 0.392 | fail (identity only) |
+
+**Indels are handled acceptably; chimeras are not.** A missing or extra fragment
+changes the length, so `expected_length` and `reading_frame` catch it
+independently of identity. A chimera of two same-length designs is the *right
+length and in frame*, so those checks pass. The only thing standing between a
+chimera and a clean report is the 0.98 identity gate — the same scalar that
+low-depth consensus noise moves. A 90/10 chimera scores 0.941, which is not
+cleanly separable from a noisy but correct consensus.
+
+Worse, the margin check gives no protection. It compares the best against the
+second best *whole-length* alignment, so an uneven chimera looks *more* confident
+the more lopsided it is: margin rises from 0.175 at 67/33 to 0.392 at 90/10.
+
+### How much of this is in the real data
+
+A split-half probe over 4,000 pilot reads: cut each extracted insert in half,
+shortlist each half independently by specificity-weighted k-mers, and compare.
+
+| Assignment status | halves agree | **halves differ** | unresolved |
+| --- | --- | --- | --- |
+| `assigned_unique` | 3,214 | **24 (0.7%)** | 1 |
+| `no_match` | 90 | **83 (48%)** | 269 |
+| `ambiguous` | 0 | **3 (100%)** | 0 |
+
+- **Roughly half of all resolvable `no_match` reads are chimeric.** They are
+  currently discarded into the same bucket as genuine junk, so a real and
+  measurable assembly failure rate is being thrown away rather than reported.
+- **0.7% of `assigned_unique` reads are chimeric and reported as clean.** Small
+  as a fraction, but it is a *confident wrong answer*, and it scales to thousands
+  of reads across 2.17 M.
+
+The discordant pairs are highly informative:
+
+```
+5' Block_5_dTF083_451_3      3' Block_5_dTF086_432_1
+5' Block_7_dTF082_dTF080_l1  3' Block_7_dTF083_152_4
+5' Block_9_dTF017_6i2g_l91_  3' Block_9_dTF024_APdesign_
+```
+
+**The two parents share the same `Block_N` prefix every time.** Mis-pairing
+happens between designs occupying the same assembly block, which is exactly what
+a shared fragment junction predicts. The reference naming already encodes the
+block structure needed to model this.
+
+### Recommended approach
+
+Detection does not need new algorithms — the existing specificity-weighted k-mer
+index already resolves each half independently, as the probe above shows. What is
+needed is to run it **segment-wise** and record the profile:
+
+1. Split the extracted insert into N windows (or, better, at the known fragment
+   boundaries from the oPool design).
+2. Shortlist each window against the routed library.
+3. Uniform best reference across windows and a passing whole-length alignment →
+   `assigned_unique`, as now. Windows confidently naming different references →
+   a new `chimera` state carrying both parents and the breakpoint window.
+4. Require a margin per window so noisy windows abstain rather than vote.
+
+`docs/architecture.md` already reserves `chimera` and `truncated` in the
+assignment vocabulary, and the README already states that v0.3 does not make
+biological chimera calls — so this closes a documented gap rather than inventing
+a contract.
+
+Using the real fragment boundaries would be materially better than fixed windows,
+because it would also distinguish *missing* and *extra* fragments by name rather
+than inferring them from length. That needs the oPool design (fragment sequences
+or coordinates per reference), which is not in this repository.
+
+### Next steps
+
+1. Decide between fixed-window and fragment-aware segmentation; the latter needs
+   the oPool fragment definitions.
+2. Implement segment-wise assignment and the `chimera` state.
+3. Report an assembly-failure breakdown per plate/well: correct, missing
+   fragment, extra fragment, mis-paired. This is a scientific result about the
+   assembly, not merely a QC filter.
+4. Until then, **treat `no_match` as "rejected, cause unknown" and do not quote
+   it as a contamination or quality figure** — about half of it is chimeric.
+
+---
+
 ## 2026-08-12 (third) — Coding QC, and the 6-base offset closed
 
 ### Context

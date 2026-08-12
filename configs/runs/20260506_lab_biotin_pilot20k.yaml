@@ -53,9 +53,15 @@ plate_reference_map:
 
 library:
   name: pET-amplicon-insert
-  forward_motif: TAAGAAGGAGAGCAGCTATG
+  # Extended past the ATG through the constant CAGCTT linker, confirmed by the
+  # experiment owner as the first 9 bases (ATGCAGCTT) of every construct.  This
+  # makes the extracted insert start exactly where the reference FASTAs start;
+  # previously every consensus carried a 6-base prefix the references lacked.
+  forward_motif: TAAGAAGGAGAGCAGCTATGCAGCTT
   reverse_motif: TCCGAAACACCAGGCACGTC
-  motif_max_edits: 2
+  # 3 rather than 2: a 26 nt motif at 2 edits is proportionally stricter than
+  # the original 20 nt motif was, and costs ~130 assigned reads without it.
+  motif_max_edits: 3
   # Conservative gate supplied by the experiment owner to exclude fragments and
   # primer dimers.  It is deliberately wide: on the 20k pilot the assigned reads
   # span 974 nt (p1) to 1,462 nt (p99), so 500-2,000 sits well outside the real
@@ -112,3 +118,11 @@ qc:
   minimum_query_coverage: 0.95
   minimum_reference_coverage: 0.95
   length_tolerance: 10
+  # Coding QC.  The consensus produced by this profile is the reference-guided
+  # insert preceded by the constant CAGCTT linker, so the full reading frame is
+  # ATG + consensus + the constant region 3' of the insert.  `upstream_constant`
+  # must begin at the start codon; both are required together, because a frame
+  # assumed rather than declared would make the stop-codon check meaningless.
+  # Change these whenever the motifs or the construct change.
+  upstream_constant: ATGCAGCTT
+  downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA

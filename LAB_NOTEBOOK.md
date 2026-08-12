@@ -15,6 +15,120 @@ Conventions:
 
 ---
 
+## 2026-08-12 (third) — Coding QC, and the 6-base offset closed
+
+### Context
+
+The experiment owner confirmed the open question from the previous entry: the
+first nine bases of every construct are **`ATGCAGCTT`**, so `CAGCTT` is a constant
+linker between the start codon and the variable insert. They also supplied the
+constant region 3' of the insert (555 nt, beginning `AGTGGATCC`, ending in a
+His-tag and `TAA`), and asked for reading-frame and internal-stop QC that adapts
+to whatever constant regions a user declares.
+
+### What changed
+
+**1. Reading-frame and internal-stop QC now actually run (scientific).**
+Previously both were permanently `not_evaluable`: they required
+`coding_start`/`coding_end` integers that no configuration could supply.
+
+They are now driven by two declared constant regions in the `qc` section:
+
+```yaml
+qc:
+  upstream_constant: ATGCAGCTT     # must begin at the start codon
+  downstream_constant: AGTGGATCC...TAA
+```
+
+QC assembles `upstream_constant + consensus + downstream_constant`, requires the
+total to be a whole number of codons, translates frame 0, and fails if a stop
+appears before the final codon. Design decisions worth knowing:
+
+- **Both constants are required together.** A frame inferred from one side would
+  be a guess, and a stop-codon result computed in a guessed frame is worse than
+  no result. Supplying one without the other is a configuration error.
+- **`upstream_constant` must begin at a start codon** (`ATG`/`GTG`/`TTG`),
+  validated at load time. This is what makes the frame declared rather than assumed.
+- **Stops are not reported from a frameshifted ORF.** When the frame check fails,
+  `internal_stops` is `not_evaluable`, because stop codons read out of frame are
+  noise and would be reported as if they were biology.
+- **Ambiguous codons translate to `X`, never to a guessed residue**, so a
+  low-support consensus base cannot become a confident amino acid.
+- Omitting both keeps the previous behaviour exactly, so this is opt-in.
+
+Two new columns in `qc.csv.gz`: `protein_length` and `internal_stop_codon`.
+
+**2. The 6-base offset is closed (scientific).**
+With `CAGCTT` confirmed constant, `forward_motif` is extended through it to
+`TAAGAAGGAGAGCAGCTATGCAGCTT`, and `motif_max_edits` raised 2 → 3 because a 26 nt
+motif at 2 edits is proportionally stricter than the original 20 nt motif was.
+`qc.upstream_constant` is correspondingly `ATGCAGCTT`, since the consensus no
+longer carries the linker.
+
+**The median consensus-to-reference edit distance is now 0, previously 6.**
+
+### Results on the 20k pilot
+
+| | at session start | + length gate | + coding QC | + motif fix (final) |
+| --- | --- | --- | --- | --- |
+| `assigned_unique` | 12,145 | 12,141 | 12,141 | **12,233** |
+| `motif_missing` | 973 | 899 | 899 | **668** |
+| `ambiguous` | 107 | 50 | 50 | 167 |
+| QC pass | 286 | 286 | 273 | **663** |
+| QC fail | 466 | 466 | 479 | 91 |
+
+Final QC breakdown over 754 evaluable consensuses:
+
+| Criterion | pass | fail | not_evaluable |
+| --- | --- | --- | --- |
+| `full_amplicon` | 680 | 74 | — |
+| `expected_length` | 737 | 17 | — |
+| `reading_frame` | 730 | 24 | — |
+| `internal_stops` | 726 | 4 | 24 |
+
+Protein length: min 232, median 280, max 347 residues.
+
+**QC passes went from 286 to 663 while two additional real checks were added.**
+On the pre-motif-fix run the coding checks alone caught **13 consensuses that
+passed both identity and length** but were frameshifted or carried a premature
+stop — defects the previous QC could not have reported.
+
+### Lessons
+
+**A systematic offset masquerades as a quality problem.** Every symptom pointed at
+consensus quality: identity just under threshold, a plausible-looking ~2%
+error rate, a pass rate that looked depth-limited. The actual cause was a constant
+6-base boundary disagreement between motif extraction and the reference
+definition. The tell was that median identity was *flat across every depth
+bucket* — real sequencing error improves with depth, systematic offsets do not.
+Check whether an error metric responds to the variable that should govern it.
+
+**A quantised error distribution is not sequencing error.** Median edit distance
+of exactly 6, with p10 also exactly 6, cannot come from a stochastic process. The
+distribution's shape identified the bug before any alignment was inspected.
+
+**Half a QC suite silently not running is worse than not having it.** The stage
+reported `reading_frame` and `internal_stops` for every consensus, always as
+`not_evaluable`, because nothing could supply their parameters. It looked like
+coverage. For a protein-design assay these are the checks that matter most, and
+nothing was frameshift-checked until now.
+
+### Next steps
+
+1. **Run the full 2.17 M-read dataset.** All blockers are now cleared and the
+   profile is settled. Compare the `empty_read` count against the expected 91.
+2. **Review the 24 frameshifted and 4 premature-stop consensuses** — these are
+   real biological or synthesis defects, and are the first such calls this
+   pipeline has ever made. Confirm a few by eye before trusting the class.
+3. **Investigate the remaining 74 `full_amplicon` failures** now that the
+   systematic offset is gone; whatever remains should be genuine variation.
+4. `ambiguous` rose 50 → 167 with the relaxed motif budget. These are reads
+   rescued from `motif_missing` and conservatively flagged rather than newly
+   confused, but confirm that reading before quoting yields.
+5. Rename or fix the length-ratio "coverage" metrics in `qc.py` (carried over).
+
+---
+
 ## 2026-08-12 (later) — Read-length gate, and the QC failures are a 6-base offset
 
 ### What changed
@@ -101,12 +215,15 @@ budget to 3 recovers it and then some: against the baseline it rescues 231 reads
 that were discarded as `motif_missing`, assigns 92 more, conservatively flags 117
 more as `ambiguous`, and **more than doubles QC passes**.
 
-**This change is deliberately not applied.** It depends on a fact only the
-experiment owner can confirm: whether `CAGCTT` is a constant linker between the
-ATG and every designed insert — in which case trimming it is correct and lossless
-— or whether it varies for some designs, in which case trimming would corrupt
-them. Evidence is preserved in `runs/20260506-diag-motif-cagctt` and
+**This change was deliberately not applied in this entry.** It depended on a fact
+only the experiment owner could confirm: whether `CAGCTT` is a constant linker
+between the ATG and every designed insert — in which case trimming it is correct
+and lossless — or whether it varies for some designs, in which case trimming would
+corrupt them. Evidence is preserved in `runs/20260506-diag-motif-cagctt` and
 `runs/20260506-diag-motif-cagctt-e3`.
+
+> **Resolved.** The experiment owner confirmed `ATGCAGCTT` as the constant first
+> nine bases of every construct. Applied in the 2026-08-12 (third) entry above.
 
 The alternative fix is to prepend `CAGCTT` to the reference FASTAs instead, which
 keeps the linker in the consensus. Both make consensus and reference describe the

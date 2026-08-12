@@ -969,6 +969,8 @@ def run_pipeline(
                                 "alignment_query_coverage": "",
                                 "alignment_reference_coverage": "",
                                 "reason": "consensus sequence unavailable",
+                                "protein_length": "",
+                                "internal_stop_codon": "",
                             }
                         )
                         continue
@@ -981,6 +983,8 @@ def run_pipeline(
                         min_query_coverage=config.qc.minimum_query_coverage,
                         min_reference_coverage=config.qc.minimum_reference_coverage,
                         length_tolerance=config.qc.length_tolerance,
+                        upstream_constant=config.qc.upstream_constant,
+                        downstream_constant=config.qc.downstream_constant,
                     )
                     qc_rows.append(
                         {
@@ -1004,6 +1008,8 @@ def run_pipeline(
                 "alignment_query_coverage",
                 "alignment_reference_coverage",
                 "reason",
+                "protein_length",
+                "internal_stop_codon",
             ]
             _write_csv(stage.output_path("qc.csv.gz"), qc_rows, fields)
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["overall"] for row in qc_rows).items())))

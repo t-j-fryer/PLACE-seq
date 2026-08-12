@@ -312,6 +312,12 @@ class QcSettings:
     minimum_query_coverage: float = 0.95
     minimum_reference_coverage: float = 0.95
     length_tolerance: int = 10
+    # Constant sequence flanking the consensus in the full open reading frame.
+    # `upstream_constant` must begin at the start codon. Supplying both enables
+    # the reading-frame and internal-stop checks, which are otherwise reported
+    # as not_evaluable because their answer would depend on an assumed frame.
+    upstream_constant: str | None = None
+    downstream_constant: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -323,6 +329,19 @@ class QcSettings:
                 raise ConfigError(f"qc.{name} must be between 0 and 1")
         if self.length_tolerance < 0:
             raise ConfigError("qc.length_tolerance must be non-negative")
+        if (self.upstream_constant is None) != (self.downstream_constant is None):
+            raise ConfigError(
+                "qc.upstream_constant and qc.downstream_constant must be supplied "
+                "together; the reading frame is undefined without both"
+            )
+        if self.upstream_constant is not None:
+            _dna(self.upstream_constant, "qc.upstream_constant")
+            _dna(self.downstream_constant, "qc.downstream_constant")
+            if not self.upstream_constant.upper().startswith(("ATG", "GTG", "TTG")):
+                raise ConfigError(
+                    "qc.upstream_constant must begin at the start codon so the "
+                    "reading frame is unambiguous"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -805,10 +824,20 @@ def _parse_qc(value: Any) -> QcSettings:
             "minimum_query_coverage",
             "minimum_reference_coverage",
             "length_tolerance",
+            "upstream_constant",
+            "downstream_constant",
         },
         location,
     )
+    upstream = mapping.get("upstream_constant")
+    downstream = mapping.get("downstream_constant")
     return QcSettings(
+        upstream_constant=(
+            None if upstream is None else _dna(upstream, "qc.upstream_constant")
+        ),
+        downstream_constant=(
+            None if downstream is None else _dna(downstream, "qc.downstream_constant")
+        ),
         minimum_identity=_number(mapping.get("minimum_identity", 0.98), "qc.minimum_identity", minimum=0, maximum=1),
         minimum_query_coverage=_number(mapping.get("minimum_query_coverage", 0.95), "qc.minimum_query_coverage", minimum=0, maximum=1),
         minimum_reference_coverage=_number(mapping.get("minimum_reference_coverage", 0.95), "qc.minimum_reference_coverage", minimum=0, maximum=1),

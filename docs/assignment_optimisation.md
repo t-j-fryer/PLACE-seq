@@ -122,3 +122,31 @@ python scripts/benchmark_assignment.py \
 
 Add `--rescue all` to compare the exhaustive policy against the default on your
 own data before relying on the bounded one.
+
+
+## Coding QC and the constant regions
+
+Reading-frame and internal-stop QC are driven by constant sequence the user
+declares, so they adapt to any construct:
+
+```yaml
+qc:
+  upstream_constant: ATGCAGCTT     # must begin at the start codon
+  downstream_constant: AGTGGATCC...TAA
+```
+
+QC assembles `upstream_constant + consensus + downstream_constant`, requires a
+whole number of codons, translates frame 0, and fails when a stop appears before
+the final codon. Both constants are required together: a frame inferred from one
+side is a guess, and stop codons read in a guessed frame are noise rather than
+biology. For the same reason `internal_stops` is `not_evaluable` whenever the
+frame check fails. Codons containing an ambiguity code translate to `X` rather
+than a guessed residue.
+
+**These constants must be kept consistent with the motifs.** `forward_motif`
+determines where the extracted insert begins, and `upstream_constant` must cover
+exactly the coding sequence between the start codon and that point. On the
+20260506 profile the motif runs through the constant `CAGCTT` linker, so
+`upstream_constant` is the full `ATGCAGCTT`; before that change the motif stopped
+at the ATG and the correct value was `ATG` alone. Changing one without the other
+silently shifts the frame.

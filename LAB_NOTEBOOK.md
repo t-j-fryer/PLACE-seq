@@ -15,6 +15,109 @@ Conventions:
 
 ---
 
+## 2026-08-12 (ninth) — The real plate layout, derived rather than requested
+
+### What changed
+
+The previous entry ended by asking the experiment owner for the culture-plate
+layout. That request was largely unnecessary: most of it had already been stated,
+and the rest was derivable from the run itself. The layout is now committed in
+both 20260506 profiles.
+
+### What the data says about RP01-RP05
+
+The stated model was "one block picked to one culture plate". The pilot
+contradicts a literal reading of that. Blocks observed per plate barcode among
+assigned reads:
+
+| Plate | library | distinct blocks observed |
+| --- | --- | --- |
+| RP01 | aaseq_biotin | 18 of 20 |
+| RP02 | aaseq_biotin | 20 of 20 |
+| RP03 | aaseq_biotin | 18 of 20 |
+| RP04 | aaseq_biotin | 19 of 20 |
+| RP05 | dtf141_dtf142 | 6 of 6 |
+
+Each of RP01-RP05 carries essentially its **whole library**, not a single block.
+So these plates are not compressed at all: one culture plate maps to one colony
+PCR plate, and gene identity has no plate ambiguity left to resolve. Their wells
+are simply polyclonal.
+
+**Compressed-PCR deconvolution therefore applies only to RP06 and RP07**, and for
+those the layout was fully specified: three culture plates each, holding
+`sumo_lab` blocks 1-3, 4-6 and 7-10.
+
+### The committed layout
+
+```yaml
+compressed_pcr:
+  pcr_plates:
+    RP01: [CP_RP01]           # ... RP05 likewise, one culture plate each
+    RP06: [CP_RP06_B1_3, CP_RP06_B4_6, CP_RP06_B7_10]
+    RP07: [CP_RP07_B1_3, CP_RP07_B4_6, CP_RP07_B7_10]
+  clonality:
+    RP06: unspecified         # scraped: diversity per well is inconsistent
+    RP07: per_block           # 3 + 3 + 4 = 10 expected clones per well
+```
+
+`sumo_lab` block 1 maps to **both** `CP_RP06_B1_3` and `CP_RP07_B1_3`. That is the
+split-block case the validator was built for: it resolves because those two
+plates sit in different colony PCR plates, so the reverse barcode separates them.
+
+Culture-plate names are descriptive placeholders derived from the design. They
+are identifiers, not measurements; rename them freely.
+
+### Result
+
+**Zero `unexpected_block` across all 14,984 reads.** Every assigned read's block
+is consistent with the declared layout, which is the strongest available check
+that the layout is right — a wrong mapping produces `unexpected_block` in bulk,
+as the fictional demonstration layout did (4,624 reads). The only unresolved class
+is `unknown_block` at 2,751, which is exactly the count of unassigned reads.
+
+Source culture plate recovered, among resolved reads:
+
+| Plate | B1-3 | B4-6 | B7-10 |
+| --- | --- | --- | --- |
+| RP07 (mixed monoclonal) | 36% | 32% | 32% |
+| RP06 (scraped) | 41% | **23%** | 36% |
+
+**This is a real result, not a QC number.** RP07 is near-even, as a deliberate
+equal mix of monoclonal cultures should be. RP06 is skewed, under-representing
+blocks 4-6 by a third — exactly what scraping a multichannel over an agar plate
+would produce. The two picking methods are distinguishable in the output.
+
+### Lessons
+
+**Ask only for what cannot be derived.** The previous entry requested a layout
+that was mostly already given and otherwise inferable from the block composition
+of the reads. Deriving it first would have been faster and would have caught the
+RP01-RP05 discrepancy sooner. Check what the data already knows before asking.
+
+**A stated protocol and the observed data can disagree, and the disagreement is
+information.** "One block per culture plate" does not describe RP01-RP05 as
+sequenced. Rather than modelling around it silently, it is recorded here: either
+the picking was not block-segregated, or the phrase meant something else. Either
+way the analysis is unaffected, because those plates need no deconvolution.
+
+**Zero is the informative number here.** `unexpected_block` at zero validates the
+layout far more convincingly than any count of successes, because the failure mode
+is loud: the fictional layout produced 4,624.
+
+### Next steps
+
+1. Run the full 2.17 M-read dataset; every blocker is now cleared and the layout
+   is committed.
+2. Confirm the RP01-RP05 reading above — is "one block per culture plate" a
+   misremembering, or were those plates picked differently than described?
+3. Re-measure the RP06/RP07 source-plate balance on the full run. The 23% dip for
+   RP06 blocks 4-6 is from 0.92% of reads and needs the full depth before being
+   quoted as a picking-efficiency result.
+4. Compare observed clones per well against the expected 10 for RP07 once at full
+   depth; the pilot's median of 9 is an undercount by construction.
+
+---
+
 ## 2026-08-12 (eighth) — Polyclonal wells, per-library blocks, and figures
 
 ### Corrected understanding of the experiment

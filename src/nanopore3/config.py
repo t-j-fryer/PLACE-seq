@@ -361,7 +361,12 @@ class CompressedPcrSettings:
 
     enabled: bool = False
     pcr_plates: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
-    blocks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # Nested by reference library, because block numbering restarts in each one.
+    blocks: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
+    # Per colony PCR plate: "per_block" when the design put one clone per block,
+    # so a well's expected diversity follows from the layout; "unspecified" for
+    # scraped or otherwise unpredictable picking.
+    clonality: Mapping[str, str] = field(default_factory=dict)
     # Applied to reference identifiers when no design table is configured.
     block_pattern: str = r"^Block_(\d+)_"
 
@@ -382,18 +387,25 @@ class CompressedPcrSettings:
                 raise ConfigError(
                     f"compressed_pcr.pcr_plates[{plate!r}] must list at least one culture plate"
                 )
-        for block, plates in self.blocks.items():
-            _nonempty_string(block, "compressed_pcr.blocks key")
-            if not plates:
+        for library, by_block in self.blocks.items():
+            _nonempty_string(library, "compressed_pcr.blocks library key")
+            if not by_block:
                 raise ConfigError(
-                    f"compressed_pcr.blocks[{block!r}] must list at least one culture plate"
+                    f"compressed_pcr.blocks[{library!r}] must map at least one block"
                 )
+            for block, plates in by_block.items():
+                _nonempty_string(block, "compressed_pcr.blocks block key")
+                if not plates:
+                    raise ConfigError(
+                        f"compressed_pcr.blocks[{library!r}][{block!r}] must list "
+                        "at least one culture plate"
+                    )
         # Validate the layout itself: an unresolvable pooling design is an error
         # that can be caught now instead of appearing as ambiguous reads later.
         from .deconvolution import CompressedPcrPlan, DeconvolutionError
 
         try:
-            CompressedPcrPlan(self.pcr_plates, self.blocks)
+            CompressedPcrPlan(self.pcr_plates, self.blocks, self.clonality)
         except DeconvolutionError as exc:
             raise ConfigError(str(exc)) from exc
 
@@ -944,13 +956,30 @@ def _parse_compressed_pcr(value: Any) -> CompressedPcrSettings:
     location = "compressed_pcr"
     mapping = _mapping(value, location)
     _reject_unknown(
-        mapping, {"enabled", "pcr_plates", "blocks", "block_pattern"}, location
+        mapping,
+        {"enabled", "pcr_plates", "blocks", "block_pattern", "clonality"},
+        location,
     )
     enabled = _boolean(mapping.get("enabled", True), f"{location}.enabled")
+    blocks_value = _mapping(mapping.get("blocks", {}), f"{location}.blocks")
+    blocks = {
+        _nonempty_string(library, f"{location}.blocks library key"): _plate_lists(
+            by_block, f"{location}.blocks[{library!r}]"
+        )
+        for library, by_block in blocks_value.items()
+    }
+    clonality_value = _mapping(mapping.get("clonality", {}), f"{location}.clonality")
+    clonality = {
+        _nonempty_string(plate, f"{location}.clonality key"): _nonempty_string(
+            mode, f"{location}.clonality[{plate!r}]"
+        )
+        for plate, mode in clonality_value.items()
+    }
     return CompressedPcrSettings(
         enabled=enabled,
         pcr_plates=_plate_lists(mapping.get("pcr_plates", {}), f"{location}.pcr_plates"),
-        blocks=_plate_lists(mapping.get("blocks", {}), f"{location}.blocks"),
+        blocks=blocks,
+        clonality=clonality,
         block_pattern=_nonempty_string(
             mapping.get("block_pattern", r"^Block_(\d+)_"), f"{location}.block_pattern"
         ),

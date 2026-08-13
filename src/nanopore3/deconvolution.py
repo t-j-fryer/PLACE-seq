@@ -13,6 +13,14 @@ pooled into this particular PCR plate.  When a block is split across culture
 plates, those plates must go to different PCR plates so the reverse barcode
 separates them; otherwise the read is genuinely ambiguous and is reported as
 such rather than being attributed to an arbitrary plate.
+
+Block identifiers repeat between reference libraries -- block 1 of one library is
+unrelated to block 1 of another -- so every block key is qualified by its library.
+
+A well may legitimately hold many clones.  Where the design says one clone per
+block, the expected number of distinct genes per well follows from the layout and
+observed counts can be compared against it.  Where colonies were scraped, no such
+expectation exists and only the observed count is reported.
 """
 
 from __future__ import annotations
@@ -61,7 +69,8 @@ class CompressedPcrPlan:
     def __init__(
         self,
         pcr_plates: Mapping[str, tuple[str, ...]],
-        blocks: Mapping[str, tuple[str, ...]],
+        blocks: Mapping[str, Mapping[str, tuple[str, ...]]],
+        clonality: Mapping[str, str] | None = None,
     ) -> None:
         if not pcr_plates:
             raise DeconvolutionError("compressed_pcr.pcr_plates must not be empty")
@@ -70,9 +79,27 @@ class CompressedPcrPlan:
         self.pcr_plates = {
             plate: tuple(sorted(set(sources))) for plate, sources in pcr_plates.items()
         }
-        self.blocks = {
-            block: tuple(sorted(set(plates))) for block, plates in blocks.items()
+        # Keyed by (library, block): block numbering restarts in each library.
+        self.blocks: dict[tuple[str, str], tuple[str, ...]] = {
+            (library, block): tuple(sorted(set(plates)))
+            for library, by_block in blocks.items()
+            for block, plates in by_block.items()
         }
+        self.clonality = dict(clonality or {})
+        unknown_mode = sorted(
+            {mode for mode in self.clonality.values()} - {"per_block", "unspecified"}
+        )
+        if unknown_mode:
+            raise DeconvolutionError(
+                "compressed_pcr.clonality values must be 'per_block' or "
+                f"'unspecified', got: {', '.join(unknown_mode)}"
+            )
+        unknown_plate = sorted(set(self.clonality) - set(self.pcr_plates))
+        if unknown_plate:
+            raise DeconvolutionError(
+                "compressed_pcr.clonality names plate(s) absent from pcr_plates: "
+                + ", ".join(unknown_plate)
+            )
 
         loaded = {source for sources in self.pcr_plates.values() for source in sources}
         orphaned = sorted(
@@ -104,7 +131,9 @@ class CompressedPcrPlan:
                 "so the reverse barcode separates them."
             )
 
-    def resolve(self, pcr_plate: str, block: str | None) -> Deconvolution:
+    def resolve(
+        self, pcr_plate: str, library: str, block: str | None
+    ) -> Deconvolution:
         """Resolve one read's source culture plate from its PCR plate and block."""
 
         if block is None:
@@ -118,7 +147,7 @@ class CompressedPcrPlan:
                 None, block, "unknown_pcr_plate",
                 f"plate barcode {pcr_plate!r} is not described by compressed_pcr.pcr_plates",
             )
-        plates = self.blocks.get(block)
+        plates = self.blocks.get((library, block))
         if plates is None:
             return Deconvolution(
                 None, block, "unknown_block",
@@ -147,11 +176,34 @@ class CompressedPcrPlan:
     def culture_plates(self) -> tuple[str, ...]:
         return tuple(sorted({p for plates in self.blocks.values() for p in plates}))
 
+    def blocks_in_plate(self, culture_plate: str) -> tuple[tuple[str, str], ...]:
+        """The (library, block) pairs picked into one culture plate."""
+
+        return tuple(
+            sorted(key for key, plates in self.blocks.items() if culture_plate in plates)
+        )
+
+    def expected_clones_per_well(self, pcr_plate: str) -> int | None:
+        """Distinct genes expected in one well, or None when not predictable.
+
+        Only meaningful when the design placed one clone per block. Scraped
+        plates carry no expectation, and inventing one would turn an unknown
+        into a spurious deviation.
+        """
+
+        if self.clonality.get(pcr_plate) != "per_block":
+            return None
+        sources = self.pcr_plates.get(pcr_plate)
+        if sources is None:
+            return None
+        return sum(len(self.blocks_in_plate(source)) for source in sources)
+
     def summary(self) -> dict[str, int]:
         return {
             "pcr_plates": len(self.pcr_plates),
             "culture_plates": len(self.culture_plates),
             "blocks": len(self.blocks),
+            "libraries": len({library for library, _ in self.blocks}),
         }
 
 

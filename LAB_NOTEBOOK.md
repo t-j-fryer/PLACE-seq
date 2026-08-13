@@ -15,6 +15,119 @@ Conventions:
 
 ---
 
+## 2026-08-12 (eighth) — Polyclonal wells, per-library blocks, and figures
+
+### Corrected understanding of the experiment
+
+The experiment owner described the two picking modes, which changes the model:
+
+- **RP01-RP05 (monoclonal picking, polyclonal PCR).** One block per culture
+  plate, so deconvolution is trivial, but each well holds *many* genes from that
+  one block. Diversity per well is real and unpredictable.
+- **RP06 and RP07 (stacked polyclonal).** Three culture plates each, holding
+  blocks 1-3, 4-6 and 7-10, pooled into one colony PCR plate. **RP06** was
+  scraped with a multichannel over an agar plate, so its per-well diversity is
+  inconsistent. **RP07** came from monoclonal picks mixed and grown together, so
+  it should carry close to 3, 3 and 4 clones from the three source plates: ten.
+
+The pilot data agrees before any expectation was configured. Distinct genes per
+well, over 0.92% of reads so certainly an undercount:
+
+| Plate | wells | median | max |
+| --- | --- | --- | --- |
+| RP01 | 54 | 3 | 6 |
+| RP03 | 25 | 1 | 10 |
+| RP05 | 94 | 5 | 6 |
+| RP06 | 95 | **8** | 14 |
+| RP07 | 95 | **9** | 13 |
+
+RP07's median of 9 against an expected 10 is exactly the predicted shape, and
+RP06 is both lower and more dispersed, as scraping implies.
+
+### A bug this exposed
+
+**Block identifiers collide between reference libraries.** `aaseq_biotin` has
+blocks 1-20, `dtf141_dtf142` 1-6, `sumo_lab` 1-10. The map committed in the
+previous entry was keyed on the block alone, so block "1" of one library would
+have silently resolved using another library's culture plate. `blocks` is now
+nested by library and `resolve()` takes the library. Caught only because this
+experiment routes three libraries; a single-library run would never have shown it.
+
+### What was added
+
+- **`clonality` per colony PCR plate.** `per_block` derives the expected clones
+  per well from the layout — the blocks across that plate's pooled culture
+  plates. `unspecified` (the default) reports observed counts only. A scraped
+  plate has no expectation, and inventing one would manufacture deviations.
+- **`src/nanopore3/figures.py`** and `scripts/make_figures.py`. Every run now
+  writes figures into `stages/06_report/figures/`, best-effort so a missing
+  matplotlib never fails a run; `figures.json` records what happened.
+
+### Figure design decisions
+
+Sized for print: 89 mm single / 183 mm double column, 6-8 pt sans, vector PDF plus
+600 dpi PNG, `pdf.fonttype 42` so text stays editable.
+
+**The palette is computed, not chosen.** `scripts/validate_palette.py` implements
+the checks in Python — OKLab conversion, Machado-Oliveira-Fernandes (2009)
+protanopia and deuteranopia at severity 1.0, pairwise dE, lightness band, chroma
+floor and contrast — because the environment has no Node to run the reference
+validator, and colour-vision safety should not be judged by eye.
+
+Measured results, which decided the palette:
+
+- `#0072B2, #D55E00, #009E73` passes all-pairs: worst CVD dE **11.0**, worst
+  normal-vision dE 18.7.
+- Adding `#CC79A7` drops the worst CVD pair to **7.6**, below the target of 8, so
+  three is the cap wherever two marks can touch.
+- The common Okabe-Ito orange `#E69F00` **fails contrast** at 2.25:1 on white,
+  under the 3:1 floor for marks; `#D55E00` replaces it at 3.9:1.
+
+Layout problems found only by rendering and looking, which is why that step is
+not optional:
+
+1. Plate-map tick labels collided with the panel titles below them. Fixed by
+   drawing coordinates only on the outer edge — they repeat in every panel, so
+   96 repetitions per panel is noise.
+2. Two columns of 96-well panels forced a figure taller than a page. The panel
+   aspect is fixed at 12:8, so the figure height is now derived from the column
+   count rather than guessed, and the spare grid cell holds the colour bar
+   instead of being left as a hole.
+3. The clonality legend sat on top of RP07's data, and advertised an "expected"
+   series that was not drawn because no plate declared one. The legend now sits
+   outside the axes and only lists series actually present.
+
+### Lessons
+
+**A layout bug is invisible to a validator.** The palette check passed on the
+first attempt; every real defect was geometric and only appeared on screen.
+Render and look, every time.
+
+**Defaults must not invent expectations.** `clonality` defaults to
+`unspecified`, so a plate only gets an expected-diversity line when the design
+actually justifies one. A default of "one clone per block" would have drawn a
+confident reference line on a scraped plate and turned an unknown into an
+apparent failure.
+
+**A collision that only appears with three libraries.** The block-key bug was
+latent and would have produced confident wrong culture plates rather than an
+error. Multi-tenant keys need qualifying the moment a second tenant exists.
+
+### Next steps
+
+1. **Supply the real culture-plate names and block groupings** for RP01-RP07.
+   Everything here is built and tested but has still only run against a
+   demonstration layout.
+2. Set `clonality: per_block` for RP07 and `unspecified` for RP06 once those
+   names exist, then compare observed against expected per well.
+3. RP01-RP05 diversity is currently undercounted because the pilot samples 0.92%
+   of reads; re-measure on the full run before drawing conclusions about picking
+   efficiency.
+4. Consider a per-well figure of *which* source culture plate was recovered, to
+   expose systematic dropout of one plate in the stack.
+
+---
+
 ## 2026-08-12 (seventh) — Compressed-PCR deconvolution
 
 ### The workflow being modelled

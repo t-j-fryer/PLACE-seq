@@ -15,7 +15,11 @@ from nanopore3.deconvolution import (
 # RP01 pools two culture plates; RP02 holds the second half of block 3, which is
 # split across CP_C and CP_D and therefore must not share one PCR plate.
 PCR_PLATES = {"RP01": ("CP_A", "CP_B", "CP_C"), "RP02": ("CP_D",)}
-BLOCKS = {"1": ("CP_A",), "2": ("CP_B",), "3": ("CP_C", "CP_D")}
+# Block numbering restarts per library, so "1" means different things in each.
+BLOCKS = {
+    "libX": {"1": ("CP_A",), "2": ("CP_B",), "3": ("CP_C", "CP_D")},
+    "libY": {"1": ("CP_B",)},
+}
 
 
 class BlockFromReferenceIdTests(unittest.TestCase):
@@ -37,12 +41,15 @@ class PlanValidationTests(unittest.TestCase):
         plan = CompressedPcrPlan(PCR_PLATES, BLOCKS)
         self.assertEqual(plan.culture_plates, ("CP_A", "CP_B", "CP_C", "CP_D"))
         self.assertEqual(plan.summary()["pcr_plates"], 2)
+        self.assertEqual(plan.summary()["libraries"], 2)
 
     def test_a_block_split_within_one_pcr_plate_is_rejected(self) -> None:
         """Both halves of a split block in one PCR plate can never be separated."""
 
         with self.assertRaises(DeconvolutionError) as caught:
-            CompressedPcrPlan({"RP01": ("CP_C", "CP_D")}, {"3": ("CP_C", "CP_D")})
+            CompressedPcrPlan(
+                {"RP01": ("CP_C", "CP_D")}, {"libX": {"3": ("CP_C", "CP_D")}}
+            )
         message = str(caught.exception)
         self.assertIn("unresolvable", message)
         self.assertIn("CP_C", message)
@@ -50,7 +57,9 @@ class PlanValidationTests(unittest.TestCase):
 
     def test_a_culture_plate_never_pooled_anywhere_is_rejected(self) -> None:
         with self.assertRaisesRegex(DeconvolutionError, "never pooled"):
-            CompressedPcrPlan({"RP01": ("CP_A",)}, {"1": ("CP_A",), "2": ("CP_ZZ",)})
+            CompressedPcrPlan(
+                {"RP01": ("CP_A",)}, {"libX": {"1": ("CP_A",), "2": ("CP_ZZ",)}}
+            )
 
     def test_empty_layouts_are_rejected(self) -> None:
         with self.assertRaises(DeconvolutionError):
@@ -64,7 +73,7 @@ class ResolutionTests(unittest.TestCase):
         self.plan = CompressedPcrPlan(PCR_PLATES, BLOCKS)
 
     def test_a_gene_block_names_one_pooled_culture_plate(self) -> None:
-        result = self.plan.resolve("RP01", "1")
+        result = self.plan.resolve("RP01", "libX", "1")
         self.assertEqual(result.status, "resolved")
         self.assertEqual(result.culture_plate, "CP_A")
         self.assertEqual(result.block, "1")
@@ -72,37 +81,79 @@ class ResolutionTests(unittest.TestCase):
     def test_two_blocks_in_one_pcr_plate_resolve_to_different_plates(self) -> None:
         """This is the whole point: one PCR well, two source plates, separated."""
 
-        self.assertEqual(self.plan.resolve("RP01", "1").culture_plate, "CP_A")
-        self.assertEqual(self.plan.resolve("RP01", "2").culture_plate, "CP_B")
+        self.assertEqual(self.plan.resolve("RP01", "libX", "1").culture_plate, "CP_A")
+        self.assertEqual(self.plan.resolve("RP01", "libX", "2").culture_plate, "CP_B")
 
     def test_a_split_block_is_separated_by_the_reverse_barcode(self) -> None:
         # Block 3 spans CP_C and CP_D, which sit in different PCR plates, so the
         # plate barcode decides which half a read came from.
-        self.assertEqual(self.plan.resolve("RP01", "3").culture_plate, "CP_C")
-        self.assertEqual(self.plan.resolve("RP02", "3").culture_plate, "CP_D")
+        self.assertEqual(self.plan.resolve("RP01", "libX", "3").culture_plate, "CP_C")
+        self.assertEqual(self.plan.resolve("RP02", "libX", "3").culture_plate, "CP_D")
 
     def test_a_block_absent_from_this_pcr_plate_is_flagged(self) -> None:
-        result = self.plan.resolve("RP02", "1")
+        result = self.plan.resolve("RP02", "libX", "1")
         self.assertEqual(result.status, "unexpected_block")
         self.assertIsNone(result.culture_plate)
         self.assertIn("not pooled into", result.reason)
 
     def test_an_undescribed_pcr_plate_is_flagged(self) -> None:
-        self.assertEqual(self.plan.resolve("RP99", "1").status, "unknown_pcr_plate")
+        self.assertEqual(self.plan.resolve("RP99", "libX", "1").status, "unknown_pcr_plate")
 
     def test_an_unknown_or_missing_block_is_flagged(self) -> None:
-        self.assertEqual(self.plan.resolve("RP01", "99").status, "unknown_block")
-        self.assertEqual(self.plan.resolve("RP01", None).status, "unknown_block")
+        self.assertEqual(self.plan.resolve("RP01", "libX", "99").status, "unknown_block")
+        self.assertEqual(self.plan.resolve("RP01", "libX", None).status, "unknown_block")
 
     def test_ambiguity_is_reported_rather_than_guessed(self) -> None:
         # Constructed directly, bypassing the layout check, to prove that an
         # ambiguous case is never silently attributed to one plate.
         plan = CompressedPcrPlan.__new__(CompressedPcrPlan)
         plan.pcr_plates = {"RP01": ("CP_C", "CP_D")}
-        plan.blocks = {"3": ("CP_C", "CP_D")}
-        result = plan.resolve("RP01", "3")
+        plan.blocks = {("libX", "3"): ("CP_C", "CP_D")}
+        plan.clonality = {}
+        result = plan.resolve("RP01", "libX", "3")
         self.assertEqual(result.status, "ambiguous")
         self.assertIsNone(result.culture_plate)
+
+
+class LibraryScopingTests(unittest.TestCase):
+    """Block 1 of one library is unrelated to block 1 of another."""
+
+    def setUp(self) -> None:
+        self.plan = CompressedPcrPlan(PCR_PLATES, BLOCKS)
+
+    def test_the_same_block_id_resolves_differently_per_library(self) -> None:
+        self.assertEqual(self.plan.resolve("RP01", "libX", "1").culture_plate, "CP_A")
+        self.assertEqual(self.plan.resolve("RP01", "libY", "1").culture_plate, "CP_B")
+
+    def test_a_block_absent_from_a_library_is_unknown(self) -> None:
+        self.assertEqual(self.plan.resolve("RP01", "libY", "3").status, "unknown_block")
+
+
+class ClonalityTests(unittest.TestCase):
+    """A well may hold many clones; expectations only exist where design says so."""
+
+    def test_no_expectation_without_a_declaration(self) -> None:
+        plan = CompressedPcrPlan(PCR_PLATES, BLOCKS)
+        self.assertIsNone(plan.expected_clones_per_well("RP01"))
+
+    def test_per_block_expectation_is_derived_from_the_layout(self) -> None:
+        # RP01 pools CP_A (libX block 1), CP_B (libX block 2 and libY block 1)
+        # and CP_C (libX block 3): one clone per block gives four.
+        plan = CompressedPcrPlan(PCR_PLATES, BLOCKS, {"RP01": "per_block"})
+        self.assertEqual(plan.expected_clones_per_well("RP01"), 4)
+        self.assertEqual(plan.blocks_in_plate("CP_B"), (("libX", "2"), ("libY", "1")))
+
+    def test_scraped_plates_keep_no_expectation(self) -> None:
+        plan = CompressedPcrPlan(PCR_PLATES, BLOCKS, {"RP01": "unspecified"})
+        self.assertIsNone(plan.expected_clones_per_well("RP01"))
+
+    def test_an_unknown_clonality_mode_is_rejected(self) -> None:
+        with self.assertRaisesRegex(DeconvolutionError, "per_block"):
+            CompressedPcrPlan(PCR_PLATES, BLOCKS, {"RP01": "monoclonal"})
+
+    def test_clonality_must_name_a_real_pcr_plate(self) -> None:
+        with self.assertRaisesRegex(DeconvolutionError, "absent from pcr_plates"):
+            CompressedPcrPlan(PCR_PLATES, BLOCKS, {"RP99": "per_block"})
 
 
 class CompressedPcrSettingsTests(unittest.TestCase):
@@ -123,7 +174,7 @@ class CompressedPcrSettingsTests(unittest.TestCase):
             CompressedPcrSettings(
                 enabled=True,
                 pcr_plates={"RP01": ("CP_C", "CP_D")},
-                blocks={"3": ("CP_C", "CP_D")},
+                blocks={"libX": {"3": ("CP_C", "CP_D")}},
             )
 
     def test_a_malformed_block_pattern_is_rejected(self) -> None:

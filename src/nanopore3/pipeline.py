@@ -611,7 +611,7 @@ def _deconvolve(
             if observed
             else "no assembly block is known for the assigned reference(s)",
         )
-    return plan.resolve(str(read["plate_id"]), observed.pop())
+    return plan.resolve(str(read["plate_id"]), library_id, observed.pop())
 
 
 def _build_reference_indexes(
@@ -649,7 +649,11 @@ def _init_assignment_worker(
     _ASSIGNMENT_WORKER["indexes"] = _build_reference_indexes(config, references_by_library)
     _ASSIGNMENT_WORKER["blocks"] = _build_block_map(config, references_by_library)
     _ASSIGNMENT_WORKER["plan"] = (
-        CompressedPcrPlan(config.compressed_pcr.pcr_plates, config.compressed_pcr.blocks)
+        CompressedPcrPlan(
+            config.compressed_pcr.pcr_plates,
+            config.compressed_pcr.blocks,
+            config.compressed_pcr.clonality,
+        )
         if config.compressed_pcr.enabled
         else None
     )
@@ -857,7 +861,11 @@ def run_pipeline(
     indexes_by_library = _build_reference_indexes(config, references_by_library)
     block_map = _build_block_map(config, references_by_library)
     compressed_plan = (
-        CompressedPcrPlan(config.compressed_pcr.pcr_plates, config.compressed_pcr.blocks)
+        CompressedPcrPlan(
+            config.compressed_pcr.pcr_plates,
+            config.compressed_pcr.blocks,
+            config.compressed_pcr.clonality,
+        )
         if config.compressed_pcr.enabled
         else None
     )
@@ -1161,6 +1169,30 @@ def run_pipeline(
                 }.items()
             }
             write_html_report(stage.output_path("report.html"), title=f"Nanopore3 — {config.run_name}", sections=sections, provenance={"run_id": run_id, "pipeline_version": __version__, "config_digest": config_digest})
+            # Figures need matplotlib, which is an optional extra. A run must
+            # not fail because a plotting library is absent, so this is
+            # best-effort and records why it was skipped.
+            try:
+                from .figures import write_all as _write_figures
+            except ImportError as exc:
+                atomic_write_json(
+                    stage.output_path("figures.json"),
+                    {"written": [], "skipped": f"matplotlib unavailable: {exc}"},
+                )
+            else:
+                expected = {}
+                if compressed_plan is not None:
+                    for plate in compressed_plan.pcr_plates:
+                        value = compressed_plan.expected_clones_per_well(plate)
+                        if value is not None:
+                            expected[plate] = value
+                written = _write_figures(
+                    run_dir, stage.output_path("figures"), expected
+                )
+                atomic_write_json(
+                    stage.output_path("figures.json"),
+                    {"written": sorted(p.name for p in written), "skipped": None},
+                )
     return run_dir
 
 

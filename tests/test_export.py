@@ -58,14 +58,18 @@ class GradeTests(unittest.TestCase):
             "low_depth",
         )
 
-    def test_a_mixed_well_is_reported_as_heterogeneous(self) -> None:
-        """Ambiguity codes explain the identity failure that follows from them."""
+    def test_one_design_whose_reads_disagree_is_mixed_variants(self) -> None:
+        """Not "the well is polyclonal": that is normal and yields several files.
+
+        This is per design - the reads assigned to one design disagree with each
+        other, so that design is not a single clean clone.
+        """
 
         self.assertEqual(
             grade_consensus(
                 consensus(ambiguous_bases="7"), qc(full_amplicon="fail", overall="fail")
             ),
-            "heterogeneous",
+            "mixed_variants",
         )
 
     def test_a_broken_reading_frame_outranks_length_and_identity(self) -> None:
@@ -166,6 +170,33 @@ class TreeTests(unittest.TestCase):
         self.assertEqual(summary["by_plate"]["RP07"]["perfect"], 1)
         written = json.loads((self.root / "summary.json").read_text())
         self.assertIn("perfect", written["descriptions"])
+
+    def test_a_rerun_removes_files_from_the_previous_build(self) -> None:
+        """A stale FASTA is indistinguishable from a current one once written."""
+
+        rows = [consensus(consensus_id="c1", reference_ids="Block_1_a")]
+        write_consensus_tree(rows, {"c1": qc(consensus_id="c1")}, {"c1": "AC"}, self.root)
+        first = self.root / "RP06" / "A01" / "RP06_A01__Block_1_a__perfect.fasta"
+        self.assertTrue(first.exists())
+        # Same consensus, now failing QC: the old grade's file must not survive.
+        write_consensus_tree(
+            rows,
+            {"c1": qc(consensus_id="c1", reading_frame="fail", overall="fail")},
+            {"c1": "AC"},
+            self.root,
+        )
+        self.assertFalse(first.exists())
+        self.assertTrue(
+            (self.root / "RP06" / "A01" / "RP06_A01__Block_1_a__frameshift.fasta").exists()
+        )
+        self.assertEqual(len(list((self.root / "RP06" / "A01").iterdir())), 1)
+
+    def test_an_unrelated_directory_is_never_replaced(self) -> None:
+        self.root.mkdir(parents=True)
+        (self.root / "precious.txt").write_text("do not delete", encoding="utf-8")
+        with self.assertRaisesRegex(FileExistsError, "refusing to replace"):
+            write_consensus_tree([consensus()], {"cons-1": qc()}, {"cons-1": "AC"}, self.root)
+        self.assertTrue((self.root / "precious.txt").exists())
 
     def test_two_designs_in_one_well_both_get_files(self) -> None:
         """Polyclonal wells are the normal case here, not an error."""

@@ -211,11 +211,14 @@ The grade collapses the QC criteria into one word. Precedence runs from "no usab
 data" through "the construct is broken" to "the construct is fine", so the grade
 reported is the most actionable problem rather than the first one found:
 
+A well holding several designs is the **normal** case and simply produces several
+files; `mixed_variants` is per design, not per well.
+
 | Grade | Meaning |
 | --- | --- |
 | `perfect` | exact match to the designed reference, in frame, no internal stop |
 | `screenable` | full length and in frame with no internal stop, but carries substitutions |
-| `heterogeneous` | consensus contains ambiguity codes: the well holds a mixed population |
+| `mixed_variants` | reads for this one design disagree beyond the support threshold: not a single clean clone |
 | `mismatched` | identity or coverage below the QC floor |
 | `truncated` | length outside the configured tolerance |
 | `premature_stop` | a stop codon before the end of the reading frame |

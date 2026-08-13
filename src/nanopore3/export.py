@@ -9,8 +9,13 @@ from "no usable data" through "the construct is broken" to "the construct is
 fine", so the reported grade is always the most actionable problem rather than
 the first one encountered:
 
-``low_depth`` → ``heterogeneous`` → ``frameshift`` → ``premature_stop`` →
+``low_depth`` → ``mixed_variants`` → ``frameshift`` → ``premature_stop`` →
 ``truncated`` → ``mismatched`` → ``perfect`` / ``screenable``
+
+``mixed_variants`` is *not* "the well is polyclonal".  A well holding several
+designs is the normal case here and simply yields several files.  This grade is
+per design: the reads assigned to one design disagree with each other beyond the
+support threshold, so that design is not a single clean clone.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import csv
 import hashlib
 import json
 import re
+import shutil
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -27,7 +33,7 @@ from pathlib import Path
 GRADES = (
     "perfect",
     "screenable",
-    "heterogeneous",
+    "mixed_variants",
     "mismatched",
     "truncated",
     "premature_stop",
@@ -38,7 +44,11 @@ GRADES = (
 GRADE_DESCRIPTIONS = {
     "perfect": "exact match to the designed reference, in frame, no internal stop",
     "screenable": "full length and in frame with no internal stop, but carries substitutions",
-    "heterogeneous": "consensus contains ambiguity codes: the well holds a mixed population",
+    "mixed_variants": (
+        "reads for this one design disagree beyond the support threshold, so it is "
+        "not a single clean clone; a well holding several designs is normal and "
+        "simply yields several files"
+    ),
     "mismatched": "identity or coverage below the QC floor",
     "truncated": "length outside the configured tolerance",
     "premature_stop": "a stop codon occurs before the end of the reading frame",
@@ -58,9 +68,9 @@ def grade_consensus(consensus: Mapping[str, str], qc: Mapping[str, str]) -> str:
     if consensus.get("status") == "low_depth" or qc.get("overall") == "not_evaluable":
         return "low_depth"
     if int(consensus.get("ambiguous_bases") or 0) > 0:
-        # Mixed population is a sample problem, not a sequence problem, and it
-        # explains any identity or frame failure that follows from it.
-        return "heterogeneous"
+        # A sample problem rather than a sequence one, and it explains any
+        # identity or frame failure that follows from it.
+        return "mixed_variants"
     if qc.get("reading_frame") == "fail":
         return "frameshift"
     if qc.get("internal_stops") == "fail":
@@ -116,9 +126,25 @@ def write_consensus_tree(
 
     A consensus with no sequence (too few reads to build one) is still recorded
     in the index, so a missing file never has to be interpreted as an oversight.
+
+    The tree is built beside the target and swapped in, so a rerun cannot leave
+    files from a previous build behind: a stale FASTA is indistinguishable from a
+    current one once written, and would be read as a real result.  An existing
+    directory is only replaced when it carries this function's ``index.csv``,
+    so an unrelated directory is never deleted.
     """
 
-    root.mkdir(parents=True, exist_ok=True)
+    if root.exists():
+        if not (root / "index.csv").is_file():
+            raise FileExistsError(
+                f"{root} exists and was not written by this exporter "
+                "(no index.csv); refusing to replace it"
+            )
+    staging = root.with_name(root.name + ".partial")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    written_root, root = root, staging
     index_rows: list[dict[str, object]] = []
     per_plate: dict[str, Counter[str]] = defaultdict(Counter)
     totals: Counter[str] = Counter()
@@ -208,6 +234,9 @@ def write_consensus_tree(
     (root / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    if written_root.exists():
+        shutil.rmtree(written_root)
+    root.rename(written_root)
     return summary
 
 

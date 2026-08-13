@@ -15,6 +15,83 @@ Conventions:
 
 ---
 
+## 2026-08-13 (second) — Graded consensus tree, and `heterogeneous` renamed
+
+### Graded per-plate output
+
+Every run now writes `stages/05_qc/consensus_by_plate/`, one FASTA per consensus
+under `<plate barcode>/<well>/`, named `<plate>_<well>__<design>__<grade>`:
+
+```
+RP06/A01/RP06_A01__Block_1_dTF083_156_2__perfect.fasta
+RP06/A01/RP06_A01__Block_9_dTF083_282_1__frameshift.fasta
+```
+
+It lives under `05_qc` rather than `04_consensus` because the grade needs QC
+results and a promoted stage directory is immutable. Wells are zero-padded so
+`A01` sorts before `A10`, and names stay self-describing if a file is moved.
+
+Full-run grades: **3,378 perfect**, 120 screenable, 124 frameshift, 121
+mixed_variants, 35 truncated, 17 premature_stop, 7 mismatched, 2,072 low_depth.
+89% of evaluable consensuses are exact matches to their design.
+
+### `heterogeneous` renamed to `mixed_variants`
+
+The experiment owner asked whether `heterogeneous` just means the well is
+polyclonal, and if so to rename it. **It does not**, and the check is worth
+recording:
+
+- **468 of 512 wells hold more than one design** — 91% are polyclonal. That is
+  the normal case here and is already expressed by such wells simply containing
+  several files.
+- Only **121 of 5,874 consensuses** are flagged.
+
+The flag is set per *design*, when the reads assigned to one design disagree with
+each other beyond the 0.60 support threshold, leaving ambiguity codes (median 5
+bases, max 97). It means that one design is not a single clean clone: two
+variants of it, cross-assigned reads, or noise.
+
+The instinct was not baseless — flagged consensuses sit in wells with a median of
+23 designs against 15 for clean ones, so crowded wells do produce them more
+often. But naming it `polyclonal` would have conflated the expected condition of
+91% of wells with a 2% anomaly.
+
+Renamed to **`mixed_variants`** in both the grade vocabulary and the consensus
+stage's `status` column, so one concept does not carry two names.
+
+### A bug the rename exposed
+
+Regenerating the tree after the rename left **121 stale `*heterogeneous*` files**
+beside the new `*mixed_variants*` ones. The exporter wrote into an existing
+directory without clearing it, so any rerun after a grade change, a threshold
+change, or a re-analysis would leave files that no longer correspond to any
+result. **A stale FASTA is indistinguishable from a current one once written**,
+and would be read as a real screening result.
+
+Fixed by building into a `.partial` sibling and swapping it in, matching the
+atomic-promotion pattern the stages already use. An existing directory is only
+replaced when it carries this exporter's `index.csv`, so an unrelated directory
+is never deleted — tested both ways.
+
+### Lessons
+
+**"Rename X to Y" deserves the same check as any other claim.** Renaming to
+`polyclonal` would have been a one-line change producing a permanently misleading
+label on 121 files. Two counts — 468 of 512 wells versus 121 of 5,874
+consensuses — settled it in a minute.
+
+**A regenerable output must be regenerated destructively.** Writing over a tree
+without clearing it is safe only while nothing is ever renamed or removed, which
+is exactly the assumption that fails during a re-analysis.
+
+### Next steps
+
+Unchanged from the full-run entry, plus: consider surfacing the grade counts in
+the HTML report and as a fourth figure, since they are now the most directly
+useful summary of a run.
+
+---
+
 ## 2026-08-13 — Full 2.17 M-read production run
 
 **The full dataset has now been processed end to end.** Run

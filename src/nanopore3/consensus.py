@@ -217,7 +217,7 @@ def _build_portable_consensus(
         sequence_parts.append(base)
 
     sequence = "".join(sequence_parts)
-    status = "heterogeneous" if ambiguous else "consensus_pass"
+    status = "mixed_variants" if ambiguous else "consensus_pass"
     return ConsensusResult(
         sequence=sequence,
         status=status,
@@ -364,7 +364,7 @@ def _build_mafft_spoa_consensus(
     ambiguous = sequence.count("N")
     return ConsensusResult(
         sequence=sequence,
-        status="heterogeneous" if ambiguous else "consensus_pass",
+        status="mixed_variants" if ambiguous else "consensus_pass",
         n_reads_available=available,
         n_reads_used=len(selected),
         contributor_ids=contributor_ids,

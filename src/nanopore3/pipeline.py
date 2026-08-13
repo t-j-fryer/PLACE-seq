@@ -32,6 +32,7 @@ from .deconvolution import (
     Deconvolution,
     block_from_reference_id,
 )
+from .export import write_consensus_tree
 from .demux import (
     BarcodeCall,
     PreparedBarcodePanel,
@@ -1140,6 +1141,20 @@ def run_pipeline(
             ]
             _write_csv(stage.output_path("qc.csv.gz"), qc_rows, fields)
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["overall"] for row in qc_rows).items())))
+            # A browsable, graded copy of the consensuses. It lives here rather
+            # than in 04_consensus because the grade needs QC, and a promoted
+            # stage directory is immutable.
+            with gzip.open(consensus_dir / "consensus.csv.gz", "rt", encoding="utf-8", newline="") as handle:
+                consensus_rows = list(csv.DictReader(handle))
+            tree_summary = write_consensus_tree(
+                consensus_rows,
+                {row["consensus_id"]: row for row in qc_rows},
+                sequences,
+                stage.output_path("consensus_by_plate"),
+            )
+            atomic_write_json(
+                stage.output_path("consensus_by_plate_summary.json"), tree_summary
+            )
 
     report_inputs = {
         "demux": sha256_file(demux_dir / "summary.json"),

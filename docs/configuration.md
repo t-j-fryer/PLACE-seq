@@ -186,3 +186,49 @@ two marks can touch. Re-check any change:
 ```bash
 python scripts/validate_palette.py "#0072B2,#D55E00,#009E73" --pairs all
 ```
+
+## Graded consensus output
+
+Every run writes a browsable copy of the consensuses to
+`stages/05_qc/consensus_by_plate/`, one FASTA per consensus:
+
+```text
+RP06/A01/RP06_A01__Block_1_dTF083_156_2__perfect.fasta
+RP06/A01/RP06_A01__Block_7_dTF083_152_4__screenable.fasta
+RP06/A01/RP06_A01__Block_9_dTF083_282_1__frameshift.fasta
+```
+
+Filed under `<plate barcode>/<well>/`, named `<plate>_<well>__<design>__<grade>`,
+so a screening decision can be made from the listing without opening a file. The
+name is self-describing if a file is moved. Wells are zero-padded so `A01` sorts
+before `A10`, and a well holding several designs simply gets several files —
+polyclonal wells are the normal case, not an error.
+
+It lives under `05_qc` rather than `04_consensus` because the grade needs QC
+results, and a promoted stage directory is immutable.
+
+The grade collapses the QC criteria into one word. Precedence runs from "no usable
+data" through "the construct is broken" to "the construct is fine", so the grade
+reported is the most actionable problem rather than the first one found:
+
+| Grade | Meaning |
+| --- | --- |
+| `perfect` | exact match to the designed reference, in frame, no internal stop |
+| `screenable` | full length and in frame with no internal stop, but carries substitutions |
+| `heterogeneous` | consensus contains ambiguity codes: the well holds a mixed population |
+| `mismatched` | identity or coverage below the QC floor |
+| `truncated` | length outside the configured tolerance |
+| `premature_stop` | a stop codon before the end of the reading frame |
+| `frameshift` | the assembled reading frame is not a whole number of codons |
+| `low_depth` | fewer contributing reads than `consensus.minimum_depth` |
+
+Alongside the tree, `index.csv` lists every consensus with its grade, design,
+culture plate, depth, identity and file path — including those with **no** file,
+so a missing FASTA never has to be read as an oversight. `summary.json` gives
+grade counts overall and per plate.
+
+Rebuild without re-running the pipeline:
+
+```bash
+python scripts/export_consensus_tree.py --run runs/<run-id>
+```

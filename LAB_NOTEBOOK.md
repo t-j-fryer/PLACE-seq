@@ -15,6 +15,136 @@ Conventions:
 
 ---
 
+## 2026-08-13 — Full 2.17 M-read production run
+
+**The full dataset has now been processed end to end.** Run
+`runs/20260506-FULL-r1`, exit 0, 56.3 minutes wall clock, 2.0 GB of outputs.
+
+### Stage timings
+
+| Stage | wall time | throughput |
+| --- | --- | --- |
+| 01_ingest | <1 min | — |
+| 02_demux | **45.9 min** | 786 reads/s |
+| 03_assignment | **8.8 min** | 2,955 reads/s |
+| 04_consensus | 1.3 min | — |
+| 05_qc, 06_report | <1 min | — |
+| **total** | **56.3 min** | |
+
+Against an estimated 10+ hours before this work, but **demultiplexing came in
+2.3x slower than the 1,818 reads/s benchmark** while assignment came in *faster*
+than its 2,127 reads/s benchmark (startup amortises over 1.5 M reads). The
+asymmetry is the explanation: assignment streams a local gzip, while
+demultiplexing reads the 5.9 GB source FASTQ from **OneDrive cloud storage**. The
+benchmarks were measured on a local file on an idle machine and were therefore
+optimistic for this setting. Benchmark numbers should state where the input lived.
+
+### Demultiplexing
+
+| Outcome | reads | share |
+| --- | --- | --- |
+| assigned | 1,560,452 | 72.0% |
+| well_unassigned | 243,063 | 11.2% |
+| out_of_length | 191,675 | 8.8% |
+| plate_unassigned | 170,590 | 7.9% |
+| plate_ambiguous | 1,448 | 0.1% |
+| well_ambiguous | 238 | 0.0% |
+| **empty_read** | **91** | — |
+| low_quality | 1 | 0.0% |
+
+**`empty_read` is exactly 91**, matching the independent `awk` count made before
+the feature existed. The reader accepts precisely the zero-length basecalls and
+nothing else.
+
+`low_quality` caught **one read in 2.17 million**, so the `minimum_mean_quality:
+10` floor is doing essentially nothing on this data. Worth knowing before relying
+on it as a control.
+
+### Assignment, consensus, QC
+
+| Assignment | reads | | Consensus (5,874) | | QC (5,874) | |
+| --- | --- | --- | --- | --- | --- | --- |
+| assigned_unique | 81.8% | | consensus_pass | 62.7% | pass | 60.5% |
+| no_match | 12.9% | | low_depth | 35.3% | not_evaluable | 35.3% |
+| motif_missing | 4.3% | | heterogeneous | 2.1% | fail | 4.2% |
+| ambiguous | 1.0% | | | | | |
+
+**93.5% of evaluable consensuses pass QC** (3,556 of 3,802), up from 88% on the
+pilot, as expected once depth improves. `low_depth` remains 35% even at full
+depth, so unlike the pilot artefact this is a real distribution: a third of
+well/gene groups genuinely have fewer than six reads.
+
+### Deconvolution validated at scale
+
+**Zero `unexpected_block` across all 1,560,452 demultiplexed reads.** Every
+assigned read's block is consistent with the declared layout. The failure mode is
+loud — the earlier fictional layout produced 4,624 — so zero is strong evidence
+the mapping is right.
+
+RP01-RP04 report `unknown_pcr_plate` as intended; their layout is undeclared.
+
+### Results worth acting on
+
+**1. RP05 hits its prediction exactly.** Expected 6 clones per well from six
+monoclonal culture plates mixed at colony PCR; **observed median is 6**.
+
+**2. RP05 culture plate B1 has failed.** Share of resolved reads:
+
+| | B1 | B2 | B3 | B4 | B5 | B6 |
+| --- | --- | --- | --- | --- | --- | --- |
+| RP05 | **0.8%** | 19.4% | 20.8% | 15.5% | 19.3% | 24.2% |
+
+Five plates sit at 15-24%; block 1's plate contributes 0.8%. The pilot showed 1%
+on 0.92% of the reads and the full run confirms it at depth. This looks like a
+transformation or growth failure rather than a sequencing artefact.
+
+**3. The two picking methods are distinguishable, as predicted.**
+
+| | B1-3 | B4-6 | B7-10 |
+| --- | --- | --- | --- |
+| RP07 (monoclonal picks, mixed) | 37.2% | 31.8% | 30.9% |
+| RP06 (scraped with a multichannel) | 41.2% | **22.7%** | 36.1% |
+
+RP07 is near-even, as a deliberate equal mix should be. RP06 under-represents
+blocks 4-6 by roughly a third. Scraping is measurably less uniform than mixing
+monoclonal cultures.
+
+**4. RP07 carries more diversity than designed.** Expected 10 clones per well
+(3 + 3 + 4); **observed median is 14**. The pilot's 9 was an undercount from
+sampling 0.92% of reads, and at full depth the wells exceed the design. So the
+"monoclonal" picks feeding RP07 were not all monoclonal, or colonies carried
+over during mixing. This is the clearest actionable discrepancy in the run.
+
+### Lessons
+
+**A prediction that lands exactly is worth more than a plausible number.** RP05's
+median of 6 against an expected 6 validates the whole chain at once: barcode
+calling, reference assignment, block attribution, and the layout model. It was
+only possible because `clonality: per_block` derives an expectation from the
+design instead of describing the data.
+
+**Benchmarks inherit their storage.** Demultiplexing missed its benchmark by
+2.3x purely because production input lives on cloud-synced storage. A throughput
+figure without its input location is not reproducible.
+
+### Next steps
+
+1. **Check RP05 culture plate B1 at the bench.** 0.8% recovery is a failure, not
+   a sampling artefact.
+2. **Reconcile RP07's median of 14 against the designed 10.** Either the picks
+   were not monoclonal or there was carryover during mixing.
+3. Declare the RP01-RP04 layout if their culture-plate provenance matters;
+   everything else about them is already processed.
+4. Consider dropping `minimum_mean_quality` or lowering it, since it excluded one
+   read in 2.17 million and is therefore not acting as a control.
+5. Re-run the assembly-error detector (`scripts/detect_assembly_errors.py`) over
+   the full demultiplexed reads to get a library-wide chimera and
+   missing-fragment rate, now that a full run exists.
+6. `low_depth` at 35% is real, not a pilot artefact. Decide whether
+   `minimum_depth: 6` is the right threshold for the wells that matter.
+
+---
+
 ## 2026-08-12 (ninth) — The real plate layout, derived rather than requested
 
 ### What changed

@@ -15,6 +15,108 @@ Conventions:
 
 ---
 
+## 2026-08-12 (seventh) — Compressed-PCR deconvolution
+
+### The workflow being modelled
+
+Colonies from one assembly block are picked into a culture 96-well plate. Several
+culture plates are then pooled into **one** colony-PCR plate, which carries the
+forward (well) and reverse (plate) primer barcodes. So a barcode pair identifies a
+*PCR* well, which may hold colonies from several culture plates at the same
+position.
+
+The assigned gene supplies the missing coordinate. A gene belongs to exactly one
+block, and a block was picked into known culture plates, so
+``gene -> block -> culture plate`` recovers the source. When a block is split
+across culture plates, those plates must go to **different** colony PCR plates so
+the reverse barcode separates them.
+
+### What was built (scientific, opt-in)
+
+`src/nanopore3/deconvolution.py` with a `compressed_pcr` config section:
+
+```yaml
+compressed_pcr:
+  enabled: true
+  pcr_plates:            # culture plates pooled into each colony PCR plate
+    RP01: [CP_A, CP_B, CP_C]
+    RP02: [CP_D]
+  blocks:                # culture plate(s) each block was picked into
+    "3": [CP_C, CP_D]    # split, but across different PCR plates
+```
+
+Design decisions worth recording:
+
+- **An unresolvable layout is rejected at configuration time.** If two culture
+  plates holding the same block are pooled into one PCR plate, no evidence can
+  separate them. That is detectable statically, so it is a config error with a
+  message naming the offending plates, rather than ambiguous reads discovered
+  after a multi-hour run.
+- **Ambiguity is never resolved arbitrarily.** If several plates remain
+  candidates the read is reported `ambiguous` with no plate assigned.
+- **`unexpected_block` is a real signal, not an error state.** A gene whose block
+  was never pooled into that PCR plate indicates a mis-pick, cross-contamination,
+  or a misdescribed layout. It is worth watching.
+- **The consensus grouping key is deliberately unchanged.** `culture_plate` is
+  recorded alongside consensus rows and FASTA headers as provenance, so consensus
+  identities stay byte-identical whether or not deconvolution runs. Folding it
+  into identity would have silently changed every prior consensus ID.
+
+### Where the block comes from
+
+Two independent sources, which cross-validate:
+
+- the reference identifier, via `block_pattern` (default `^Block_(\d+)_`);
+- the oPool design table, via `fragments_csv` per library, joined **by sequence**
+  because the FASTA and design table use different identifiers.
+
+Checked across all three libraries: **1,175 of 1,175 references agree between the
+two sources, zero disagreements.** The design table is treated as authoritative
+when supplied.
+
+### Verification
+
+A demonstration layout over the 20k pilot (7 PCR plates, 20 culture plates)
+resolved reads to 5-6 distinct source culture plates per PCR plate, which is the
+deconvolution working. Status counts were `resolved` 7,609, `unexpected_block`
+4,624, `unknown_block` 2,751 out of 14,984.
+
+The two non-resolved classes are exactly right for that input and worth
+explaining, because both look alarming:
+
+- `unknown_block` 2,751 is **exactly** the number of unassigned reads
+  (14,984 - 12,233 = 2,751). No gene means no block; nothing is wrong.
+- `unexpected_block` 4,624 is an artefact of the **invented** demonstration
+  layout, which mapped block *N* to culture plate *N* in every library. Real
+  reads therefore landed in PCR plates that layout says never held their block.
+  This is the mis-layout detector working, on a deliberately wrong layout.
+
+**No real layout has been supplied yet**, so the demonstration config was not
+committed; a plausible-looking but fictional plate map is exactly the kind of
+artefact that later gets mistaken for real metadata.
+
+### Also fixed
+
+`rescue_policy` and `rescue_candidates` existed on `ReferenceSettings` and were
+documented as per-library configuration, but were never added to the YAML parser,
+so a run file setting them would have been **rejected as an unknown key**. They
+are now parseable. Documentation claiming a knob exists is worse than no knob.
+
+### Next steps
+
+1. **Supply the real block-to-culture-plate map** and re-run. Until then this
+   feature is untested against a true layout.
+2. Watch `unexpected_block` on the real layout: a non-trivial rate means
+   mis-picking or cross-contamination between culture plates.
+3. Consider reporting resolved reads per culture plate well in the HTML report,
+   so plate-level dropout is visible at a glance.
+4. Deconvolution currently keys on the block alone. If a future design puts two
+   blocks in one culture plate, the mapping still works; if one block spans more
+   culture plates than there are PCR plates, it cannot, and the config error will
+   say so.
+
+---
+
 ## 2026-08-12 (sixth) — CORRECTION: blocks bound recombination, not overhangs
 
 **This entry corrects the 2026-08-12 (fifth) entry. Every chimera call it

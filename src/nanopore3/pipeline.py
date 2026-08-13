@@ -14,6 +14,7 @@ import heapq
 import io
 import json
 from multiprocessing import get_context
+import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO, TypeVar
 
@@ -24,6 +25,12 @@ from .consensus import (
     ConsensusRead,
     build_reference_consensus,
     require_mafft_spoa,
+)
+from .deconvolution import (
+    NOT_CONFIGURED,
+    CompressedPcrPlan,
+    Deconvolution,
+    block_from_reference_id,
 )
 from .demux import (
     BarcodeCall,
@@ -41,6 +48,7 @@ from .provenance import (
     git_provenance,
     sha256_file,
 )
+from .fragments import FragmentLibrary
 from .qc import evaluate_consensus
 from .references import read_reference_libraries
 from .report import write_html_report
@@ -421,6 +429,7 @@ def _assignment_row(
     call: AssignmentCall,
     k: int,
     reference_library_id: str,
+    deconvolution: Deconvolution = NOT_CONFIGURED,
 ) -> dict[str, Any]:
     best, second = call.best, call.second
     return {
@@ -442,6 +451,9 @@ def _assignment_row(
         "reference_coverage": "" if best is None else f"{best.reference_coverage:.6f}",
         "edit_distance": "" if best is None else best.edit_distance,
         "reason_code": call.reason,
+        "assembly_block": deconvolution.block or "",
+        "culture_plate": deconvolution.culture_plate or "",
+        "culture_plate_status": deconvolution.status,
     }
 
 
@@ -449,6 +461,8 @@ def _assign_one(
     read: Mapping[str, Any],
     indexes_by_library: Mapping[str, Sequence[ReferenceIndex]],
     config: PipelineConfig,
+    plan: CompressedPcrPlan | None = None,
+    blocks_by_library: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     try:
         library_id = config.reference_library_id_for_plate(str(read["plate_id"]))
@@ -476,6 +490,9 @@ def _assign_one(
                     f"plate barcode {read['plate_id']!r} has no configured "
                     "reference library"
                 ),
+                "assembly_block": "",
+                "culture_plate": "",
+                "culture_plate_status": "not_configured",
             },
             None,
         )
@@ -496,7 +513,10 @@ def _assign_one(
         rescue=settings.rescue_policy,
         rescue_candidates=settings.rescue_candidates,
     )
-    row = _assignment_row(read, final, used_k, library_id)
+    deconvolution = _deconvolve(
+        read, final.reference_ids, library_id, plan, blocks_by_library or {}
+    )
+    row = _assignment_row(read, final, used_k, library_id, deconvolution)
     eligible = None
     if final.status in {"assigned_unique", "assigned_alias_set"} and final.query_sequence:
         quality: str | None = str(read["quality"])
@@ -521,10 +541,77 @@ def _assign_one(
             "sequence": final.query_sequence,
             "reference_ids": list(final.reference_ids),
             "reference_library_id": library_id,
+            "culture_plate": deconvolution.culture_plate or "",
         }
         if len(eligible["quality"]) != len(eligible["sequence"]):
             eligible["quality"] = None
     return row, eligible
+
+
+def _build_block_map(
+    config: PipelineConfig,
+    references_by_library: Mapping[str, Mapping[str, str]],
+) -> dict[str, dict[str, str]]:
+    """Map each reference identifier to its assembly block, per library.
+
+    A configured design table is authoritative and is joined by sequence, since
+    the FASTA and the design table use different identifiers.  Otherwise the
+    block is read from the reference identifier itself.
+    """
+
+    if not config.compressed_pcr.enabled:
+        return {}
+    pattern = re.compile(config.compressed_pcr.block_pattern)
+    blocks: dict[str, dict[str, str]] = {}
+    for library_id, references in references_by_library.items():
+        settings = config.reference_sets[library_id]
+        mapping: dict[str, str] = {}
+        design = (
+            FragmentLibrary.from_full_info_csv(settings.fragments_csv)
+            if settings.fragments_csv is not None
+            else None
+        )
+        for reference_id, sequence in references.items():
+            block: str | None = None
+            if design is not None:
+                gene = design.gene_for_sequence(sequence)
+                if gene is not None and gene.block:
+                    block = gene.block
+            if block is None:
+                block = block_from_reference_id(reference_id, pattern)
+            if block is not None:
+                mapping[reference_id] = block
+        blocks[library_id] = mapping
+    return blocks
+
+
+def _deconvolve(
+    read: Mapping[str, Any],
+    call_reference_ids: Sequence[str],
+    library_id: str,
+    plan: CompressedPcrPlan | None,
+    blocks_by_library: Mapping[str, Mapping[str, str]],
+) -> Deconvolution:
+    """Resolve the source culture plate of one assigned read."""
+
+    if plan is None:
+        return NOT_CONFIGURED
+    if not call_reference_ids:
+        return Deconvolution(
+            None, None, "unknown_block", "the read was not assigned to a reference"
+        )
+    blocks = blocks_by_library.get(library_id, {})
+    observed = {blocks.get(reference_id) for reference_id in call_reference_ids}
+    observed.discard(None)
+    if len(observed) != 1:
+        # An alias set spanning several blocks cannot name one culture plate.
+        return Deconvolution(
+            None, None, "unknown_block",
+            "the assigned reference(s) do not identify exactly one block"
+            if observed
+            else "no assembly block is known for the assigned reference(s)",
+        )
+    return plan.resolve(str(read["plate_id"]), observed.pop())
 
 
 def _build_reference_indexes(
@@ -560,6 +647,12 @@ def _init_assignment_worker(
 
     _ASSIGNMENT_WORKER["config"] = config
     _ASSIGNMENT_WORKER["indexes"] = _build_reference_indexes(config, references_by_library)
+    _ASSIGNMENT_WORKER["blocks"] = _build_block_map(config, references_by_library)
+    _ASSIGNMENT_WORKER["plan"] = (
+        CompressedPcrPlan(config.compressed_pcr.pcr_plates, config.compressed_pcr.blocks)
+        if config.compressed_pcr.enabled
+        else None
+    )
 
 
 def _assign_batch_worker(
@@ -569,7 +662,9 @@ def _assign_batch_worker(
 
     config = _ASSIGNMENT_WORKER["config"]
     indexes = _ASSIGNMENT_WORKER["indexes"]
-    return tuple(_assign_one(read, indexes, config) for read in batch)
+    plan = _ASSIGNMENT_WORKER["plan"]
+    blocks = _ASSIGNMENT_WORKER["blocks"]
+    return tuple(_assign_one(read, indexes, config, plan, blocks) for read in batch)
 
 
 def _write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fields: Sequence[str]) -> Counter[str]:
@@ -760,6 +855,12 @@ def run_pipeline(
         for library_id, bundle in reference_collection.libraries
     }
     indexes_by_library = _build_reference_indexes(config, references_by_library)
+    block_map = _build_block_map(config, references_by_library)
+    compressed_plan = (
+        CompressedPcrPlan(config.compressed_pcr.pcr_plates, config.compressed_pcr.blocks)
+        if config.compressed_pcr.enabled
+        else None
+    )
     reference_parameters = {
         library_id: asdict(settings)
         for library_id, settings in config.reference_sets.items()
@@ -771,6 +872,7 @@ def run_pipeline(
     assignment_parameters = {
         "reference_libraries": reference_parameters,
         "plate_reference_map": dict(config.plate_reference_map),
+        "compressed_pcr": asdict(config.compressed_pcr),
     }
     assign_fp = _stage_fingerprint(
         "03_assignment",
@@ -800,7 +902,10 @@ def run_pipeline(
                     batch: Sequence[Mapping[str, Any]],
                 ) -> tuple[tuple[dict[str, Any], dict[str, Any] | None], ...]:
                     return tuple(
-                        _assign_one(read, indexes_by_library, config) for read in batch
+                        _assign_one(
+                            read, indexes_by_library, config, compressed_plan, block_map
+                        )
+                        for read in batch
                     )
 
                 # Threads cannot speed this stage up: its cost is Python-level
@@ -856,6 +961,11 @@ def run_pipeline(
             available: Counter[
                 tuple[str, str, str, str, tuple[str, ...]]
             ] = Counter()
+            # Provenance only: the grouping key is deliberately unchanged so
+            # consensus identities stay stable whether or not deconvolution runs.
+            culture_plates: dict[
+                tuple[str, str, str, str, tuple[str, ...]], set[str]
+            ] = defaultdict(set)
             for row in _iter_gzip_json(eligible_path):
                 aliases = tuple(row["reference_ids"])
                 key = (
@@ -866,6 +976,8 @@ def run_pipeline(
                     aliases,
                 )
                 available[key] += 1
+                if row.get("culture_plate"):
+                    culture_plates[key].add(str(row["culture_plate"]))
                 rank = int(hashlib.sha256(f"{config.random_seed}\0{key}\0{row['read_uid']}".encode()).hexdigest(), 16)
                 qualities = None if row["quality"] is None else tuple(ord(c) - 33 for c in row["quality"])
                 item = (-rank, row["read_uid"], ConsensusRead(row["read_uid"], row["sequence"], qualities))
@@ -898,6 +1010,7 @@ def run_pipeline(
                     "consensus_id": consensus_id, "sample_id": sample, "plate_id": plate, "well_id": well,
                     "reference_library_id": library_id,
                     "reference_ids": "|".join(aliases), "status": result.status,
+                    "culture_plate": "|".join(sorted(culture_plates.get(key, ()))),
                     "n_reads_available": available[key], "n_reads_used": result.n_reads_used,
                     "mean_depth": f"{result.mean_depth:.4f}", "min_depth": result.min_depth,
                     "ambiguous_bases": result.ambiguous_bases, "backend": result.backend,
@@ -909,7 +1022,13 @@ def run_pipeline(
                     fasta_parts.append(
                         f">{consensus_id} reference_library={library_id} "
                         f"reference_ids={'|'.join(aliases)} sample={sample} "
-                        f"plate={plate} well={well}\n{result.sequence}\n"
+                        f"plate={plate} well={well}"
+                        + (
+                            f" culture_plate={'|'.join(sorted(culture_plates.get(key, ())))}"
+                            if culture_plates.get(key)
+                            else ""
+                        )
+                        + f"\n{result.sequence}\n"
                     )
                 for rank, read_uid in enumerate(result.contributor_ids, start=1):
                     contributor_rows.append({"consensus_id": consensus_id, "read_uid": read_uid, "selection_rank": rank})

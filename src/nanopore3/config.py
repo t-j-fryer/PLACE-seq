@@ -9,6 +9,7 @@ working directory.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
+import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -156,6 +157,10 @@ class ReferenceSettings:
     """Reference FASTA and conservative shortlist/alignment thresholds."""
 
     fasta: tuple[Path, ...]
+    # Optional oPool *_FULL_INFO.csv design table. When supplied it is the
+    # authoritative source of each gene's assembly block, joined by sequence
+    # because the FASTA and the design table use different identifiers.
+    fragments_csv: Path | None = None
     kmer_sizes: tuple[int, ...] = (15, 11, 9)
     max_kmer_owners: int = 10
     candidate_count: int = 5
@@ -345,6 +350,55 @@ class QcSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class CompressedPcrSettings:
+    """Recover the source culture plate when several were pooled for colony PCR.
+
+    ``pcr_plates`` lists the culture plates loaded into each colony PCR plate,
+    keyed by plate barcode.  ``blocks`` lists the culture plate(s) each assembly
+    block was picked into.  Together they let an assigned gene identify which
+    pooled culture plate a read came from.
+    """
+
+    enabled: bool = False
+    pcr_plates: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    blocks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # Applied to reference identifiers when no design table is configured.
+    block_pattern: str = r"^Block_(\d+)_"
+
+    def __post_init__(self) -> None:
+        if not self.enabled:
+            return
+        if not self.pcr_plates:
+            raise ConfigError("compressed_pcr.pcr_plates is required when enabled")
+        if not self.blocks:
+            raise ConfigError("compressed_pcr.blocks is required when enabled")
+        try:
+            re.compile(self.block_pattern)
+        except re.error as exc:
+            raise ConfigError(f"compressed_pcr.block_pattern is not a regex: {exc}") from exc
+        for plate, sources in self.pcr_plates.items():
+            _nonempty_string(plate, "compressed_pcr.pcr_plates key")
+            if not sources:
+                raise ConfigError(
+                    f"compressed_pcr.pcr_plates[{plate!r}] must list at least one culture plate"
+                )
+        for block, plates in self.blocks.items():
+            _nonempty_string(block, "compressed_pcr.blocks key")
+            if not plates:
+                raise ConfigError(
+                    f"compressed_pcr.blocks[{block!r}] must list at least one culture plate"
+                )
+        # Validate the layout itself: an unresolvable pooling design is an error
+        # that can be caught now instead of appearing as ambiguous reads later.
+        from .deconvolution import CompressedPcrPlan, DeconvolutionError
+
+        try:
+            CompressedPcrPlan(self.pcr_plates, self.blocks)
+        except DeconvolutionError as exc:
+            raise ConfigError(str(exc)) from exc
+
+
+@dataclass(frozen=True, slots=True)
 class PipelineConfig:
     """Fully resolved and validated Nanopore3 run configuration."""
 
@@ -361,6 +415,7 @@ class PipelineConfig:
     parallel: ParallelSettings = field(default_factory=ParallelSettings)
     consensus: ConsensusSettings = field(default_factory=ConsensusSettings)
     qc: QcSettings = field(default_factory=QcSettings)
+    compressed_pcr: CompressedPcrSettings = field(default_factory=CompressedPcrSettings)
     random_seed: int = 0
     source_path: Path | None = field(default=None, compare=False)
 
@@ -608,6 +663,7 @@ def _parse_references(
     mapping = _mapping(value, location)
     allowed = {
         "fasta",
+        "fragments_csv",
         "kmer_sizes",
         "max_kmer_owners",
         "candidate_count",
@@ -616,6 +672,8 @@ def _parse_references(
         "minimum_query_coverage",
         "minimum_reference_coverage",
         "minimum_identity_margin",
+        "rescue_policy",
+        "rescue_candidates",
     }
     _reject_unknown(mapping, allowed, location)
     fasta_value = _required(mapping, "fasta", location)
@@ -636,8 +694,20 @@ def _parse_references(
         _positive_int(item, f"{location}.kmer_sizes[{index}]", minimum=3)
         for index, item in enumerate(kmer_value)
     )
+    fragments_value = mapping.get("fragments_csv")
     return ReferenceSettings(
         fasta=fasta,
+        fragments_csv=(
+            None
+            if fragments_value is None
+            else _path(fragments_value, base_dir, f"{location}.fragments_csv")
+        ),
+        rescue_policy=_nonempty_string(
+            mapping.get("rescue_policy", "kmer"), f"{location}.rescue_policy"
+        ),
+        rescue_candidates=_positive_int(
+            mapping.get("rescue_candidates", 25), f"{location}.rescue_candidates"
+        ),
         kmer_sizes=kmer_sizes,
         max_kmer_owners=_positive_int(
             mapping.get("max_kmer_owners", 10), f"{location}.max_kmer_owners"
@@ -845,6 +915,48 @@ def _parse_qc(value: Any) -> QcSettings:
     )
 
 
+def _plate_lists(value: Any, location: str) -> dict[str, tuple[str, ...]]:
+    """Accept either a single plate name or a list of them, per key."""
+
+    mapping = _mapping(value, location)
+    result: dict[str, tuple[str, ...]] = {}
+    for key, raw in mapping.items():
+        name = _nonempty_string(key, f"{location} key")
+        if isinstance(raw, str):
+            items = [raw]
+        elif isinstance(raw, Sequence):
+            items = list(raw)
+        else:
+            raise ConfigError(f"{location}[{name!r}] must be a name or list of names")
+        plates = tuple(
+            _nonempty_string(item, f"{location}[{name!r}][{index}]")
+            for index, item in enumerate(items)
+        )
+        if len(set(plates)) != len(plates):
+            raise ConfigError(f"{location}[{name!r}] lists a plate more than once")
+        result[name] = plates
+    return result
+
+
+def _parse_compressed_pcr(value: Any) -> CompressedPcrSettings:
+    if value is None:
+        return CompressedPcrSettings()
+    location = "compressed_pcr"
+    mapping = _mapping(value, location)
+    _reject_unknown(
+        mapping, {"enabled", "pcr_plates", "blocks", "block_pattern"}, location
+    )
+    enabled = _boolean(mapping.get("enabled", True), f"{location}.enabled")
+    return CompressedPcrSettings(
+        enabled=enabled,
+        pcr_plates=_plate_lists(mapping.get("pcr_plates", {}), f"{location}.pcr_plates"),
+        blocks=_plate_lists(mapping.get("blocks", {}), f"{location}.blocks"),
+        block_pattern=_nonempty_string(
+            mapping.get("block_pattern", r"^Block_(\d+)_"), f"{location}.block_pattern"
+        ),
+    )
+
+
 def load_config(path: str | Path) -> PipelineConfig:
     """Load and validate a Nanopore3 YAML configuration.
 
@@ -875,6 +987,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         "parallel",
         "consensus",
         "qc",
+        "compressed_pcr",
         "random_seed",
     }
     _reject_unknown(root, allowed, "configuration")
@@ -935,6 +1048,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         parallel=_parse_parallel(root.get("parallel")),
         consensus=_parse_consensus(root.get("consensus")),
         qc=_parse_qc(root.get("qc")),
+        compressed_pcr=_parse_compressed_pcr(root.get("compressed_pcr")),
         random_seed=random_seed,
         source_path=source_path,
     )

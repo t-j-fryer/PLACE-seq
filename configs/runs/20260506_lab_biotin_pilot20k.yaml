@@ -129,58 +129,32 @@ qc:
   upstream_constant: ATGCAGCTT
   downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA
 
-# Culture-plate provenance.  RP01-RP05 are not compressed: each is a single
-# culture plate, and the pilot confirms each carries its whole library rather
-# than one block (RP01-RP04 show 18-20 of the 20 aaseq_biotin blocks; RP05 shows
-# all 6 dtf141 blocks).  Only RP06 and RP07 stack three culture plates each,
-# holding sumo_lab blocks 1-3, 4-6 and 7-10, so only they need the gene identity
-# to recover which culture plate a read came from.
+# Culture-plate provenance.  RP01-RP04 are deliberately not described yet, so
+# their reads report `unknown_pcr_plate`: that means "layout not declared", not
+# an error.  RP05 pools six culture plates holding one dtF141/dTF142 block each,
+# mixed only at the colony PCR stage.  RP06 and RP07 each pool three culture
+# plates holding sumo_lab blocks 1-3, 4-6 and 7-10.
 compressed_pcr:
   enabled: true
   pcr_plates:
-    RP01: [CP_RP01]
-    RP02: [CP_RP02]
-    RP03: [CP_RP03]
-    RP04: [CP_RP04]
-    RP05: [CP_RP05]
+    RP05: [CP_RP05_B1, CP_RP05_B2, CP_RP05_B3, CP_RP05_B4, CP_RP05_B5, CP_RP05_B6]
     RP06: [CP_RP06_B1_3, CP_RP06_B4_6, CP_RP06_B7_10]
     RP07: [CP_RP07_B1_3, CP_RP07_B4_6, CP_RP07_B7_10]
   clonality:
-    # Scraped with a multichannel over an agar plate: diversity per well is
-    # inconsistent, so no expectation is declared.
+    # Six monoclonal culture plates mixed at colony PCR: one clone per block.
+    RP05: per_block
+    # Scraped with a multichannel over an agar plate: diversity is inconsistent.
     RP06: unspecified
-    # Monoclonal picks mixed and grown together, one clone per block, giving
-    # 3 + 3 + 4 = 10 distinct genes per well.
+    # Monoclonal picks mixed and grown together: 3 + 3 + 4 clones per well.
     RP07: per_block
   blocks:
-    aaseq_biotin:
-      "1": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "2": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "3": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "4": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "5": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "6": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "7": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "8": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "9": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "10": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "11": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "12": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "13": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "14": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "15": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "16": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "17": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "18": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "19": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
-      "20": [CP_RP01, CP_RP02, CP_RP03, CP_RP04]
     dtf141_dtf142:
-      "1": [CP_RP05]
-      "2": [CP_RP05]
-      "3": [CP_RP05]
-      "4": [CP_RP05]
-      "5": [CP_RP05]
-      "6": [CP_RP05]
+      "1": [CP_RP05_B1]
+      "2": [CP_RP05_B2]
+      "3": [CP_RP05_B3]
+      "4": [CP_RP05_B4]
+      "5": [CP_RP05_B5]
+      "6": [CP_RP05_B6]
     sumo_lab:
       "1": [CP_RP06_B1_3, CP_RP07_B1_3]
       "2": [CP_RP06_B1_3, CP_RP07_B1_3]

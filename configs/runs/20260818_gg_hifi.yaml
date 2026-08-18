@@ -1,0 +1,131 @@
+# BLOCKED: the supplied reference set does not match this flow cell.
+# 98.1% of gated reads share <1% of their 15-mers with these 62 plasmids and
+# only ~1.2% match well. Barcodes and read structure are fine; the references
+# are wrong or incomplete. Do not run until that is resolved.
+schema_version: 1
+run_name: 20260818-GG-HIFI
+output_root: ../../runs
+
+# 15 pass FASTQs from one flow cell, kept as separate inputs so each keeps its
+# own checksum and record count in provenance.
+inputs:
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_0.fastq.gz
+    sample_id: FBG62182_00
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_1.fastq.gz
+    sample_id: FBG62182_01
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_2.fastq.gz
+    sample_id: FBG62182_02
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_3.fastq.gz
+    sample_id: FBG62182_03
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_4.fastq.gz
+    sample_id: FBG62182_04
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_5.fastq.gz
+    sample_id: FBG62182_05
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_6.fastq.gz
+    sample_id: FBG62182_06
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_7.fastq.gz
+    sample_id: FBG62182_07
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_8.fastq.gz
+    sample_id: FBG62182_08
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_9.fastq.gz
+    sample_id: FBG62182_09
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_10.fastq.gz
+    sample_id: FBG62182_10
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_11.fastq.gz
+    sample_id: FBG62182_11
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_12.fastq.gz
+    sample_id: FBG62182_12
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_13.fastq.gz
+    sample_id: FBG62182_13
+  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_14.fastq.gz
+    sample_id: FBG62182_14
+
+# Whole plasmids were supplied as GenBank; the references here are the region
+# between the two motifs, which is what the pipeline compares against.  All 54
+# are distinct, a whole number of codons, and free of internal stops.
+# 8 of the 62 supplied plasmids lack one or both motifs and are excluded:
+# 3-pCT-ALFA-ALFA, VNP6-NbALFA-mNG2, VNP6-antiALFA-mNG, VNP6-antiSUMO-1-mNG,
+# VNP6-antiSUMO-4-mNG, pTF733_pCT-SUMO, pTF734_pCT-ALFA, pTF735_pCT-ALFA-ALFA.
+reference_libraries:
+  gg_hifi:
+    fasta: ../../runs/refs_20260818/insert_references.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+
+# TF544/547 are plate 1 rounds 1 and 2; TF545/546 are plate 2 rounds 1 and 2.
+# All four amplify the same library, so every plate barcode routes to it.
+plate_reference_map:
+  RP01: gg_hifi
+  RP02: gg_hifi
+  RP03: gg_hifi
+  RP04: gg_hifi
+
+library:
+  name: gg-hifi-insert
+  forward_motif: TAAGAAGGAGAGCAGCTATGCAGCTT
+  reverse_motif: TCGGGCGGATCCCATCACCACCACCATCACTAA
+  motif_max_edits: 3
+  # Reads are bimodal: a junk peak below 1 kb and the real amplicon peaking at
+  # 3.0-3.5 kb with a tail past 8 kb.  The gate is deliberately wide because
+  # motif extraction, not length, is what selects usable reads.
+  minimum_read_length: 1000
+  maximum_read_length: 8000
+  minimum_mean_quality: 10
+  allow_empty_reads: true
+
+barcodes:
+  plate:
+    registry_csv: ../barcodes/reverse_primer_families.csv
+    # Only the four TF primers actually used, registered as their own family so
+    # a read cannot be called as an unused RP05-RP12.
+    family_id: tf544_547_core
+    # The registered sequence is the 24 nt variable core, so nothing is trimmed.
+    trim_bases: 0
+    # The four cores are >=12 edits apart, so 5 stays unambiguous.
+    max_edits: 5
+    search_window: 400
+    search_ends: [head, tail]
+    allow_reverse_complement: true
+    minimum_margin: 0
+    decision_policy: legacy_unique_threshold
+  well:
+    registry_csv: ../barcodes/well_forward_primers_a1_h12.csv
+    family_id: well_forward_full
+    trim_bases: 12
+    max_edits: 7
+    search_window: 400
+    search_ends: [head]
+    allow_reverse_complement: false
+    minimum_margin: 0
+    decision_policy: legacy_unique_best
+
+parallel:
+  backend: process
+  jobs: 8
+  threads_per_job: 1
+  chunk_reads: 1000
+
+random_seed: 141142
+
+consensus:
+  backend: portable
+  minimum_depth: 6
+  maximum_reads: 30
+  minimum_support: 0.60
+
+qc:
+  minimum_identity: 0.98
+  minimum_query_coverage: 0.95
+  minimum_reference_coverage: 0.95
+  length_tolerance: 10
+  # forward_motif runs through the constant ATGCAGCTT, so the consensus is the
+  # bare insert and the frame is ATGCAGCTT + consensus + the 3' motif, which is
+  # itself the GS linker, His tag and stop.
+  upstream_constant: ATGCAGCTT
+  downstream_constant: TCGGGCGGATCCCATCACCACCACCATCACTAA

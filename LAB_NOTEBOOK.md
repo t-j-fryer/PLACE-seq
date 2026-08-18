@@ -15,6 +15,115 @@ Conventions:
 
 ---
 
+## 2026-08-13 (third) — Whole-vector amplicons, and reference-free clustering
+
+Two questions from the experiment owner: would the pipeline handle a 6 kb
+whole-vector amplicon with a 300-1000 nt variable insert, and could reads in a
+well be clustered without a reference.
+
+### Whole-vector amplicons: it runs, but the thresholds stop meaning anything
+
+Measured on synthetic 200-design libraries of whole vectors.
+
+**Speed is fine.** 4 ms per read, 264 reads/s against 2,955 reads/s for the 1.2 kb
+amplicons: about 11x slower per read, so roughly 1.6 hours for 1.5 M reads. The
+specificity-weighted k-mer index handles the shared backbone exactly as intended,
+because backbone k-mers are owned by every reference and are dropped by
+`max_kmer_owners`, leaving only insert k-mers carrying signal.
+
+**The identity threshold becomes meaningless.** A *perfect* read of the **wrong**
+design scores **0.9718** identity against a 5.7 kb vector with a 300 nt insert,
+far above the `minimum_identity: 0.80` floor. With 95% of the amplicon invariant,
+identity measures the backbone, not the design.
+
+Everything therefore rests on the identity margin, which scales with the variable
+fraction:
+
+| Insert | read error | worst margin | headroom over the 0.02 threshold |
+| --- | --- | --- | --- |
+| 300 nt in 5.7 kb | 6% | 0.0242 | 21% |
+| 300 nt in 5.7 kb | 10% | **0.0207** | **3.5%** |
+| 1000 nt in 6.4 kb | 10% | 0.0664 | comfortable |
+
+No wrong calls occurred, but the synthetic inserts were random and therefore
+maximally distinct. A real library of related designs would shrink the margin
+further. **The principled fix is to score identity over the variable region
+rather than the whole amplicon**, which is not yet implemented.
+
+Reporting accuracy across the entire read length already works: QC aligns the
+whole consensus globally, so widening the length gate and supplying whole-vector
+references is enough for that part.
+
+### Reference-free clustering
+
+New `src/nanopore3/clustering.py`. Reads in a well are projected onto a seed,
+positions where reads systematically disagree are found, and each read is reduced
+to its alleles at those positions alone. The invariant backbone contributes
+nothing, which is what makes it insensitive to how much sequence the clones share.
+
+Three findings, each from a failure:
+
+**1. The seed must be polished first.** With a raw read as scaffold, its own 5-10%
+errors looked like variant positions to every other read: variants were scattered
+from position 6 to 2691 when the insert sat at 1200-1500. One round of majority
+polishing moved **98% of variant positions inside the insert** and dropped
+within-clone distance from 0.270 to 0.233.
+
+**2. Distances need a comparable-position floor.** An indel near a variant leaves
+it uncalled, and two reads overlapping at a handful of positions give a mismatch
+ratio driven by chance, which widened both tails until they overlapped.
+
+**3. A single greedy pass mis-assigns.** An early centre absorbs reads from
+another clone. Added k-means-style refinement: recompute centres from members,
+reassign, iterate to a fixed point.
+
+Also: a split is only accepted when **two** clusters reach the size floor.
+One cluster reaching it is one clone whose reads scattered, and splitting there
+silently discards the shortfall, which reads as low depth rather than a failed split.
+
+Verified: a monoclonal well of 20 reads yields **one cluster of 20 whose consensus
+is 100.00% identical** to the truth; three clearly distinct clones yield three
+pure clusters.
+
+### The measured limit, and a claim I had to withdraw
+
+I wrote that clustering failures would be conservative — an under-split flagged
+downstream as `mixed_variants`. **A test disproved that**: a cluster formed
+containing reads from two different clones. That is mis-assignment, not
+under-splitting.
+
+The regime is now measured. Three designs sharing 2.4 kb of backbone and
+differing across a 300 nt insert are **94.15% identical**, so their true
+divergence (6%) *equals* the read error rate (6%). The within-clone p90 and
+between-clone p10 distances both land on 0.495 — the distributions touch, and no
+threshold separates them. Clones differing across a 900 nt insert separate cleanly.
+
+This matters directly for the whole-vector question, where the variable region is
+5-15% of the amplicon: **that is the hard regime, not the easy one.** The limit is
+asserted as a test so it cannot regress silently, and documented at the top of the
+module. What would fix it is selecting variant positions by co-variation rather
+than by frequency alone, which is proper haplotype phasing.
+
+### Lessons
+
+**A convenient claim about a failure mode needs the same test as a feature.**
+"Failures are conservative" was plausible, and wrong, and would have been
+believed. One test settled it.
+
+**Do not tune a test green.** The mixing test could have been made to pass with a
+kinder seed. Encoding the limit as its own assertion keeps the weakness visible.
+
+### Next steps
+
+1. Region-aware identity scoring for whole-vector references: score the variable
+   region separately from the backbone, and threshold on that.
+2. Co-variation-based variant selection in clustering, to push the separable
+   regime below 6% divergence.
+3. Wire clustering into the pipeline as an optional reference-free path; it is
+   currently a library and is not called by any stage.
+
+---
+
 ## 2026-08-13 (second) — Graded consensus tree, and `heterogeneous` renamed
 
 ### Graded per-plate output

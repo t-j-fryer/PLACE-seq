@@ -15,6 +15,78 @@ Conventions:
 
 ---
 
+## 2026-08-19 (fourth) — Culture-plate recovery, and a metric that was 2.9x wrong
+
+### What was added
+
+Deconvolution was only visible as a read-fate bar, which says whether a read
+resolved but not *which* culture plate it came from — the point of compressing
+plates in the first place. `fig4_culture_plates` adds, per pooled colony-PCR
+plate, a 96-well map of how many distinct source plates each well recovered and a
+bar per source plate. The report gains a **Culture plate recovery** section.
+
+The pooled denominator comes from `compressed_pcr.pcr_plates`, not from what was
+observed: a culture plate contributing nothing must show as missing rather than
+silently shrinking the denominator from 22 to 21.
+
+### The metric was wrong, and the experiment owner caught it
+
+The first version reported 200-375 "clones" per culture plate. The experiment
+owner questioned it immediately: RP05 has 96 wells and each well draws one colony
+per culture plate, so **96 is the ceiling** — 375 is impossible.
+
+The cause: it counted consensus **groups**, including 3,769 that fell below the
+depth floor and produced no sequence at all. Counting groups inflated recovery by
+**2.9x** and put more sequences on a culture plate than the plate has wells.
+
+Corrected to count consensus sequences actually built:
+
+| | RP05 | RP08 |
+| --- | --- | --- |
+| consensus sequences | 2,058 | 1,052 |
+| groups below depth (not credited) | 3,769 | 2,321 |
+| per culture plate, median | **97** | **96** |
+| source plates with a consensus per well | median 21 of 22 | median 11 of 11 |
+
+**97 and 96 against a ceiling of 96** is what near-complete recovery looks like:
+essentially every (well, culture plate) pair yields one consensus. The occasional
+102 or 106 is a well where one culture plate contributed two distinct designs.
+
+The per-well figure also became more honest: median 21 of 22, not 22 of 22,
+because a source plate is now only credited when it produced a usable sequence.
+
+**SUMO B plate 11 built 42 sequences against a median of 96** across the other 21
+— under half. Worth checking at the bench.
+
+### Two figure defects found by rendering
+
+The outlier highlight compared against the **mean**, which the outlier itself
+drags down: at 42 against a mean of 94 it failed the 0.4x test and went
+unhighlighted. Comparing against the median catches it. Titles also collided once
+they grew, and were shortened.
+
+### Lessons
+
+**A count needs a ceiling check.** "200-375 per culture plate" was reported
+without asking what the maximum possible value was. One division — 96 wells, one
+colony each — would have caught it before it reached a figure.
+
+**"Groups" and "sequences built" are not interchangeable**, and on this run they
+differ by 2.9x because most groups are too shallow. Any per-plate or per-well
+count has to say which it means.
+
+**An outlier detector must not use a statistic the outlier distorts.** Flagging
+against the mean hid exactly the case the flag exists for.
+
+### Next steps
+
+1. Check SUMO B plate 11 at the bench: 42 sequences against a median of 96.
+2. Consider showing groups-below-depth per culture plate too, since 3,769 of
+   5,827 RP05 groups are shallow and that ratio may itself vary by plate.
+3. Unchanged from earlier: investigate RP03 and RP04's chimera rate.
+
+---
+
 ## 2026-08-19 (third) — Chimera detection wired in and run across all plates
 
 Run `runs/260608-AI-DBTL-v3`, **20.8 minutes** including the new stage.

@@ -119,6 +119,13 @@ class CulturePlateTests(unittest.TestCase):
                     "n_reads_available": "10", "n_reads_used": "10",
                     "mean_depth": "10", "ambiguous_bases": "0",
                 })
+        # A shallow group carries a culture plate but built no sequence.
+        rows.append({f: "" for f in self._FIELDS} | {
+            "consensus_id": "shallow", "plate_id": "RP05", "well_id": "A2",
+            "reference_ids": "g7", "status": "low_depth", "culture_plate": "CP_B",
+            "n_reads_available": "2", "n_reads_used": "2", "mean_depth": "2",
+            "ambiguous_bases": "0",
+        })
         # An undeconvolved plate must not appear at all.
         rows.append({f: "" for f in self._FIELDS} | {
             "consensus_id": "z", "plate_id": "RP01", "well_id": "A1",
@@ -143,9 +150,16 @@ class CulturePlateTests(unittest.TestCase):
         self.assertEqual(summary.sources_per_well, {"A1": 2, "A2": 1})
         self.assertEqual(summary.pooled, 2)
 
-    def test_clones_are_counted_per_source_plate(self) -> None:
+    def test_only_built_sequences_are_credited_not_shallow_groups(self) -> None:
+        """A group below the depth floor produced no sequence, so it is not recovery."""
+
         summary = figures.summarize_culture_plates(self.run, {"RP05": 2})[0]
-        self.assertEqual(summary.clones_per_source, {"CP_A": 2, "CP_B": 1})
+        self.assertEqual(summary.below_depth, 1)
+        self.assertEqual(summary.consensus_per_source, {"CP_A": 2, "CP_B": 1})
+
+    def test_consensus_sequences_are_counted_per_source_plate(self) -> None:
+        summary = figures.summarize_culture_plates(self.run, {"RP05": 2})[0]
+        self.assertEqual(summary.consensus_per_source, {"CP_A": 2, "CP_B": 1})
 
     def test_pooled_count_falls_back_to_what_was_observed(self) -> None:
         """Without the layout, the figure still draws rather than failing."""

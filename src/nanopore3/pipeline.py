@@ -1374,14 +1374,16 @@ def run_pipeline(
                     per_well = sorted(item.sources_per_well.values())
                     recovery[item.plate_id] = {
                         "pooled_culture_plates": item.pooled,
-                        "culture_plates_recovered": len(item.clones_per_source),
-                        "clones": sum(item.clones_per_source.values()),
+                        "culture_plates_recovered": len(item.consensus_per_source),
+                        "consensus_sequences": sum(item.consensus_per_source.values()),
+                        "groups_below_depth": item.below_depth,
                         "median_source_plates_per_well": (
                             per_well[len(per_well) // 2] if per_well else 0
                         ),
                         "weakest_culture_plate": (
-                            min(item.clones_per_source, key=item.clones_per_source.get)
-                            if item.clones_per_source else ""
+                            min(item.consensus_per_source,
+                                key=item.consensus_per_source.get)
+                            if item.consensus_per_source else ""
                         ),
                     }
                 if recovery:

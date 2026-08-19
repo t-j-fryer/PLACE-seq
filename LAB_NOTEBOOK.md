@@ -15,6 +15,152 @@ Conventions:
 
 ---
 
+## 2026-08-19 (third) — Chimera detection wired in and run across all plates
+
+Run `runs/260608-AI-DBTL-v3`, **20.8 minutes** including the new stage.
+
+**`04b_chimera` is now a pipeline stage**, beside consensus rather than inside it
+so a chimera setting change does not invalidate the reference-guided
+consensuses, and named `04b` so existing stage numbering — and the QC, report,
+export and figure code — stays untouched.
+
+**PCR-origin chimeras are counted but not written.** `classify_origin` moved from
+the script into `nanopore3.chimera`, because it now decides *what gets written*
+rather than only how output is labelled, and that belongs in tested code.
+`write_pcr_origin` restores them for inspection. New `chimera` config section,
+disabled by default so other profiles are unaffected.
+
+### Results across all 11 plates
+
+| | |
+| --- | --- |
+| chimeric reads | 36,419 of 1,174,553 with an insert |
+| **clones written** | **310** (all assembly-origin, all two-parent) |
+| PCR-origin groups counted, not written | 74 |
+| declined to scaffold (three parents) | 3 |
+
+Median 33 reads per clone, up to 579, and **median 0 ambiguous bases** — the
+chimeric consensuses are clean, which is what a real clone should give.
+
+| plate | clones | share of assigned reads |
+| --- | --- | --- |
+| RP04 | **187** | 30.6% |
+| RP05 | 68 | 35.5% |
+| RP03 | 23 | 2.1% |
+| RP08 | 16 | 15.6% |
+| RP09 | 11 | 2.2% |
+| RP01, RP10, RP11 | 0 | 2.0-3.5% |
+
+**RP04 and RP03 are out of proportion to depth.** RP04 gives 187 clones from
+30.6% of reads while RP05 gives 68 from a larger 35.5%; RP03 gives 23 from 2.1%.
+Both are opTF001, so this is a library or plate effect rather than a depth
+effect, and is worth investigating at the bench.
+
+### Agreement with the legacy analysis on RP05
+
+Of legacy's 28 chimeras, **25 are written**, and the three that are not are each
+correct behaviour rather than a miss:
+
+- **E10 and F02** have parents in different assembly blocks, so they are PCR
+  template-switch artefacts and are deliberately withheld. Legacy wrote them as
+  clones.
+- **D03** has three parents, where `synthesise_reference` declines to splice
+  because the junctions are not independently located well enough. A genuine gap.
+
+The stage reproduced the standalone script's RP05 figure exactly (68
+assembly-origin) across a separate full run.
+
+### Lessons
+
+**Where a decision lives matters as much as whether it is right.** Origin
+classification was fine in a script while it only labelled output; the moment it
+decided what to write, leaving it there would have put a scientific filter
+outside the test suite.
+
+**A disagreement worth having is one you can explain per case.** Three legacy
+calls are missing and each has a specific reason — two artefacts withheld by
+design, one real limitation. More useful than a matching count.
+
+**A failed `&&` link silently skipped a lab-notebook entry.** The previous
+session's chimera entry was never written, because a lint failure short-circuited
+the chain while the `git commit` on the following line still ran. The record and
+the commit disagreed. Notebook writes should not ride on a chain that can fail.
+
+### Next steps
+
+1. **Investigate RP03 and RP04's chimera rate**, far out of proportion to their
+   read share and specific to opTF001.
+2. Recover the three-parent case: locate multi-junction breakpoints well enough
+   to splice, or make the reference-free fallback produce a usable consensus.
+3. Grade chimeric consensuses as the reference-guided ones are graded, so
+   `perfect`/`screenable` applies to them too.
+4. Surface chimera counts in the HTML report and as a figure.
+
+---
+
+## 2026-08-19 (second) — Chimeric clones are recovered instead of discarded
+
+### Validation against the legacy analysis
+
+**Sequence agreement is essentially exact.** 2,057 of our 2,058 RP05 consensuses
+appear in the legacy set (Jaccard 94.9%), 1,865 graded perfect on both sides.
+**97.4% of legacy consensuses are exactly ours plus `AGTGGA`** — the vector
+overhang — because the legacy consensus is not trimmed to the reference span
+while ours is. After removing those 6 bases, edit-distance-to-reference agrees on
+97.6%. The 48 cases where legacy said screenable/other and we said perfect are all
+explained by it: legacy checks 6 constant bases we do not.
+
+**The 110 consensuses only legacy has are entirely a depth choice**: median 1
+read, maximum 5, all under our `minimum_depth: 6`.
+
+### A claim I made and then disproved
+
+I wrote that the 28 wells legacy flagged as chimeric were "reported as ordinary
+assignments by us". Checking showed otherwise: of the 57 parent designs legacy
+named, **46 never reached consensus at all**, 4 were low_depth, 4
+`mixed_variants`, 3 `consensus_pass`. The chimeric material was being *discarded*,
+not mis-reported. Better than I said, but still a loss.
+
+`mixed_variants` is **not** a chimera call. It says the reads assigned to one
+design disagree with each other beyond the support threshold. A chimera can cause
+that, but a well holding *only* chimeric molecules yields a clean consensus that
+is confidently wrong, and `mixed_variants` has other causes entirely.
+
+### What was built
+
+The experiment owner's proposal: match k-mers positionally, then group reads
+sharing a pattern and build a consensus per group. Better than the read-to-read
+clustering in `nanopore3.clustering`, because it compares read **segments to
+references** rather than reads to each other, avoiding the regime measured on
+2026-08-13 where clones 94% identical cannot be separated at nanopore error rates.
+
+`src/nanopore3/chimera.py` walks each insert in 90 nt windows at 45 nt steps,
+matches every window independently, and collapses the calls into a signature. A
+clean clone gives one segment; a chimera gives a run of each parent, naming both
+and locating the junction. Reads sharing a signature are the same clone, so the
+usual depth floor applies: a signature carried by fewer than `minimum_depth` reads
+is one noisy window, not a clone.
+
+### The distinction that matters
+
+On RP05, 126 chimeric clones were recovered from previously discarded reads,
+including **27 of legacy's 28 exactly**. They split by whether the parents share
+an assembly block:
+
+| origin | clones | median reads | in legacy | new |
+| --- | --- | --- | --- | --- |
+| assembly (same block) | 68 | **140** | 25 | 43 |
+| pcr (different blocks) | 58 | **8** | 2 | 56 |
+
+Two designs of one block reach a colony-PCR well only by being the same colony,
+so a same-block chimera is a genuine assembled clone. Designs from different
+blocks arrive as separate colonies pooled into the shared well, so a chimera
+between them can only have formed in the tube. **The 17x difference in read depth
+confirms it independently**: real clones are clonally amplified, template-switch
+products appear late and stay rare.
+
+---
+
 ## 2026-08-19 — 260608 AI_DBTL run: six libraries, eleven barcodes, 2.55 M reads
 
 Run `runs/260608-AI-DBTL-v2`, **13.3 minutes** for 2,546,670 reads.

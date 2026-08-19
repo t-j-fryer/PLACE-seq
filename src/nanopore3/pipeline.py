@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO, TypeVar
 
 from . import __version__
-from .assignment import AssignmentCall, ReferenceIndex, assign_read
+from .assignment import AssignmentCall, ReferenceIndex, assign_read, extract_insert
 from .config import BarcodeSettings, PipelineConfig
 from .consensus import (
     ConsensusRead,
@@ -32,7 +32,13 @@ from .deconvolution import (
     Deconvolution,
     block_from_reference_id,
 )
-from .export import write_consensus_tree
+from .chimera import (
+    ASSEMBLY_ORIGIN,
+    group_chimeras,
+    signature_for,
+    synthesise_reference,
+)
+from .export import normalized_well, safe_name, write_consensus_tree
 from .demux import (
     BarcodeCall,
     PreparedBarcodePanel,
@@ -676,6 +682,131 @@ def _assign_batch_worker(
     return tuple(_assign_one(read, indexes, config, plan, blocks) for read in batch)
 
 
+def _detect_chimeras(
+    config: PipelineConfig,
+    demux_reads: Path,
+    references_by_library: Mapping[str, Mapping[str, str]],
+    root: Path,
+) -> dict[str, Any]:
+    """Group reads by positional signature and write a consensus per clone."""
+
+    settings = config.chimera
+    minimum_depth = settings.minimum_depth or config.consensus.minimum_depth
+    block_pattern = (
+        re.compile(config.compressed_pcr.block_pattern)
+        if config.compressed_pcr.block_pattern
+        else None
+    )
+    indexes = {
+        library: ReferenceIndex(
+            references,
+            k=config.reference_sets[library].kmer_sizes[0],
+            max_kmer_owners=config.reference_sets[library].max_kmer_owners,
+        )
+        for library, references in references_by_library.items()
+    }
+    wells: dict[tuple[str, str, str], list[tuple[str, str]]] = defaultdict(list)
+    for read in _iter_gzip_json(demux_reads):
+        plate = str(read["plate_id"])
+        try:
+            library = config.reference_library_id_for_plate(plate)
+        except KeyError:
+            continue
+        wells[(plate, str(read["well_id"]), library)].append(
+            (str(read["read_uid"]), str(read["sequence"]))
+        )
+
+    root.mkdir(parents=True, exist_ok=True)
+    totals: Counter[str] = Counter()
+    rows: list[dict[str, Any]] = []
+    for (plate, well, library), reads in sorted(wells.items()):
+        reference_settings = config.reference_sets[library]
+        index = indexes[library]
+        signatures = []
+        inserts: dict[str, str] = {}
+        for read_id, sequence in reads:
+            extraction = extract_insert(
+                sequence,
+                reference_settings.forward_motif or config.library.forward_motif,
+                reference_settings.reverse_motif or config.library.reverse_motif,
+                max_edits=(
+                    config.library.motif_max_edits
+                    if reference_settings.motif_max_edits is None
+                    else reference_settings.motif_max_edits
+                ),
+            )
+            if extraction.status != "found" or not extraction.sequence:
+                continue
+            inserts[read_id] = extraction.sequence
+            signatures.append(
+                signature_for(read_id, extraction.sequence, index,
+                              window=settings.window, step=settings.step)
+            )
+        if not signatures:
+            continue
+        groups, outcome = group_chimeras(
+            signatures, minimum_depth=minimum_depth, block_pattern=block_pattern
+        )
+        totals.update(outcome)
+        for group in groups:
+            keep = group.origin == ASSEMBLY_ORIGIN or settings.write_pcr_origin
+            if not keep:
+                # Counted above, but not written: a PCR template-switch product
+                # is not a clone, and a FASTA beside real ones invites misreading.
+                totals["pcr_origin_not_written"] += 1
+                continue
+            members = [
+                ConsensusRead(rid, inserts[rid])
+                for rid in group.read_ids[: config.consensus.maximum_reads]
+                if rid in inserts
+            ]
+            scaffold = synthesise_reference(
+                group.signature, references_by_library[library],
+                group.junction_window, window=settings.window, step=settings.step,
+            )
+            if not scaffold or not members:
+                totals["no_scaffold"] += 1
+                continue
+            result = build_reference_consensus(
+                scaffold, members, group_id=group.label, min_depth=1,
+                max_reads=len(members), min_support=config.consensus.minimum_support,
+                seed=config.random_seed,
+            )
+            if not result.sequence:
+                totals["no_consensus"] += 1
+                continue
+            directory = root / safe_name(plate) / normalized_well(well)
+            directory.mkdir(parents=True, exist_ok=True)
+            label = "__".join(safe_name(p, limit=40) for p in group.signature)
+            name = f"{safe_name(plate)}_{normalized_well(well)}__{label}__chimera.fasta"
+            header = (
+                f">{safe_name(plate)}_{normalized_well(well)}_chimera "
+                f"parents={'|'.join(group.signature)} origin={group.origin} "
+                f"reads={group.size} junction_window={group.junction_window} "
+                f"library={library}"
+            )
+            wrapped = "\n".join(
+                result.sequence[i : i + 60] for i in range(0, len(result.sequence), 60)
+            )
+            (directory / name).write_text(f"{header}\n{wrapped}\n", encoding="ascii")
+            totals["written"] += 1
+            rows.append({
+                "plate_id": plate, "well_id": well, "reference_library_id": library,
+                "parents": " >> ".join(group.signature), "n_parents": len(group.signature),
+                "origin": group.origin, "reads": group.size,
+                "junction_window": group.junction_window,
+                "ambiguous_bases": result.ambiguous_bases,
+                "length": len(result.sequence),
+                "file": str((directory / name).relative_to(root)),
+            })
+    if rows:
+        with (root / "clones.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+    return dict(sorted(totals.items()))
+
+
 def _write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fields: Sequence[str]) -> Counter[str]:
     counts: Counter[str] = Counter()
     with _open_gzip_text(path) as handle:
@@ -1050,6 +1181,36 @@ def run_pipeline(
             _write_csv(stage.output_path("contributors.csv.gz"), contributor_rows, ["consensus_id", "read_uid", "selection_rank"])
             stage.output_path("consensus.fasta").write_text("".join(fasta_parts), encoding="ascii")
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["status"] for row in consensus_rows).items())))
+
+
+    # A chimeric molecule is a real clone in a real well, and assignment cannot
+    # describe it: an even split falls below the identity floor, a lopsided one
+    # is attributed to whichever parent dominates. This stage asks a positional
+    # question instead and gives those reads a consensus of their own. It sits
+    # beside consensus rather than inside it so that changing a chimera setting
+    # does not invalidate the reference-guided consensuses.
+    if config.chimera.enabled:
+        chimera_parameters = {**asdict(config.chimera), "seed": config.random_seed}
+        chimera_inputs = {
+            "demuxed_reads": sha256_file(demux_reads),
+            "references": reference_collection.digest,
+        }
+        chimera_fp = _stage_fingerprint(
+            "04b_chimera", chimera_parameters, chimera_inputs,
+            backend_versions=edlib_backend_versions,
+        )
+        with StageDirectory(
+            run_dir, "04b_chimera", chimera_fp,
+            pipeline_version=__version__, parameters=chimera_parameters,
+            input_digests=chimera_inputs, backend_versions=edlib_backend_versions,
+            resume=resume,
+        ) as stage:
+            if not stage.reused:
+                summary = _detect_chimeras(
+                    config, demux_reads, references_by_library,
+                    stage.output_path("clones"),
+                )
+                atomic_write_json(stage.output_path("summary.json"), summary)
 
     consensus_dir = run_dir / "stages" / "04_consensus"
     qc_inputs = {

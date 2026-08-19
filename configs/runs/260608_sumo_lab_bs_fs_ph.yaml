@@ -153,6 +153,16 @@ qc:
   upstream_constant: ATGCAGCTT
   downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA
 
+# A chimeric molecule is a real clone in a real well, so it gets a consensus.
+# PCR-origin chimeras - parents in different assembly blocks, which can only
+# have met in the tube - are counted but not written: they are artefacts, and a
+# FASTA beside genuine clones invites misreading.
+chimera:
+  enabled: true
+  window: 90
+  step: 45
+  write_pcr_origin: false
+
 # RP05 pools 22 culture plates (11 SUMO A + 11 SUMO B); RP08 pools 11 LAB plates.
 # A culture plate's wells each hold one block but different wells hold different
 # blocks, so block identity names the plate. Clonality is unspecified: a well

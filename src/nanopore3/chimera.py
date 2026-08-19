@@ -25,6 +25,7 @@ left alone.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -62,6 +63,35 @@ class ReadSignature:
         return tuple(changes)
 
 
+ASSEMBLY_ORIGIN = "assembly"
+PCR_ORIGIN = "pcr"
+UNKNOWN_ORIGIN = "unknown"
+
+
+def classify_origin(
+    signature: Sequence[str], block_pattern: re.Pattern[str] | None
+) -> str:
+    """Whether a chimera could have formed during assembly, or only in the tube.
+
+    Two designs of one assembly block reach a colony-PCR well only by being the
+    same colony, so a same-block chimera is a genuine assembled clone.  Designs
+    from different blocks arrive as separate colonies pooled into the shared
+    well, so a chimera between them can only be a PCR template-switch artefact.
+    On real data the two classes differ ~17-fold in read depth, which is
+    independent support for the distinction.
+    """
+
+    if block_pattern is None:
+        return UNKNOWN_ORIGIN
+    blocks = set()
+    for parent in signature:
+        match = block_pattern.search(parent)
+        if match is None:
+            return UNKNOWN_ORIGIN
+        blocks.add(match.group(1) if match.groups() else match.group(0))
+    return ASSEMBLY_ORIGIN if len(blocks) == 1 else PCR_ORIGIN
+
+
 @dataclass(frozen=True, slots=True)
 class ChimeraGroup:
     """Reads sharing one multi-parent signature: a putative chimeric clone."""
@@ -70,6 +100,7 @@ class ChimeraGroup:
     read_ids: tuple[str, ...]
     size: int
     junction_window: int | None
+    origin: str = UNKNOWN_ORIGIN
 
     @property
     def label(self) -> str:
@@ -125,6 +156,7 @@ def group_chimeras(
     signatures: Sequence[ReadSignature],
     *,
     minimum_depth: int = 6,
+    block_pattern: re.Pattern[str] | None = None,
 ) -> tuple[tuple[ChimeraGroup, ...], Counter[str]]:
     """Group chimeric reads by signature, keeping only groups deep enough.
 
@@ -153,15 +185,18 @@ def group_chimeras(
         junctions = Counter(
             j for member in members for j in member.junction_windows
         )
+        origin = classify_origin(signature, block_pattern)
         groups.append(
             ChimeraGroup(
                 signature=signature,
                 read_ids=tuple(sorted(m.read_id for m in members)),
                 size=len(members),
                 junction_window=junctions.most_common(1)[0][0] if junctions else None,
+                origin=origin,
             )
         )
         outcome["in_group"] += len(members)
+        outcome[f"group_{origin}"] += 1
     groups.sort(key=lambda g: (-g.size, g.signature))
     return tuple(groups), outcome
 
@@ -192,6 +227,10 @@ def synthesise_reference(
 
 
 __all__ = [
+    "ASSEMBLY_ORIGIN",
+    "PCR_ORIGIN",
+    "UNKNOWN_ORIGIN",
+    "classify_origin",
     "DEFAULT_STEP",
     "DEFAULT_WINDOW",
     "ChimeraGroup",

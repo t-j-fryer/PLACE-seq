@@ -379,6 +379,32 @@ class QcSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ChimeraSettings:
+    """Positional detection of chimeric clones and their consensus sequences.
+
+    A chimeric molecule is a real clone in a real well, so its reads are worth a
+    consensus.  ``write_pcr_origin`` is false because a chimera whose parents sit
+    in different assembly blocks can only have formed during PCR: it is an
+    artefact, and writing it as a FASTA beside genuine clones invites misreading.
+    Such groups are still counted.
+    """
+
+    enabled: bool = False
+    window: int = 90
+    step: int = 45
+    minimum_depth: int | None = None
+    write_pcr_origin: bool = False
+
+    def __post_init__(self) -> None:
+        if self.window < 1 or self.step < 1:
+            raise ConfigError("chimera.window and chimera.step must be >= 1")
+        if self.step > self.window:
+            raise ConfigError("chimera.step must not exceed chimera.window")
+        if self.minimum_depth is not None and self.minimum_depth < 1:
+            raise ConfigError("chimera.minimum_depth must be >= 1")
+
+
+@dataclass(frozen=True, slots=True)
 class CompressedPcrSettings:
     """Recover the source culture plate when several were pooled for colony PCR.
 
@@ -457,6 +483,7 @@ class PipelineConfig:
     consensus: ConsensusSettings = field(default_factory=ConsensusSettings)
     qc: QcSettings = field(default_factory=QcSettings)
     compressed_pcr: CompressedPcrSettings = field(default_factory=CompressedPcrSettings)
+    chimera: ChimeraSettings = field(default_factory=ChimeraSettings)
     random_seed: int = 0
     source_path: Path | None = field(default=None, compare=False)
 
@@ -978,6 +1005,31 @@ def _parse_qc(value: Any) -> QcSettings:
     )
 
 
+def _parse_chimera(value: Any) -> ChimeraSettings:
+    if value is None:
+        return ChimeraSettings()
+    location = "chimera"
+    mapping = _mapping(value, location)
+    _reject_unknown(
+        mapping,
+        {"enabled", "window", "step", "minimum_depth", "write_pcr_origin"},
+        location,
+    )
+    return ChimeraSettings(
+        enabled=_boolean(mapping.get("enabled", True), f"{location}.enabled"),
+        window=_positive_int(mapping.get("window", 90), f"{location}.window"),
+        step=_positive_int(mapping.get("step", 45), f"{location}.step"),
+        minimum_depth=(
+            None
+            if mapping.get("minimum_depth") is None
+            else _positive_int(mapping["minimum_depth"], f"{location}.minimum_depth")
+        ),
+        write_pcr_origin=_boolean(
+            mapping.get("write_pcr_origin", False), f"{location}.write_pcr_origin"
+        ),
+    )
+
+
 def _plate_lists(value: Any, location: str) -> dict[str, tuple[str, ...]]:
     """Accept either a single plate name or a list of them, per key."""
 
@@ -1068,6 +1120,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         "consensus",
         "qc",
         "compressed_pcr",
+        "chimera",
         "random_seed",
     }
     _reject_unknown(root, allowed, "configuration")
@@ -1129,6 +1182,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         consensus=_parse_consensus(root.get("consensus")),
         qc=_parse_qc(root.get("qc")),
         compressed_pcr=_parse_compressed_pcr(root.get("compressed_pcr")),
+        chimera=_parse_chimera(root.get("chimera")),
         random_seed=random_seed,
         source_path=source_path,
     )

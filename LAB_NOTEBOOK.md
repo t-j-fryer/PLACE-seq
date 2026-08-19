@@ -15,6 +15,134 @@ Conventions:
 
 ---
 
+## 2026-08-19 — 260608 AI_DBTL run: six libraries, eleven barcodes, 2.55 M reads
+
+Run `runs/260608-AI-DBTL-v2`, **13.3 minutes** for 2,546,670 reads.
+
+### Setting up
+
+`/Volumes/TJAF/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq` (8.4 GB) against six
+designed libraries. Everything below was **derived from the reads rather than
+assumed**, after two earlier sessions where assuming cost real time.
+
+Two reference files each held **two** sub-libraries under `A|`/`B|` prefixes with
+independent block numbering (SUMO, EBM); they were split. EBM references were
+"flanked" and were stripped to bare inserts. Library routing per plate barcode was
+confirmed empirically at 65-94% before any config was written.
+
+Corrections to what was initially believed:
+
+- **RP04 is opTF001, not SUMO B.** Assumed from abundance; the data said otherwise.
+- **RP05 carries both SUMO A *and* B** — 13,124 and 15,223 reads, all 18 blocks
+  each, separated at identity margin 0.176. Two complete sets, 22 culture plates.
+- **RP06, RP07, RP01-RP03 are real**, not the background I first dismissed them
+  as at ~2% of reads; each assigns to its library at 74-97%.
+- **RP09, RP10, RP11 are real too** (sensors, EBM, dTF141/142). An earlier entry
+  called ~6% of reads "carryover" on the assumption they were unused. **Only RP12
+  is unused, and it produced zero reads**, so the plate-barcode false-positive
+  rate is effectively nil.
+
+### Settings, and how they were chosen
+
+`max_edits: 6` was swept 2-8 against the RP12 negative control. The
+REAL/ABSENT ratio is flat across the range (11.5 to 11.9), so tightening buys no
+specificity and only loses yield. That confirms the previously inherited value on
+*this* run's own control rather than by inheritance.
+
+### One code change was required
+
+Libraries built on **different constructs** cannot share one motif pair: sensors
+and ebm_ab end at a different constant region, so a single global reverse motif
+would extract the wrong span. `ReferenceSettings` gained optional per-library
+`forward_motif`, `reverse_motif`, `motif_max_edits`, `qc_upstream_constant` and
+`qc_downstream_constant`, each falling back to the run-level value.
+
+Either motif may be overridden alone. Requiring both together — as the first
+version did — would force a library that only *ends* differently to restate the
+shared 5' motif, inviting the two copies to drift apart. Also worth recording:
+the supplied 5' motif for sensors/EBM turned out to be literally `CTT` + the
+standard one, so no forward override was needed at all.
+
+### The failure, and the fix that matters
+
+The first attempt **crashed 25 minutes in, at QC, with `KeyError: 'A'`**. The
+`A|`/`B|` prefix collided with `|`, which the pipeline reserves as its
+alias-group separator: `reference_ids` is a `|`-joined list that is split back to
+recover the group, so `A|Block_1_...` parsed as alias `"A"`.
+
+A bad reference ID survived demultiplexing, assignment **and** consensus before
+failing on re-parse. That is exactly the late, expensive failure this pipeline is
+meant to prevent, so `read_reference_libraries` now **rejects `|` in a reference
+ID at load**, naming the reason. It fails in preflight, in seconds.
+
+Two process notes from the same episode:
+
+- Patching an already-patched YAML file mangled the block keys twice
+  (`"A|"_Block_1"`). Regenerating from the generator worked first time.
+- The resume **would have been correctly refused**: the config digest changed
+  (`4adb0a82` to `454c16bf`), so the immutability contract would have rejected
+  reusing the assignment stage built on the bad names. Verified rather than
+  assumed. A fresh run ID was used so provenance matches the final config exactly.
+
+### Results
+
+| Stage | wall | outcome |
+| --- | --- | --- |
+| 02_demux | 9.9 min | 1,419,291 assigned (55.7%) |
+| 03_assignment | 2.7 min | 1,074,747 `assigned_unique` (75.7%) |
+| 04_consensus | 0.6 min | 8,269 pass, 12,251 low_depth, 264 mixed_variants |
+| 05_qc | <1 min | 8,153 pass (95.5% of evaluable), 380 fail |
+
+Graded tree: **7,759 perfect**, 242 screenable, 264 mixed_variants, 176
+frameshift, 50 truncated, 35 premature_stop, 7 mismatched, 12,251 low_depth.
+8,533 FASTAs written across 11 plate directories.
+
+**Deconvolution: zero `unexpected_block` across all 1.42 M reads.** All 22 RP05
+culture plates and all 11 RP08 plates recovered. SUMO A/B split 46.2% / 53.8%,
+consistent with two complete sets pooled.
+
+Per-plate `assigned_unique` is uniform at 71-85% across all eleven barcodes.
+
+### Storage, not CPU, was the earlier bottleneck
+
+Demultiplexing ran at **4,324 reads/s against 786 on the 20260506 run** — 5.5x
+faster. Same code, same worker count. That run read its input from OneDrive; this
+one from a local external drive. It confirms the I/O diagnosis and settles it: a
+throughput figure is meaningless without saying where the input lived.
+
+**Demux was byte-identical between the failed and successful runs** (SHA-256
+`4c6d479c`), confirming determinism across 8 process workers on 2.55 M reads.
+
+### Lessons
+
+**Derive the layout, then ask only what cannot be derived.** Every belief that was
+wrong here — RP04's library, RP05 holding both halves, RP09-11 being real — was
+correctable from the reads in minutes. Three sessions of assuming preceded this.
+
+**A reserved character needs a guard, not a convention.** `|` was load-bearing in
+four output paths and documented nowhere enforceable. The convention held until
+someone put it in a name.
+
+**Regenerate, do not re-patch.** Two failed `sed`/regex passes over an already
+edited config produced malformed YAML both times.
+
+### Next steps
+
+1. **`motif_missing` is 12-17% on RP05-RP11 but ~5% on RP01-RP04.** RP01-04 are
+   opTF001 and the rest span SUMO/LAB/sensors/EBM, so this looks
+   construct-specific rather than random. Investigate before quoting yield.
+2. **`low_depth` is 58.9%**, against 35% on the 20260506 run. Expected given RP05
+   compresses 22 culture plates into 96 wells, but it means most well/design
+   combinations have under six reads. Consider whether `minimum_depth: 6` suits
+   this level of compression.
+3. `plate_ambiguous` is 6.2% against 0.1% previously. The direction is expected
+   with 11 barcodes rather than 7, but the magnitude deserves a check.
+4. RP03/RP04 culture-plate layouts are still undeclared and report at well level.
+5. Run `scripts/detect_assembly_errors.py` over this run's demultiplexed reads
+   for a chimera and missing-fragment rate on these libraries.
+
+---
+
 ## 2026-08-19 — CORRECTION: RWV1-RWV4 were already registered
 
 ### What was wrong

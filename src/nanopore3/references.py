@@ -17,6 +17,9 @@ class FastaFormatError(ValueError):
     """A FASTA structure, alphabet, or identifier validation failure."""
 
 
+ALIAS_SEPARATOR = "|"
+
+
 @dataclass(frozen=True, slots=True)
 class ReferenceRecord:
     """One reference sequence with its original description and source."""
@@ -210,6 +213,16 @@ def read_fasta(paths: str | Path | Iterable[str | Path]) -> ReferenceBundle:
     for path in source_paths:
         source_digests.append((str(path), sha256_file(path)))
         for record in _records_from_path(path):
+            # "|" joins alias groups in every downstream table, and those tables
+            # are split back on it. A reference whose own ID contains "|" would
+            # survive assignment and only fail when the group was re-parsed, so
+            # it is rejected here rather than several stages later.
+            if ALIAS_SEPARATOR in record.id:
+                raise FastaFormatError(
+                    f"Reference ID {record.id!r} in {path} contains "
+                    f"{ALIAS_SEPARATOR!r}, which is reserved as the alias-group "
+                    "separator in the pipeline's output tables"
+                )
             previous = seen_ids.get(record.id)
             if previous is not None:
                 raise FastaFormatError(

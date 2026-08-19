@@ -6,11 +6,12 @@ inputs:
   - path: /Volumes/TJAF/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
     sample_id: AI_DBTL
 
-# Six designed libraries on two different constructs.  The 5' motif is shared,
-# but sensors and ebm_ab end at a different constant region, so they carry
-# per-library reverse_motif and QC frame overrides.  SUMO and EBM each arrived as
-# one A+B file; the halves are separate sub-libraries with independent block
-# numbering and keep their A|/B| prefix so their blocks stay distinct.
+# Six designed libraries on two constructs. The 5' motif is shared, but sensors
+# and ebm_ab end at a different constant region, so they carry per-library
+# reverse_motif and QC frame overrides. SUMO and EBM each arrived as one A+B
+# file; the halves are separate sub-libraries with independent block numbering
+# and keep an A_/B_ prefix so their blocks stay distinct. The prefix must not
+# use "|", which the pipeline reserves as its alias-group separator.
 reference_libraries:
   opTF001:
     fasta: ../../runs/refs_260608/opTF001.fasta
@@ -80,8 +81,8 @@ reference_libraries:
     qc_downstream_constant: TCGGGCGGATCCCATCACCACCACCATCACTAA
 
 # Confirmed empirically against the reads, not assumed: each barcode's reads
-# assign to the library below at 65-94%.  RP12 is the only unused barcode and is
-# deliberately left unmapped so it stays a negative control.
+# assign to the library below at 65-94%. RP12 is the only unused barcode and is
+# left unmapped so it stays a negative control; it produced zero reads.
 plate_reference_map:
   RP01: opTF001
   RP02: opTF001
@@ -112,7 +113,7 @@ barcodes:
     family_id: rp_amplicon
     trim_bases: 12
     # Swept 2-8 against the RP12 negative control: specificity is flat across
-    # the range, so 6 maximises yield (87.3% assigned) at no cost in precision.
+    # the range, so 6 maximises yield at no cost in precision.
     max_edits: 6
     search_window: 400
     search_ends: [head, tail]
@@ -154,12 +155,12 @@ qc:
 
 # RP05 pools 22 culture plates (11 SUMO A + 11 SUMO B); RP08 pools 11 LAB plates.
 # A culture plate's wells each hold one block but different wells hold different
-# blocks, so block identity names the plate.  Clonality is left unspecified: a
-# well receives one clone per pooled culture plate, not one per block, so the
+# blocks, so block identity names the plate. Clonality is unspecified: a well
+# receives one clone per pooled culture plate, not one per block, so the
 # per_block derivation would not describe this layout.
 compressed_pcr:
   enabled: true
-  block_pattern: "^((?:[AB]\\|)?Block_\\d+)_"
+  block_pattern: "^((?:[AB]_)?Block_\\d+)_"
   pcr_plates:
     RP05: [SUMO_A_P1, SUMO_A_P2, SUMO_A_P3, SUMO_A_P4, SUMO_A_P5, SUMO_A_P6, SUMO_A_P7, SUMO_A_P8, SUMO_A_P9, SUMO_A_P10, SUMO_A_P11, SUMO_B_P1, SUMO_B_P2, SUMO_B_P3, SUMO_B_P4, SUMO_B_P5, SUMO_B_P6, SUMO_B_P7, SUMO_B_P8, SUMO_B_P9, SUMO_B_P10, SUMO_B_P11]
     RP08: [LAB_P1, LAB_P2, LAB_P3, LAB_P4, LAB_P5, LAB_P6, LAB_P7, LAB_P8, LAB_P9, LAB_P10, LAB_P11]
@@ -168,42 +169,42 @@ compressed_pcr:
     RP08: unspecified
   blocks:
     sumo_ab:
-      "A|Block_1": [SUMO_A_P1]
-      "A|Block_2": [SUMO_A_P2]
-      "A|Block_3": [SUMO_A_P3]
-      "A|Block_4": [SUMO_A_P4]
-      "A|Block_5": [SUMO_A_P5]
-      "A|Block_6": [SUMO_A_P6]
-      "A|Block_8": [SUMO_A_P6]
-      "A|Block_18": [SUMO_A_P6]
-      "A|Block_9": [SUMO_A_P7]
-      "A|Block_10": [SUMO_A_P7]
-      "A|Block_11": [SUMO_A_P8]
-      "A|Block_12": [SUMO_A_P8]
-      "A|Block_13": [SUMO_A_P9]
-      "A|Block_14": [SUMO_A_P9]
-      "A|Block_15": [SUMO_A_P10]
-      "A|Block_16": [SUMO_A_P10]
-      "A|Block_17": [SUMO_A_P11]
-      "A|Block_7": [SUMO_A_P11]
-      "B|Block_1": [SUMO_B_P1]
-      "B|Block_2": [SUMO_B_P2]
-      "B|Block_3": [SUMO_B_P3]
-      "B|Block_4": [SUMO_B_P4]
-      "B|Block_5": [SUMO_B_P5]
-      "B|Block_6": [SUMO_B_P6]
-      "B|Block_8": [SUMO_B_P6]
-      "B|Block_18": [SUMO_B_P6]
-      "B|Block_9": [SUMO_B_P7]
-      "B|Block_10": [SUMO_B_P7]
-      "B|Block_11": [SUMO_B_P8]
-      "B|Block_12": [SUMO_B_P8]
-      "B|Block_13": [SUMO_B_P9]
-      "B|Block_14": [SUMO_B_P9]
-      "B|Block_15": [SUMO_B_P10]
-      "B|Block_16": [SUMO_B_P10]
-      "B|Block_17": [SUMO_B_P11]
-      "B|Block_7": [SUMO_B_P11]
+      "A_Block_1": [SUMO_A_P1]
+      "A_Block_2": [SUMO_A_P2]
+      "A_Block_3": [SUMO_A_P3]
+      "A_Block_4": [SUMO_A_P4]
+      "A_Block_5": [SUMO_A_P5]
+      "A_Block_6": [SUMO_A_P6]
+      "A_Block_8": [SUMO_A_P6]
+      "A_Block_18": [SUMO_A_P6]
+      "A_Block_9": [SUMO_A_P7]
+      "A_Block_10": [SUMO_A_P7]
+      "A_Block_11": [SUMO_A_P8]
+      "A_Block_12": [SUMO_A_P8]
+      "A_Block_13": [SUMO_A_P9]
+      "A_Block_14": [SUMO_A_P9]
+      "A_Block_15": [SUMO_A_P10]
+      "A_Block_16": [SUMO_A_P10]
+      "A_Block_17": [SUMO_A_P11]
+      "A_Block_7": [SUMO_A_P11]
+      "B_Block_1": [SUMO_B_P1]
+      "B_Block_2": [SUMO_B_P2]
+      "B_Block_3": [SUMO_B_P3]
+      "B_Block_4": [SUMO_B_P4]
+      "B_Block_5": [SUMO_B_P5]
+      "B_Block_6": [SUMO_B_P6]
+      "B_Block_8": [SUMO_B_P6]
+      "B_Block_18": [SUMO_B_P6]
+      "B_Block_9": [SUMO_B_P7]
+      "B_Block_10": [SUMO_B_P7]
+      "B_Block_11": [SUMO_B_P8]
+      "B_Block_12": [SUMO_B_P8]
+      "B_Block_13": [SUMO_B_P9]
+      "B_Block_14": [SUMO_B_P9]
+      "B_Block_15": [SUMO_B_P10]
+      "B_Block_16": [SUMO_B_P10]
+      "B_Block_17": [SUMO_B_P11]
+      "B_Block_7": [SUMO_B_P11]
     lab:
       "Block_1": [LAB_P1]
       "Block_9": [LAB_P1]

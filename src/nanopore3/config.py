@@ -174,6 +174,15 @@ class ReferenceSettings:
     # exhaustive whole-library sweep; "none" accepts the shortlist verdict.
     rescue_policy: str = "kmer"
     rescue_candidates: int = 25
+    # Optional per-library overrides.  One run can carry libraries built on
+    # different constructs, whose amplicons end at different constant regions;
+    # a single global motif pair would extract the wrong span for some of them.
+    # Unset values fall back to the run-level library/qc settings.
+    forward_motif: str | None = None
+    reverse_motif: str | None = None
+    motif_max_edits: int | None = None
+    qc_upstream_constant: str | None = None
+    qc_downstream_constant: str | None = None
 
     def __post_init__(self) -> None:
         if not self.fasta:
@@ -200,6 +209,26 @@ class ReferenceSettings:
         ):
             if getattr(self, name) < 1:
                 raise ConfigError(f"references.{name} must be >= 1")
+        for name in (
+            "forward_motif",
+            "reverse_motif",
+            "qc_upstream_constant",
+            "qc_downstream_constant",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _dna(value, f"references.{name}")
+        # These are overrides layered on the run-level library motifs, so either
+        # may be given alone; the unset one falls back. Requiring both together
+        # would force a library that only ends differently to restate the shared
+        # 5' motif, inviting the two copies to drift apart.
+        if (self.qc_upstream_constant is None) != (self.qc_downstream_constant is None):
+            raise ConfigError(
+                "references.qc_upstream_constant and references.qc_downstream_constant "
+                "must be supplied together"
+            )
+        if self.motif_max_edits is not None and self.motif_max_edits < 0:
+            raise ConfigError("references.motif_max_edits must be >= 0")
         if self.rescue_policy not in ("none", "kmer", "all"):
             raise ConfigError(
                 "references.rescue_policy must be 'none', 'kmer', or 'all'"
@@ -686,6 +715,11 @@ def _parse_references(
         "minimum_identity_margin",
         "rescue_policy",
         "rescue_candidates",
+        "forward_motif",
+        "reverse_motif",
+        "motif_max_edits",
+        "qc_upstream_constant",
+        "qc_downstream_constant",
     }
     _reject_unknown(mapping, allowed, location)
     fasta_value = _required(mapping, "fasta", location)
@@ -707,7 +741,24 @@ def _parse_references(
         for index, item in enumerate(kmer_value)
     )
     fragments_value = mapping.get("fragments_csv")
+    optional_dna = {
+        name: (
+            None if mapping.get(name) is None else _dna(mapping[name], f"{location}.{name}")
+        )
+        for name in (
+            "forward_motif",
+            "reverse_motif",
+            "qc_upstream_constant",
+            "qc_downstream_constant",
+        )
+    }
     return ReferenceSettings(
+        **optional_dna,
+        motif_max_edits=(
+            None
+            if mapping.get("motif_max_edits") is None
+            else _positive_int(mapping["motif_max_edits"], f"{location}.motif_max_edits", minimum=0)
+        ),
         fasta=fasta,
         fragments_csv=(
             None

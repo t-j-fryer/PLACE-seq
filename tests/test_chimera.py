@@ -7,7 +7,6 @@ import unittest
 
 from nanopore3.assignment import ReferenceIndex
 from nanopore3.chimera import (
-    ChimeraGroup,
     ReadSignature,
     collapse_signature,
     group_chimeras,

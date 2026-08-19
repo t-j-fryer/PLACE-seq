@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 
 from nanopore3.assignment import ReferenceIndex, assign_sequence, extract_insert
-from nanopore3.consensus import ConsensusRead, build_reference_consensus
 from nanopore3.config import ParallelSettings
+from nanopore3.consensus import ConsensusRead, build_reference_consensus
 from nanopore3.demux import call_barcode, prepare_barcode_panel, validate_barcodes
 from nanopore3.qc import evaluate_consensus
 
@@ -139,3 +139,38 @@ class ScienceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportRenderingTests(unittest.TestCase):
+    """Report sections are not all flat integer counts."""
+
+    def _write(self, sections):
+        import tempfile
+        from pathlib import Path
+
+        from nanopore3.report import write_html_report
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "report.html"
+        write_html_report(path, title="t", sections=sections, provenance={"run": "r"})
+        return path.read_text(encoding="utf-8")
+
+    def test_flat_counts_still_render(self) -> None:
+        html = self._write({"Demux": {"assigned": 1419291}})
+        self.assertIn("1,419,291", html)
+
+    def test_a_nested_per_plate_section_renders_instead_of_raising(self) -> None:
+        html = self._write({"Recovery": {"RP05": {"pooled": 22, "clones": 2058}}})
+        self.assertIn("RP05", html)
+        self.assertIn("2,058", html)
+
+    def test_a_string_value_renders_instead_of_raising(self) -> None:
+        """Some entries name a plate rather than count one."""
+
+        html = self._write({"Recovery": {"RP05": {"weakest": "SUMO_B_P11"}}})
+        self.assertIn("SUMO_B_P11", html)
+
+    def test_values_are_escaped(self) -> None:
+        html = self._write({"S": {"k": "<script>"}})
+        self.assertNotIn("<script>", html)

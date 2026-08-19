@@ -1,8 +1,18 @@
 """Browsable, graded consensus output organised by plate and well.
 
-One FASTA per consensus, filed under ``<plate barcode>/<well>/`` and named with
-its design and a single-word grade, so a screening decision can be made from the
-file listing alone without opening anything.
+One FASTA per consensus, named with its design and a single-word grade, so a
+screening decision can be made from the file listing alone without opening
+anything.
+
+Files are filed under ``<plate barcode>/<culture plate>/<well>/`` wherever
+compressed-PCR deconvolution resolved a source plate, and under
+``<plate barcode>/<well>/`` where it did not.  Pooling several culture plates into
+one colony-PCR plate is exactly what makes a bare well coordinate ambiguous, so
+once the source plate is known the tree should say so.
+
+Chimeric clones appear alongside the reference-guided consensuses: they are
+sequences that are present in the well.  They are graded against the spliced
+parent scaffold and carry ``chimera`` in the file name.
 
 The grade collapses the QC criteria into one ordered vocabulary.  Precedence runs
 from "no usable data" through "the construct is broken" to "the construct is
@@ -150,8 +160,13 @@ def write_consensus_tree(
     totals: Counter[str] = Counter()
     used_paths: set[Path] = set()
 
-    def order(item: Mapping[str, str]) -> tuple[str, str, str]:
-        return (item["plate_id"], normalized_well(item["well_id"]), item["reference_ids"])
+    def order(item: Mapping[str, str]) -> tuple[str, str, str, str]:
+        return (
+            item["plate_id"],
+            item.get("culture_plate", ""),
+            normalized_well(item["well_id"]),
+            item["reference_ids"],
+        )
 
     for row in sorted(consensus_rows, key=order):
         consensus_id = row["consensus_id"]
@@ -166,19 +181,28 @@ def write_consensus_tree(
             design = f"{design}+{len(aliases) - 1}"
         plate = safe_name(row["plate_id"] or "unknown_plate")
         well = normalized_well(row["well_id"] or "unknown_well")
+        # A single culture plate: a "|"-joined set means the read could not be
+        # attributed to one, so it stays at well level rather than being filed
+        # under a plate it may not have come from.
+        source = row.get("culture_plate", "")
+        culture = safe_name(source) if source and "|" not in source else ""
         sequence = sequences.get(consensus_id, "")
 
         relative: str | None = None
         if sequence:
-            directory = root / plate / well
+            directory = root / plate / culture / well if culture else root / plate / well
             directory.mkdir(parents=True, exist_ok=True)
-            stem = f"{plate}_{well}__{safe_name(design)}__{grade}"
+            marker = "chimera__" if row.get("status") == "chimera" else ""
+            prefix = f"{plate}_{culture}_{well}" if culture else f"{plate}_{well}"
+            stem = f"{prefix}__{marker}{safe_name(design)}__{grade}"
             path = directory / f"{stem}.fasta"
             if path in used_paths:  # distinct designs that shorten alike
                 path = directory / f"{stem}__{consensus_id[-8:]}.fasta"
             used_paths.add(path)
             header = (
-                f">{consensus_id} grade={grade} design={row['reference_ids']} "
+                f">{consensus_id} grade={grade} "
+                + ("kind=chimera " if row.get("status") == "chimera" else "")
+                + f"design={row['reference_ids']} "
                 f"library={row['reference_library_id']} plate={row['plate_id']} "
                 f"well={row['well_id']}"
             )
@@ -198,6 +222,7 @@ def write_consensus_tree(
         index_rows.append(
             {
                 "grade": grade,
+                "kind": "chimera" if row.get("status") == "chimera" else "consensus",
                 "plate_id": row["plate_id"],
                 "well_id": row["well_id"],
                 "design": row["reference_ids"],

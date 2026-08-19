@@ -687,6 +687,7 @@ def _detect_chimeras(
     demux_reads: Path,
     references_by_library: Mapping[str, Mapping[str, str]],
     root: Path,
+    plan: CompressedPcrPlan | None = None,
 ) -> dict[str, Any]:
     """Group reads by positional signature and write a consensus per clone."""
 
@@ -719,6 +720,7 @@ def _detect_chimeras(
     root.mkdir(parents=True, exist_ok=True)
     totals: Counter[str] = Counter()
     rows: list[dict[str, Any]] = []
+    scaffolds: list[str] = []
     for (plate, well, library), reads in sorted(wells.items()):
         reference_settings = config.reference_sets[library]
         index = indexes[library]
@@ -790,7 +792,22 @@ def _detect_chimeras(
             )
             (directory / name).write_text(f"{header}\n{wrapped}\n", encoding="ascii")
             totals["written"] += 1
+            # Both parents share a block for an assembly-origin chimera, so the
+            # culture plate is well defined; resolve it so the clone files under
+            # the same provenance as every other consensus from this well.
+            culture_plate = ""
+            if plan is not None and block_pattern is not None:
+                match = block_pattern.search(group.signature[0])
+                if match is not None:
+                    resolved = plan.resolve(
+                        plate, library,
+                        match.group(1) if match.groups() else match.group(0),
+                    )
+                    culture_plate = resolved.culture_plate or ""
+            chimera_id = f"chim-{canonical_digest({'g': group.label, 'p': plate, 'w': well})[:16]}"
+            scaffolds.append(f">{chimera_id}\n{scaffold}\n")
             rows.append({
+                "chimera_id": chimera_id, "culture_plate": culture_plate,
                 "plate_id": plate, "well_id": well, "reference_library_id": library,
                 "parents": " >> ".join(group.signature), "n_parents": len(group.signature),
                 "origin": group.origin, "reads": group.size,
@@ -804,6 +821,9 @@ def _detect_chimeras(
             writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
             writer.writeheader()
             writer.writerows(rows)
+    # The spliced scaffold is what QC must grade a chimera against; storing it
+    # here keeps QC from having to re-derive a junction it did not compute.
+    (root / "scaffolds.fasta").write_text("".join(scaffolds), encoding="ascii")
     return dict(sorted(totals.items()))
 
 
@@ -1208,7 +1228,7 @@ def run_pipeline(
             if not stage.reused:
                 summary = _detect_chimeras(
                     config, demux_reads, references_by_library,
-                    stage.output_path("clones"),
+                    stage.output_path("clones"), compressed_plan,
                 )
                 atomic_write_json(stage.output_path("summary.json"), summary)
 
@@ -1310,6 +1330,56 @@ def run_pipeline(
                 "protein_length",
                 "internal_stop_codon",
             ]
+            # Chimeric clones are sequences that are present in the well, so
+            # they are graded and exported like any other consensus. They are
+            # scored against the spliced parent scaffold, which is the thing a
+            # correct chimeric clone should equal.
+            chimera_dir = run_dir / "stages" / "04b_chimera" / "clones"
+            chimera_rows: list[dict[str, Any]] = []
+            if (chimera_dir / "clones.csv").exists():
+                scaffolds: dict[str, str] = {}
+                current = None
+                scaffold_file = chimera_dir / "scaffolds.fasta"
+                if scaffold_file.exists():
+                    for line in scaffold_file.read_text(encoding="ascii").splitlines():
+                        if line.startswith(">"):
+                            current = line[1:].split()[0]; scaffolds[current] = ""
+                        elif current is not None:
+                            scaffolds[current] += line.strip()
+                with (chimera_dir / "clones.csv").open(encoding="utf-8", newline="") as handle:
+                    for row in csv.DictReader(handle):
+                        path = chimera_dir / row["file"]
+                        scaffold = scaffolds.get(row["chimera_id"], "")
+                        if not path.is_file() or not scaffold:
+                            continue
+                        sequence = "".join(
+                            line.strip()
+                            for line in path.read_text(encoding="ascii").splitlines()
+                            if not line.startswith(">")
+                        )
+                        library_id = row["reference_library_id"]
+                        result = evaluate_consensus(
+                            sequence, scaffold,
+                            min_identity=config.qc.minimum_identity,
+                            min_query_coverage=config.qc.minimum_query_coverage,
+                            min_reference_coverage=config.qc.minimum_reference_coverage,
+                            length_tolerance=config.qc.length_tolerance,
+                            upstream_constant=(
+                                config.reference_sets[library_id].qc_upstream_constant
+                                or config.qc.upstream_constant
+                            ),
+                            downstream_constant=(
+                                config.reference_sets[library_id].qc_downstream_constant
+                                or config.qc.downstream_constant
+                            ),
+                        )
+                        chimera_rows.append({
+                            "consensus_id": row["chimera_id"],
+                            "reference_library_id": library_id,
+                            "reference_ids": row["parents"].replace(" >> ", "+"),
+                            **result.to_dict(),
+                        })
+                qc_rows.extend(chimera_rows)
             _write_csv(stage.output_path("qc.csv.gz"), qc_rows, fields)
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["overall"] for row in qc_rows).items())))
             # A browsable, graded copy of the consensuses. It lives here rather
@@ -1317,6 +1387,31 @@ def run_pipeline(
             # stage directory is immutable.
             with gzip.open(consensus_dir / "consensus.csv.gz", "rt", encoding="utf-8", newline="") as handle:
                 consensus_rows = list(csv.DictReader(handle))
+            if (chimera_dir / "clones.csv").exists():
+                with (chimera_dir / "clones.csv").open(encoding="utf-8", newline="") as handle:
+                    for row in csv.DictReader(handle):
+                        path = chimera_dir / row["file"]
+                        if not path.is_file():
+                            continue
+                        sequences[row["chimera_id"]] = "".join(
+                            line.strip()
+                            for line in path.read_text(encoding="ascii").splitlines()
+                            if not line.startswith(">")
+                        )
+                        consensus_rows.append({
+                            "consensus_id": row["chimera_id"],
+                            "sample_id": "", "plate_id": row["plate_id"],
+                            "well_id": row["well_id"],
+                            "reference_library_id": row["reference_library_id"],
+                            "reference_ids": row["parents"].replace(" >> ", "+"),
+                            "status": "chimera",
+                            "culture_plate": row["culture_plate"],
+                            "n_reads_available": row["reads"], "n_reads_used": row["reads"],
+                            "mean_depth": row["reads"], "min_depth": row["reads"],
+                            "ambiguous_bases": row["ambiguous_bases"],
+                            "backend": "portable", "sequence_sha256": "",
+                            "failure_reason": "",
+                        })
             tree_summary = write_consensus_tree(
                 consensus_rows,
                 {row["consensus_id"]: row for row in qc_rows},

@@ -15,6 +15,122 @@ Conventions:
 
 ---
 
+## 2026-08-19 (fifth) — QC output follows the culture plates, and chimeras are graded
+
+### What changed
+
+Three changes, all **scientific** in the sense that they change what appears in
+the delivered outputs, though none change how any read is assigned or any
+consensus base is called.
+
+1. **The consensus tree nests by culture plate where the layout resolves it.**
+   Previously every plate barcode wrote `<plate>/<well>/`. When
+   `compressed_pcr` is configured, a clone's block names its source culture
+   plate, so RP05 now writes `RP05/SUMO_A_P6/A01/...` and RP08 writes
+   `RP08/LAB_P3/B07/...`. The deconvolution was already being computed and
+   reported; it just was not reaching the thing a person actually opens.
+   Barcodes with no pooling (RP01-RP04, RP06, RP07, RP09-RP11) stay flat at
+   `<plate>/<well>/`, and so does any clone whose culture plate does not
+   resolve to exactly one source — an unresolved set is joined with `|` and
+   deliberately does **not** become a directory, because a directory named for
+   a set of plates would read as a claim the data does not support.
+
+2. **Chimeric clones are graded and written into the QC tree.** They are real
+   sequence present in a real well, so excluding them from QC was hiding data.
+   `04b_chimera` now emits `scaffolds.fasta` keyed by a `chimera_id`
+   (`chim-<digest>`) and resolves each clone's culture plate from its first
+   parent's block. `05_qc` grades each chimeric consensus against its own
+   spliced scaffold — not against any single parent, which would score a
+   correct chimera as badly truncated — and appends the rows to `qc.csv.gz`.
+   Chimera files are marked in three places so they can never be mistaken for
+   a designed clone: `chimera__` in the filename, `kind=chimera` in the FASTA
+   header, and a `kind` column in `index.csv`. PCR-origin chimeras remain
+   unwritten, per the 2026-08-19 (third) entry.
+
+3. **The HTML report renders structured sections.** See below.
+
+### The report bug, and why it is worth an entry
+
+Run v4 completed stages 01-05 and then died in `06_report`:
+
+```
+TypeError: int() argument must be a string, a bytes-like object or a real number, not 'dict'
+```
+
+`write_html_report` took `Mapping[str, Mapping[str, int]]` and did `int(value)`
+on every cell. The culture-plate section I had added is a mapping *of mappings*
+and contains a string (`weakest_culture_plate: SUMO_B_P11`). The contract was
+implicit — no type check runs on this path — so adding a legitimate section
+turned into a crash in the final stage of a twenty-minute run.
+
+The fix is not to flatten my data to fit the renderer. `_rows` now recurses one
+level for nested mappings and `_format_value` handles bools, ints (thousands
+separators), floats and strings, escaping all of them. Four tests in
+`tests/test_science.py::ReportRenderingTests` cover flat counts, a nested
+per-plate section, a string value, and HTML escaping.
+
+**Lesson: a renderer that coerces its input is a landmine for whoever adds the
+next section.** The type annotation said `int`, nothing enforced it, and the
+cost landed at the end of the longest stage rather than at the call site. When
+a function's declared input type is not checked, prefer widening the function
+over narrowing the caller.
+
+### Run 260608-AI-DBTL-v4
+
+Resumed after the fix; stages 01-05 were reused unchanged (config digest
+`e5d6c132...`) and only `06_report` re-ran. Outputs in
+`runs/260608-AI-DBTL-v4/`.
+
+Consensus tree, from `stages/05_qc/consensus_by_plate/index.csv`:
+
+| | files written |
+|---|---|
+| nested `<plate>/<culture>/<well>/` | 3,194 (RP05 2,126 · RP08 1,068) |
+| flat `<plate>/<well>/` | 5,649 |
+| total | 8,843 |
+
+RP05 recovers all 22 pooled culture plates, RP08 all 11 — confirmed by
+directory listing, not by the summary that computed it.
+
+Chimeric consensuses now in QC: **310** of 21,094 graded entries. Their grade
+distribution is nothing like the designed clones', which is the expected
+result and a useful sanity check:
+
+| grade | chimeric | designed |
+|---|---|---|
+| frameshift | 182 | 176 |
+| truncated | 103 | 50 |
+| premature_stop | 11 | 35 |
+| perfect | 3 | 7,759 |
+
+A chimera is a junction between two designs, so a frameshift or a truncated
+alignment against its own scaffold is the norm; 3 perfect ones are cases where
+the splice happens to be in-frame and clean. If chimeras had come out looking
+like designed clones, the scaffold synthesis would have been suspect.
+
+### Next steps
+
+1. **RP03/RP04 still produce a disproportionate number of chimeras** — 187
+   clones from 30.6% of reads against RP05's 68 from 35.5%, on the same
+   opTF001 library. Unexplained. RP04 alone wrote 4,162 consensus files, far
+   more than any monoclonal plate, which is consistent with polyclonal wells
+   but has not been checked against the intended layout (unknown at the bench).
+2. **SUMO_B_P11 built 42 sequences against a median of 96** across the other
+   21 culture plates, flagged in `fig4_culture_plates`. This is a bench
+   question — colony density, or a plate that was under-picked.
+3. **`low_depth` is 12,251 of 21,094 groups (58%).** This is the dominant
+   yield loss and is a reads-per-well problem, not a pipeline one. Worth
+   deciding whether `minimum_depth: 6` is the right threshold for this depth
+   of sequencing, and reporting the yield curve if it is changed.
+4. **`motif_missing` runs 12-17% on RP05-RP11 against ~5% on RP01-RP04.** The
+   split is by construct, so the per-library `reverse_motif` overrides are the
+   first place to look.
+5. **Lint debt** (carried from earlier entries): the over-long CSS line in
+   `report.py` is fixed, but `ruff check src/` still reports pre-existing
+   findings and CI does not gate on it.
+
+---
+
 ## 2026-08-19 (fourth) — Culture-plate recovery, and a metric that was 2.9x wrong
 
 ### What was added

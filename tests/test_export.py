@@ -126,7 +126,9 @@ class TreeTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._dir.cleanup()
 
-    def test_files_land_under_plate_and_well_with_grade_in_the_name(self) -> None:
+    def test_files_nest_under_the_resolved_culture_plate(self) -> None:
+        """Pooling is what makes a bare well ambiguous, so the tree says the source."""
+
         rows = [
             consensus(consensus_id="c1", well_id="A1"),
             consensus(consensus_id="c2", well_id="A10", reference_ids="Block_2_other"),
@@ -137,12 +139,40 @@ class TreeTests(unittest.TestCase):
         }
         summary = write_consensus_tree(rows, qcs, {"c1": "ACGT" * 20, "c2": "TTTT" * 20}, self.root)
         self.assertEqual(summary["files_written"], 2)
-        first = self.root / "RP06" / "A01" / "RP06_A01__Block_1_gene__perfect.fasta"
-        second = self.root / "RP06" / "A10" / "RP06_A10__Block_2_other__screenable.fasta"
-        self.assertTrue(first.exists())
+        first = self.root / "RP06" / "CP_A" / "A01" / "RP06_CP_A_A01__Block_1_gene__perfect.fasta"
+        second = (self.root / "RP06" / "CP_A" / "A10"
+                  / "RP06_CP_A_A10__Block_2_other__screenable.fasta")
+        self.assertTrue(first.exists(), sorted(p.name for p in self.root.rglob("*.fasta")))
         self.assertTrue(second.exists())
         self.assertIn("grade=perfect", first.read_text())
         self.assertIn("culture_plate=CP_A", first.read_text())
+
+    def test_without_deconvolution_files_stay_at_well_level(self) -> None:
+        rows = [consensus(consensus_id="c1", culture_plate="")]
+        write_consensus_tree(rows, {"c1": qc(consensus_id="c1")}, {"c1": "AC"}, self.root)
+        self.assertTrue((self.root / "RP06" / "A01"
+                         / "RP06_A01__Block_1_gene__perfect.fasta").exists())
+
+    def test_an_unresolved_multi_plate_read_stays_at_well_level(self) -> None:
+        """A "|"-joined set means no single source, so do not imply one."""
+
+        rows = [consensus(consensus_id="c1", culture_plate="CP_A|CP_B")]
+        write_consensus_tree(rows, {"c1": qc(consensus_id="c1")}, {"c1": "AC"}, self.root)
+        self.assertTrue((self.root / "RP06" / "A01").is_dir())
+        self.assertFalse((self.root / "RP06" / "CP_A").exists())
+
+    def test_a_chimeric_clone_is_exported_and_marked(self) -> None:
+        """A chimera is a sequence present in the well, so it belongs in the tree."""
+
+        rows = [consensus(consensus_id="x1", status="chimera",
+                          reference_ids="Block_1_a+Block_1_b")]
+        write_consensus_tree(rows, {"x1": qc(consensus_id="x1")}, {"x1": "ACGT"}, self.root)
+        files = list((self.root / "RP06" / "CP_A" / "A01").iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertIn("chimera__", files[0].name)
+        self.assertIn("kind=chimera", files[0].read_text())
+        with (self.root / "index.csv").open() as handle:
+            self.assertEqual(next(csv.DictReader(handle))["kind"], "chimera")
 
     def test_a_consensus_without_a_sequence_is_indexed_but_writes_no_file(self) -> None:
         """A missing file must never have to be read as an oversight."""
@@ -176,7 +206,7 @@ class TreeTests(unittest.TestCase):
 
         rows = [consensus(consensus_id="c1", reference_ids="Block_1_a")]
         write_consensus_tree(rows, {"c1": qc(consensus_id="c1")}, {"c1": "AC"}, self.root)
-        first = self.root / "RP06" / "A01" / "RP06_A01__Block_1_a__perfect.fasta"
+        first = self.root / "RP06" / "CP_A" / "A01" / "RP06_CP_A_A01__Block_1_a__perfect.fasta"
         self.assertTrue(first.exists())
         # Same consensus, now failing QC: the old grade's file must not survive.
         write_consensus_tree(
@@ -187,9 +217,10 @@ class TreeTests(unittest.TestCase):
         )
         self.assertFalse(first.exists())
         self.assertTrue(
-            (self.root / "RP06" / "A01" / "RP06_A01__Block_1_a__frameshift.fasta").exists()
+            (self.root / "RP06" / "CP_A" / "A01"
+             / "RP06_CP_A_A01__Block_1_a__frameshift.fasta").exists()
         )
-        self.assertEqual(len(list((self.root / "RP06" / "A01").iterdir())), 1)
+        self.assertEqual(len(list((self.root / "RP06" / "CP_A" / "A01").iterdir())), 1)
 
     def test_an_unrelated_directory_is_never_replaced(self) -> None:
         self.root.mkdir(parents=True)
@@ -207,7 +238,7 @@ class TreeTests(unittest.TestCase):
         ]
         qcs = {"c1": qc(consensus_id="c1"), "c2": qc(consensus_id="c2")}
         write_consensus_tree(rows, qcs, {"c1": "AC", "c2": "GT"}, self.root)
-        self.assertEqual(len(list((self.root / "RP06" / "A01").iterdir())), 2)
+        self.assertEqual(len(list((self.root / "RP06" / "CP_A" / "A01").iterdir())), 2)
 
 
 if __name__ == "__main__":

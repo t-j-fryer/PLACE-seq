@@ -235,3 +235,22 @@ Rebuild without re-running the pipeline:
 ```bash
 python scripts/export_consensus_tree.py --run runs/<run-id>
 ```
+
+### Culture-plate recovery
+
+Where compressed-PCR deconvolution is configured, `fig4_culture_plates` shows what
+the compression actually recovered, and the report gains a **Culture plate
+recovery** section with the pooled count, plates recovered, clones, median source
+plates per well, and the weakest plate.
+
+Each pooled colony-PCR plate gets two panels:
+
+- a 96-well map of **how many distinct source culture plates each well recovered**,
+  which answers "did this well see everything pooled into it";
+- a bar per source culture plate of **clones recovered**, which answers "did every
+  pooled plate contribute". A plate contributing far below its peers is coloured
+  and labelled directly, since colour alone is not an encoding.
+
+The pooled denominator comes from `compressed_pcr.pcr_plates`, not from what was
+observed: a culture plate that contributed nothing must show as missing rather
+than silently shrinking the denominator.

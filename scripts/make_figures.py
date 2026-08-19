@@ -19,6 +19,7 @@ def main() -> int:
     args = parser.parse_args()
 
     expected: dict[str, int] = {}
+    pooled: dict[str, int] = {}
     if args.config is not None:
         config = load_config(args.config)
         if config.compressed_pcr.enabled:
@@ -27,13 +28,17 @@ def main() -> int:
                 config.compressed_pcr.blocks,
                 config.compressed_pcr.clonality,
             )
-            for plate in plan.pcr_plates:
+            for plate, sources in plan.pcr_plates.items():
+                # The pooled count must come from the layout, not from what was
+                # observed, or a culture plate that contributed nothing would
+                # silently shrink the denominator instead of showing as missing.
+                pooled[plate] = len(sources)
                 value = plan.expected_clones_per_well(plate)
                 if value is not None:
                     expected[plate] = value
 
     output = args.out or (args.run / "figures")
-    for path in write_all(args.run, output, expected):
+    for path in write_all(args.run, output, expected, pooled):
         print(f"wrote {path} (+ .png)")
     return 0
 

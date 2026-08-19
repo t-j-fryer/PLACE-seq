@@ -1354,6 +1354,38 @@ def run_pipeline(
                     "QC": run_dir / "stages" / "05_qc" / "summary.json",
                 }.items()
             }
+            chimera_summary = run_dir / "stages" / "04b_chimera" / "summary.json"
+            if chimera_summary.exists():
+                sections["Chimeric clones"] = json.loads(
+                    chimera_summary.read_text(encoding="utf-8")
+                )
+            if compressed_plan is not None:
+                # Deconvolution is the point of compressing plates, so the
+                # report says how much of each pool was actually recovered
+                # rather than leaving it to the figures alone.
+                from .figures import summarize_culture_plates
+
+                recovery: dict[str, Any] = {}
+                for item in summarize_culture_plates(
+                    run_dir,
+                    {plate: len(sources)
+                     for plate, sources in compressed_plan.pcr_plates.items()},
+                ):
+                    per_well = sorted(item.sources_per_well.values())
+                    recovery[item.plate_id] = {
+                        "pooled_culture_plates": item.pooled,
+                        "culture_plates_recovered": len(item.clones_per_source),
+                        "clones": sum(item.clones_per_source.values()),
+                        "median_source_plates_per_well": (
+                            per_well[len(per_well) // 2] if per_well else 0
+                        ),
+                        "weakest_culture_plate": (
+                            min(item.clones_per_source, key=item.clones_per_source.get)
+                            if item.clones_per_source else ""
+                        ),
+                    }
+                if recovery:
+                    sections["Culture plate recovery"] = recovery
             write_html_report(stage.output_path("report.html"), title=f"Nanopore3 — {config.run_name}", sections=sections, provenance={"run_id": run_id, "pipeline_version": __version__, "config_digest": config_digest})
             # Figures need matplotlib, which is an optional extra. A run must
             # not fail because a plotting library is absent, so this is
@@ -1372,8 +1404,14 @@ def run_pipeline(
                         value = compressed_plan.expected_clones_per_well(plate)
                         if value is not None:
                             expected[plate] = value
+                pooled = (
+                    {plate: len(sources)
+                     for plate, sources in compressed_plan.pcr_plates.items()}
+                    if compressed_plan is not None
+                    else {}
+                )
                 written = _write_figures(
-                    run_dir, stage.output_path("figures"), expected
+                    run_dir, stage.output_path("figures"), expected, pooled
                 )
                 atomic_write_json(
                     stage.output_path("figures.json"),

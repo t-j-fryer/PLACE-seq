@@ -81,6 +81,16 @@ def use_print_style() -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class CulturePlateSummary:
+    """Which pooled culture plates a compressed PCR plate actually recovered."""
+
+    plate_id: str
+    sources_per_well: Mapping[str, int]
+    clones_per_source: Mapping[str, int]
+    pooled: int
+
+
+@dataclass(frozen=True, slots=True)
 class PlateSummary:
     """Per-well observations for one colony PCR plate."""
 
@@ -126,6 +136,98 @@ def summarize_run(
         for plate_id, wells in sorted(clones.items())
     ]
     return summaries, status, by_plate
+
+
+def summarize_culture_plates(
+    run_dir: Path, pooled: Mapping[str, int] | None = None
+) -> list[CulturePlateSummary]:
+    """Per compressed plate, how much of the pooled diversity each well recovered."""
+
+    path = run_dir / "stages" / "04_consensus" / "consensus.csv.gz"
+    if not path.exists():
+        return []
+    per_well: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    per_source: dict[str, Counter[str]] = defaultdict(Counter)
+    for row in _read_csv_gz(path):
+        source = row.get("culture_plate") or ""
+        if not source:
+            continue
+        for name in source.split("|"):
+            per_well[row["plate_id"]][row["well_id"]].add(name)
+            per_source[row["plate_id"]][name] += 1
+    return [
+        CulturePlateSummary(
+            plate_id=plate_id,
+            sources_per_well={w: len(v) for w, v in wells.items()},
+            clones_per_source=dict(sorted(per_source[plate_id].items())),
+            pooled=(pooled or {}).get(plate_id, len(per_source[plate_id])),
+        )
+        for plate_id, wells in sorted(per_well.items())
+    ]
+
+
+def culture_plate_figure(
+    summaries: Sequence[CulturePlateSummary], path: Path
+) -> Path | None:
+    """Deconvolution made visible: which pooled culture plate each well recovered.
+
+    The plate map answers "did this well see everything that was pooled into it",
+    which is the question the compression creates.  The bars beside it answer
+    "did every pooled plate contribute", which is where a failed transformation
+    or a weak culture shows up.
+    """
+
+    if not summaries:
+        return None
+    use_print_style()
+    rows = len(summaries)
+    # One bar per pooled culture plate, so a plate pooling 22 needs twice the
+    # height of one pooling 11 before its labels stop colliding.
+    heights = [max(1.35, 0.115 * len(s.clones_per_source) + 0.55) for s in summaries]
+    figure = plt.figure(figsize=(DOUBLE_COLUMN, sum(heights) + 0.45))
+    grid = figure.add_gridspec(
+        rows, 2, width_ratios=(1.0, 1.25), height_ratios=heights,
+        hspace=0.5, wspace=0.22,
+    )
+
+    for index, summary in enumerate(summaries):
+        ax = figure.add_subplot(grid[index, 0])
+        observed = list(summary.sources_per_well.values())
+        median = sorted(observed)[len(observed) // 2] if observed else 0
+        _plate_grid(
+            ax, summary.sources_per_well, summary.pooled or 1,
+            f"{summary.plate_id}  ·  source plates per well · median {median} of {summary.pooled}",
+            show_columns=True, show_rows=True,
+        )
+        bar = figure.add_subplot(grid[index, 1])
+        names = list(summary.clones_per_source)
+        values = [summary.clones_per_source[n] for n in names]
+        short = [n.replace(f"{summary.plate_id}_", "").replace("SUMO_", "").replace("LAB_", "")
+                 for n in names]
+        bar.barh(range(len(names)), values, height=0.68, color=SERIES[0], zorder=2)
+        bar.set_yticks(range(len(names)))
+        bar.set_yticklabels(short, fontsize=5.5)
+        bar.invert_yaxis()
+        bar.set_xlabel("clones recovered", fontsize=6.5)
+        bar.xaxis.grid(True, color=FAINT, linewidth=0.5)
+        bar.set_axisbelow(True)
+        bar.tick_params(length=2, pad=1.5)
+        bar.set_title(
+            f"{summary.plate_id}  ·  {sum(values):,} clones from {len(names)} pooled plates",
+            pad=3, loc="left", color=INK, fontsize=6.5,
+        )
+        # A plate contributing far below its peers is the signal worth seeing.
+        # It is labelled as well as coloured: colour alone is not an encoding.
+        if values:
+            weakest = min(range(len(values)), key=lambda i: values[i])
+            if values[weakest] < 0.4 * (sum(values) / len(values)):
+                bar.barh(weakest, values[weakest], height=0.68, color=SERIES[1], zorder=3)
+                bar.annotate(
+                    f"  {short[weakest]}: {values[weakest]} — far below the other "
+                    f"{len(values) - 1}",
+                    (values[weakest], weakest), va="center", fontsize=5.5, color=SERIES[1],
+                )
+    return _save(figure, path)
 
 
 def _plate_grid(
@@ -343,6 +445,7 @@ def write_all(
     run_dir: Path,
     output_dir: Path,
     expected_clones: Mapping[str, int] | None = None,
+    pooled: Mapping[str, int] | None = None,
 ) -> list[Path]:
     """Write every figure for a completed run and return the PDF paths."""
 
@@ -355,10 +458,19 @@ def write_all(
         written.append(
             deconvolution_figure(by_plate, output_dir / "fig3_deconvolution")
         )
+    culture = culture_plate_figure(
+        summarize_culture_plates(run_dir, pooled),
+        output_dir / "fig4_culture_plates",
+    )
+    if culture is not None:
+        written.append(culture)
     return written
 
 
 __all__ = [
+    "CulturePlateSummary",
+    "culture_plate_figure",
+    "summarize_culture_plates",
     "DOUBLE_COLUMN",
     "SERIES",
     "SINGLE_COLUMN",

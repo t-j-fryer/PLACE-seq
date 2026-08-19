@@ -15,6 +15,73 @@ Conventions:
 
 ---
 
+## 2026-08-19 — CORRECTION: RWV1-RWV4 were already registered
+
+### What was wrong
+
+For the 20260818 GG HiFi run I registered a new barcode family
+`tf544_547_core` holding the bare 24 nt variable cores of the supplied TF544-TF547
+primers. That was redundant and worse than what already existed.
+
+The experiment owner pointed out that these runs use **RWV1-RWV4**, already in
+`configs/barcodes/reverse_primer_families.csv` as family
+`rwv_pet_whole_vector`. Checked: the registered RWV sequences are the **reverse
+complements** of the supplied TF primers, differing only by a 1-2 nt G-run length
+in the constant tail (`AGCGGGGGATACGGTT` against `AGCGGGGATACGGTT`).
+
+| Supplied | Registered | edit distance over ~59 nt |
+| --- | --- | --- |
+| TF544 | RWV1 | 1 |
+| TF545 | RWV2 | 2 |
+| TF546 | RWV3 | 1 |
+| TF547 | RWV4 | 2 |
+
+`tf544_547_core` is removed and the profile now uses `family_id:
+rwv_pet_whole_vector` with the previously tuned plate settings (trim 12, window
+400, max_edits 6, `legacy_unique_threshold`).
+
+### Why the registered family is better, beyond not duplicating
+
+My subset family held only the four barcodes in use, on the reasoning that a read
+could not then be mis-called as an unused barcode. That reasoning cost a
+**negative control**. With the full eight-member family:
+
+| Barcode | Primer | Plate / round | share of gated reads |
+| --- | --- | --- | --- |
+| RWV3 | TF546 | plate 2, round 2 | 45.2% |
+| RWV2 | TF545 | plate 2, round 1 | 27.1% |
+| RWV4 | TF547 | plate 1, round 2 | 9.7% |
+| RWV1 | TF544 | plate 1, round 1 | 3.0% |
+| RWV5-RWV8 | not used | — | **0%** |
+
+**RWV5-RWV8 receive exactly zero calls.** That is direct evidence the panel and
+the experiment agree, and it is unobtainable from a panel containing only the
+barcodes expected to appear. Registering the bare cores also discarded the primer
+flanks, changing what `trim_bases` means and losing the context that made the
+tuned settings transferable.
+
+Also visible: **plate 1 is heavily under-represented**, 12.7% against plate 2's
+72.3%, and RWV1 at 3.0% is weak. Worth checking at the bench.
+
+### Lessons
+
+**Search the registry before extending it.** The barcodes were already there under
+a different name because they were registered in the orientation the vector uses,
+not the orientation the primer order sheet lists. Matching on the variable core
+alone, in both orientations, would have found them in one query.
+
+**A panel restricted to what you expect cannot surprise you.** Keeping the unused
+members is what turns a barcode panel into a control.
+
+### Status of the 20260818 run
+
+Still **BLOCKED on references**, unchanged by this correction: 98.1% of gated
+reads share under 1% of their 15-mers with the 62 supplied plasmids. Barcodes,
+read structure and the length gate are all sound; the reference set does not
+correspond to this flow cell.
+
+---
+
 ## 2026-08-13 (third) — Whole-vector amplicons, and reference-free clustering
 
 Two questions from the experiment owner: would the pipeline handle a 6 kb

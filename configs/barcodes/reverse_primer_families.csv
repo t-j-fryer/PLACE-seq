@@ -27,7 +27,3 @@ rwv_pet_whole_vector,RWV5,GGTGATGTCGGCGATATAGGAAGGTTACACAAACCCTGGACAAGCGGGGATACG
 rwv_pet_whole_vector,RWV6,GGTGATGTCGGCGATATAGGACTACTTTCTGCCTTTGCGAGAAAGCGGGGATACGGTT,pET whole vector,,"Nanopore2 notebook barcode catalogue, audited 2026-08-12"
 rwv_pet_whole_vector,RWV7,GGTGATGTCGGCGATATAGGAAGGATTCATTCCCACGGTAACACAGCGGGGATACGGTT,pET whole vector,,"Nanopore2 notebook barcode catalogue, audited 2026-08-12"
 rwv_pet_whole_vector,RWV8,GGTGATGTCGGCGATATAGACGTAACTTGGTTTGTTCCCTGAAAGCGGGGATACGGTT,pET whole vector,,"Nanopore2 notebook barcode catalogue, audited 2026-08-12"
-tf544_547_core,RP01,AAGAAAGTTGTCGGTGTCTTTGTG,TF544 plate 1 round 1 (variable core of aaccGTATCCcccgct...cctatatcgccgacatcacc),,20260818 GG HiFi run
-tf544_547_core,RP02,TCGATTCCGTTTGTAGTCGTCTGT,TF545 plate 2 round 1 (variable core),,20260818 GG HiFi run
-tf544_547_core,RP03,GAGTCTTGTGTCCCAGTTACCAGG,TF546 plate 2 round 2 (variable core),,20260818 GG HiFi run
-tf544_547_core,RP04,TTCGGATTCTATCGTGTTTCCCTA,TF547 plate 1 round 2 (variable core),,20260818 GG HiFi run

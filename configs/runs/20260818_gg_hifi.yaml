@@ -82,13 +82,13 @@ library:
 barcodes:
   plate:
     registry_csv: ../barcodes/reverse_primer_families.csv
-    # Only the four TF primers actually used, registered as their own family so
-    # a read cannot be called as an unused RP05-RP12.
-    family_id: tf544_547_core
-    # The registered sequence is the 24 nt variable core, so nothing is trimmed.
-    trim_bases: 0
-    # The four cores are >=12 edits apart, so 5 stays unambiguous.
-    max_edits: 5
+    # RWV1-RWV4 are TF544-TF547: the registered sequences are the reverse
+    # complements of the supplied primers, differing only by a 1-2 nt G-run in
+    # the constant tail. Only 1-4 were used; the unused RWV5-8 stay in the panel
+    # and simply receive no calls, which is itself a check on the run.
+    family_id: rwv_pet_whole_vector
+    trim_bases: 12
+    max_edits: 6
     search_window: 400
     search_ends: [head, tail]
     allow_reverse_complement: true

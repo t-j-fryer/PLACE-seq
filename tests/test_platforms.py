@@ -284,3 +284,44 @@ class IdentityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InsertScopeTests(unittest.TestCase):
+    """Illumina reads the insert alone, so nanopore must be scored there too."""
+
+    def test_the_insert_outcome_is_preferred_over_the_amplicon_grade(self) -> None:
+        c = platforms.Clone(
+            culture_plate="P1",
+            well_id="A01",
+            encoding="A",
+            block=1,
+            design_key="d1",
+            grade="screenable",      # amplicon carries a substitution somewhere
+            kind="consensus",
+            sequence_id="s",
+            insert_class=platforms.PERFECT,   # but the insert is exact
+        )
+        self.assertEqual(platforms.nanopore_recovery([c]), {"d1": platforms.PERFECT})
+        self.assertEqual(platforms.nanopore_population([c])[platforms.PERFECT], 1)
+
+    def test_without_an_insert_outcome_the_grade_is_used(self) -> None:
+        c = clone(1, "d1", "screenable")
+        self.assertEqual(platforms.nanopore_recovery([c]), {"d1": platforms.SCREENABLE})
+
+    def test_a_clone_scored_only_on_the_insert_still_counts_when_the_grade_is_unmapped(
+        self,
+    ) -> None:
+        """`low_depth` has no class, but a clone with an insert outcome has one."""
+
+        c = platforms.Clone(
+            culture_plate="P1",
+            well_id="A01",
+            encoding="A",
+            block=1,
+            design_key="d1",
+            grade="low_depth",
+            kind="consensus",
+            sequence_id="s",
+            insert_class=platforms.PERFECT,
+        )
+        self.assertEqual(platforms.nanopore_population([c])[platforms.PERFECT], 1)

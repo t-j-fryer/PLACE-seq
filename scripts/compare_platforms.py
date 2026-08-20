@@ -346,6 +346,17 @@ def main() -> int:
     )
     parser.add_argument("--culture-plates", type=int, default=11, help="per library set")
     parser.add_argument("--seed", type=int, default=141142, help="Illumina subsampling seed")
+    parser.add_argument(
+        "--scope",
+        choices=("insert", "amplicon"),
+        default="insert",
+        help=(
+            "region the nanopore side is scored over. Illumina only reads the "
+            "insert, so 'insert' is the like-for-like comparison; 'amplicon' "
+            "holds a full-length run to its whole reconstructed length. No effect "
+            "on an insert-only run, which has nothing else to score."
+        ),
+    )
     args = parser.parse_args()
 
     out_dir = args.out_dir or args.run_dir / "figures"
@@ -356,11 +367,16 @@ def main() -> int:
         paths = [Path(p) for p in config["reference_libraries"][library.library_id]["fasta"]]
         universes[library.key] = platforms.load_design_universe(paths)
 
-    clones = platforms.load_clones(args.run_dir)
+    clones = platforms.load_clones(args.run_dir, scope=args.scope)
     illumina = platforms.load_illumina_reads(args.illumina)
+    scoped = sum(1 for v in clones.values() for c in v if c.insert_class)
     print(
         f"loaded {sum(len(v) for v in clones.values()):,} clones "
         f"and {len(illumina):,} Illumina reads"
+    )
+    print(
+        f"nanopore scored over the {args.scope}"
+        + (f"; {scoped:,} clones carry an insert-only outcome" if scoped else "")
     )
 
     # Matched depth: allocated wells per block becomes reads drawn per block.
@@ -493,6 +509,7 @@ def main() -> int:
                 "run_dir": str(args.run_dir),
                 "illumina_results": str(args.illumina),
                 "seed": args.seed,
+                "nanopore_scope": args.scope,
                 "allocated_wells_per_set": allocated,
                 "wells_per_plate": args.wells_per_plate,
                 "matched_depth_per_block": {f"{g}:{b}": n for (g, b), n in sorted(depths.items())},

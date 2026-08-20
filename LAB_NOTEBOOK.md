@@ -15,6 +15,78 @@ Conventions:
 
 ---
 
+## 2026-08-20 (ninth) — v5b figures, and a like-for-like fix
+
+Figures for `runs/260608-RP05-RP08-v5b`. Two sets, in two places:
+
+**From the run itself**, `stages/06_report/figures/`: `fig1_plate_occupancy`,
+`fig2_clonality`, `fig3_deconvolution`, `fig4_culture_plates`. These are written
+by the report stage and were there as soon as the run finished.
+
+**From the analysis scripts**, `figures/`: `platform_sequences_per_well`,
+`platform_reference_recovery`, `platform_sequence_populations` (PDF, 600-dpi PNG,
+transparent SVG each), plus `platform_reference_recovery.csv`,
+`platform_comparison.json` and `region_summary.json`. These had not been
+regenerated - I had raised it as an open question rather than doing it.
+
+`replicate_concordance` **cannot** be made for v5b: it needs RP06 and RP07, and
+this config maps only RP05 and RP08. Extending it means adding those barcodes to
+the full-length config, which is a config change and a fresh run.
+
+### The fix generating them forced
+
+Scoring the nanopore side over the whole amplicon while Illumina only ever reads
+the insert is not a comparison. The v5b figures first came out with nanopore held
+to a standard three times longer than its opponent:
+
+| | scored on the amplicon | scored on the insert |
+|---|---|---|
+| Library 1 (stuffer) Perfect recovery | 73.5% | **75.0%** |
+| Library 3 (A) | 85.1% | **86.0%** |
+| Library 3 (B) | 80.4% | **80.4%** |
+| Library 3 (A+B) | 96.2% | **96.5%** |
+| stuffer consensus Perfect population | 88.8% | **91.5%** |
+| Library 3 (A) population | 87.4% | **90.2%** |
+
+`compare_platforms.py` now takes `--scope insert|amplicon`, defaulting to
+`insert`, and a full-length run supplies the insert-only outcome per consensus
+from the region columns: perfect when the insert matches exactly, screenable when
+it does not but frame and stop checks pass, otherwise other. An insert-only run
+is unaffected - it has nothing else to score.
+
+Insert-scoped v5b now reproduces v4 to within 0.3 points on recovery (75.0 /
+86.0 / 80.4 / 96.5 against 75.0 / 85.7 / 80.4 / 96.5), which is the right answer:
+the two runs demultiplex and deconvolve identically, so a figure about *which
+designs were recovered* should not move when the consensus gets longer.
+
+The population figure is 2-3 points lower than v4 for a real reason, not a
+scoping one: v5b includes the 188 wrecked clones v4 never assembled, and they are
+observations, so they belong in a population.
+
+**Lesson: when the measurement changes length, check every figure that compares
+it to something else.** The recovery numbers moving by ~1.5 points was the only
+visible symptom, and it would have read as noise.
+
+### Also worth knowing
+
+`platform_sequences_per_well` moved for a real reason too - v5b finds a clone in
+more wells (empty wells 1.6% against 3.5% for the stuffer library) and finds more
+polyclonal wells (Library 3 (B) two-sequence wells 11.8% against 6.1%), both
+because the primer anchors are present in 92% of reads where the insert motifs
+were in ~85%. More reads per well crosses `minimum_depth` more often, for second
+clones as well as first.
+
+### Next steps
+
+1. **Decide whether RP06/RP07 join the full-length config**, which would restore
+   the replicate concordance figure at full length - the strongest validation in
+   the set, since it would then compare 1.2 kb of independently sequenced
+   sequence rather than 350 nt.
+2. Carried over: the 72 PCR-origin chimeras are counted but not localised, and
+   RP01-RP04 and RP09-RP11 have no full-length config.
+
+---
+
 ## 2026-08-20 (eighth) — Chimera detection back on in v5, scoped to the insert
 
 **Scientific change**, run as `runs/260608-RP05-RP08-v5b` (v5 plus chimeras;

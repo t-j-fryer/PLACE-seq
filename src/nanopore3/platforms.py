@@ -84,7 +84,11 @@ class LibrarySet:
 
 @dataclass(frozen=True)
 class Clone:
-    """One sequenced clone from one well."""
+    """One sequenced clone from one well.
+
+    ``insert_class`` is set only for a full-length run, where the consensus spans
+    the whole amplicon but the outcome over the insert alone is also recorded.
+    """
 
     culture_plate: str
     well_id: str
@@ -94,6 +98,7 @@ class Clone:
     grade: str
     kind: str
     sequence_id: str
+    insert_class: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,15 +145,45 @@ def design_keys(universe: set[tuple[str, int, str]], encodings: tuple[str, ...])
     return {key for encoding, _, key in universe if encoding in encodings}
 
 
-def load_clones(run_dir: Path) -> dict[str, list[Clone]]:
+def load_insert_outcomes(run_dir: Path) -> dict[str, str]:
+    """Per-consensus outcome over the insert region alone, if the run records it.
+
+    A full-length run scores the whole amplicon, but Illumina only ever sees the
+    insert, so comparing the two on the amplicon holds nanopore to a standard
+    three times longer.  These columns make the like-for-like comparison possible:
+    perfect when the insert matches exactly, screenable when it does not but the
+    reading frame and stop checks still pass, otherwise other.
+    """
+
+    path = run_dir / "stages" / "05_qc" / "qc.csv.gz"
+    outcomes: dict[str, str] = {}
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            if not row.get("insert_edit_distance"):
+                continue
+            if int(row["insert_edit_distance"]) == 0:
+                outcome = PERFECT
+            elif row.get("reading_frame") == "pass" and row.get("internal_stops") == "pass":
+                outcome = SCREENABLE
+            else:
+                outcome = OTHER
+            outcomes[row["consensus_id"]] = outcome
+    return outcomes
+
+
+def load_clones(run_dir: Path, *, scope: str = "amplicon") -> dict[str, list[Clone]]:
     """Every sequenced clone in the run, keyed by plate barcode.
 
     Grades come from the QC index, which already carries chimeras alongside
     designed consensuses; sequence identity comes from the consensus table so
     that "distinct sequences" means distinct sequence content, not distinct name.
+
+    ``scope="insert"`` additionally records the insert-only outcome, for
+    comparison against a platform that reads the insert alone.
     """
 
     stages = run_dir / "stages"
+    insert_outcomes = load_insert_outcomes(run_dir) if scope == "insert" else {}
     digests: dict[str, str] = {}
     with gzip.open(stages / "04_consensus" / "consensus.csv.gz", "rt", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
@@ -175,6 +210,7 @@ def load_clones(run_dir: Path) -> dict[str, list[Clone]]:
                     grade=row["grade"],
                     kind=row["kind"],
                     sequence_id=digests.get(row["consensus_id"]) or row["consensus_id"],
+                    insert_class=insert_outcomes.get(row["consensus_id"]),
                 )
             )
     return clones
@@ -339,9 +375,10 @@ def nanopore_population(clones: list[Clone]) -> Counter[str]:
     """
 
     return Counter(
-        GRADE_CLASS[clone.grade]
+        clone.insert_class or GRADE_CLASS[clone.grade]
         for clone in clones
-        if clone.kind != "chimera" and clone.grade in GRADE_CLASS
+        if clone.kind != "chimera"
+        and (clone.insert_class or clone.grade in GRADE_CLASS)
     )
 
 
@@ -376,14 +413,18 @@ def best_class(classes: list[str]) -> str | None:
 
 
 def nanopore_recovery(clones: list[Clone]) -> dict[str, str]:
-    """Best outcome per design across every well that yielded it."""
+    """Best outcome per design across every well that yielded it.
+
+    Uses the insert-only outcome where a clone carries one, so a full-length run
+    is not held to a longer standard than the platform it is compared against.
+    """
 
     observed: dict[str, list[str]] = defaultdict(list)
     for clone in clones:
         # A chimera is not an observation of either parent design.
         if clone.kind == "chimera":
             continue
-        outcome = GRADE_CLASS.get(clone.grade)
+        outcome = clone.insert_class or GRADE_CLASS.get(clone.grade)
         if outcome:
             observed[clone.design_key].append(outcome)
     return {key: best_class(values) for key, values in observed.items() if best_class(values)}

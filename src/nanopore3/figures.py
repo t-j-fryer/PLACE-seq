@@ -109,6 +109,44 @@ class PlateSummary:
     expected_clones: int | None
 
 
+def use_journal_style() -> None:
+    """Submission house style: Arial, black furniture, ticks pointing in.
+
+    Layered on top of :func:`use_print_style`.  Two things here are deliberate:
+    ``svg.fonttype="none"`` keeps SVG text as editable text in the requested
+    font, and ``savefig.bbox="standard"`` undoes the tight bounding box, which
+    would otherwise trim the canvas and make a figure's physical width an output
+    of its content rather than the column width it was laid out for.
+    """
+
+    use_print_style()
+    plt.rcParams.update(
+        {
+            "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
+            "text.color": "black",
+            "axes.labelcolor": "black",
+            "axes.edgecolor": "black",
+            "xtick.color": "black",
+            "ytick.color": "black",
+            "xtick.direction": "in",
+            "ytick.direction": "in",
+            "svg.fonttype": "none",
+            "savefig.bbox": "standard",
+        }
+    )
+
+
+def save_figure(figure, path: Path) -> Path:
+    """Write PDF, 600-dpi PNG and a transparent SVG at the figure's exact size."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path.with_suffix(".pdf"))
+    figure.savefig(path.with_suffix(".png"), dpi=600)
+    figure.savefig(path.with_suffix(".svg"), transparent=True)
+    plt.close(figure)
+    return path.with_suffix(".pdf")
+
+
 def _read_csv_gz(path: Path) -> list[dict[str, str]]:
     with gzip.open(path, "rt", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
@@ -487,6 +525,8 @@ def write_all(
 
 
 __all__ = [
+    "use_journal_style",
+    "save_figure",
     "CulturePlateSummary",
     "culture_plate_figure",
     "summarize_culture_plates",

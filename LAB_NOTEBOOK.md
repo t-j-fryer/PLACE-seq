@@ -15,6 +15,174 @@ Conventions:
 
 ---
 
+## 2026-08-20 (fifth) — Nanopore clone picking against pooled Illumina
+
+Three figures remaking and extending an earlier comparison, over the same
+library sets. Analysis only: no stage, threshold or default was touched.
+
+Library sets, all with 11 culture plates on one PCR barcode:
+
+| set | barcode | culture plates | designs |
+|---|---|---|---|
+| Library 1 (stuffer) | RP08 | `LAB_P1`-`LAB_P11` | 332 |
+| Library 3 (A) | RP05 | `SUMO_A_P1`-`P11` | 342 |
+| Library 3 (B) | RP05 | `SUMO_B_P1`-`P11` | 342 |
+| Library 3 (A+B) | RP05 | both | the same 342, recovered if either encoding was |
+
+A and B are two DNA encodings of one design set: their 342 design keys are
+identical, which is what makes the A+B union meaningful rather than a fourth
+library.
+
+### The join is exact
+
+Illumina names an encoding with `|` where ours use `_`; parsing the block prefix
+off both gives (encoding, block, design key), and the two datasets then agree
+**exactly**: 332, 342 and 342 references with the same block numbers and nothing
+left over on either side. Checked before any figure was drawn.
+
+### Matched sampling effort
+
+Picking N colonies from a block and taking N reads of that block are the same
+investment, so Illumina is subsampled per block to the number of wells the
+nanopore run sequenced of that block: **3,000 reads across 51 blocks** (1,009
+stuffer, 1,016 A, 975 B), drawn with `random.Random(141142)` in sorted block
+order so the sample does not depend on file or dict ordering.
+
+Without this the comparison only says that a deep pool sees more designs than 96
+colonies: at full depth Illumina recovers 97-100% of every set.
+
+**Caveat on the definition.** "Wells sequenced of a block" counts wells that
+*yielded* a clone of that block, because a well that yielded nothing cannot be
+attributed to a block. That is 975-1,016 rather than the 1,045 allocated, so
+Illumina is given ~3-7% less effort than the colonies actually picked. Erring
+this way understates Illumina slightly; the alternative would require inventing
+an attribution for empty wells.
+
+### Allocated wells: 95 per plate, not 96
+
+n = 1,045 per set = 11 plates x 95 wells. H12 is excluded, and the data says so
+rather than the layout: **H12 yielded no clone in any of the 33 culture plates**,
+and its reads do not behave like a picked well - RP05 H12 has 40 uniquely
+assigned reads against 4,069 in A1, with 6,835 `no_match`. It is a control, not
+a colony. Exposed as `--wells-per-plate` rather than hard-coded.
+
+### Figure 1: distinct sequences per allocated well
+
+| set | 0 | 1 | 2 | 3+ |
+|---|---|---|---|---|
+| Library 1 (stuffer) | 3.5% | 91.0% | 5.2% | 0.3% |
+| Library 3 (A) | 2.8% | 91.5% | 5.5% | 0.3% |
+| Library 3 (B) | 6.7% | 86.8% | 6.1% | 0.4% |
+
+The source figure read approximately 3/93/4, 2/92/5 and 5/90/5 - the same
+picture. "Distinct" is by sequence content (sha256), not by name, so two names
+resolving to one sequence count once. Chimeric consensuses count: they are
+distinct sequence present in the well.
+
+### Figure 2: recovered references
+
+Perfect, as a percentage of the designed library:
+
+| set | nanopore | Illumina, matched depth | Illumina, full depth |
+|---|---|---|---|
+| Library 1 (stuffer) | 75.0% | 54.5% | 98.2% |
+| Library 3 (A) | 85.7% | 67.3% | 97.4% |
+| Library 3 (B) | 80.4% | 62.9% | 97.7% |
+| Library 3 (A+B) | 96.5% | 84.5% | 100.0% |
+
+Nanopore reproduces the earlier analysis almost exactly (75 / 86 / 80 there,
+75.0 / 85.7 / 80.4 here). Illumina at matched depth is a little below the earlier
+57 / 68 / 65, consistent with the slightly smaller depth this definition gives
+it. Full-depth numbers are in the JSON, not the figure.
+
+**The A+B result is the headline: two encodings of the same design set recover
+96.5% of designs perfectly, against 85.7% and 80.4% separately.** Redundant
+encoding buys more than deeper sequencing of one encoding would.
+
+Screenable and Other stay under 3.3% everywhere (`platform_reference_recovery.csv`).
+
+**One asymmetry to keep in mind.** Our `mixed_variants` grade - a polyclonal well
+- falls into Other, and Illumina has no analogue because a read is one molecule.
+Other is therefore not strictly like for like, though it involves 0-5 designs per
+set.
+
+### Figure 3: read accuracy
+
+Mean identity to the design:
+
+| set | nanopore read | nanopore consensus | Illumina read |
+|---|---|---|---|
+| Library 1 (stuffer) | 96.52% | 99.75% | 99.72% |
+| Library 3 (A) | 95.49% | 99.66% | 99.54% |
+| Library 3 (B) | 95.74% | 99.72% | 99.01% |
+| Library 3 (A+B) | 95.63% | 99.69% | 99.28% |
+
+**The nanopore consensus column is not in the original figure and was added
+deliberately.** Raw nanopore reads are 3-4 points behind Illumina reads, and a
+figure showing only those two would say the pipeline is less accurate than
+Illumina. What the pipeline delivers is the consensus, which meets or beats
+Illumina read accuracy on all four sets. Omitting it would have been misleading.
+It is a separate bar, not blended into the nanopore one.
+
+Notes: the y axis is truncated at 90% because every value exceeds 95% and a
+0-100 axis hides the differences the figure exists to show. Illumina identity is
+`1 - edit_distance/reference_length` from their per-read table; nanopore identity
+is the edlib alignment identity recorded at assignment - different aligners, same
+quantity. Accuracy is insensitive to the subsample (full-depth Illumina means are
+in the JSON and differ by <0.15 points).
+
+### Two bugs worth recording
+
+1. **Illumina recovery came out at 115.7%.** Reads were being attributed to a
+   library by the *well* they came from (`expected_group`), but a read from a
+   SUMO_A well can match a B reference, and those references are not in A's
+   universe. Membership now follows the reference a read actually matched, which
+   is also the scientifically right answer: such a read is evidence about B.
+   A percentage above 100 is a gift - it makes a definition error impossible to
+   miss. Had the error gone the other way it would have looked like a result.
+2. **The A+B set had zero nanopore reads.** The per-read loop `break`s after the
+   first matching library set, so reads matched `sumo_a` and never reached the
+   union. A read belongs to *every* set that contains it.
+
+Both are covered by tests in `tests/test_platforms.py` (183 tests pass).
+
+### Added
+
+- `src/nanopore3/platforms.py` — joins, matched-depth subsampling, the three
+  quantities. No plotting.
+- `scripts/compare_platforms.py` — CLI and figures.
+- `figures.use_journal_style()` and `figures.save_figure()` — the house style
+  (Arial, black furniture, inward ticks, transparent SVG, untrimmed canvas) now
+  lives in one place and `compare_replicate_plates.py` uses it too.
+- `tests/test_platforms.py` — 19 tests.
+
+Reproduce:
+
+```
+python scripts/compare_platforms.py \
+    --run-dir runs/260608-AI-DBTL-v4 \
+    --illumina ".../20260724_AI_DBTL_ILLIMINA/Analysis/results/LAB_STUFFER_SUMO_CONCORDANT"
+```
+
+Outputs in `runs/260608-AI-DBTL-v4/figures/`: `platform_sequences_per_well`,
+`platform_reference_recovery`, `platform_read_accuracy` (each PDF, 600-dpi PNG
+and transparent SVG at 89 or 183 mm), plus
+`platform_reference_recovery.csv` and `platform_comparison.json`.
+
+### Next steps
+
+1. **Ask whether the matched-depth definition should count allocated wells
+   instead of recovered ones.** It moves Illumina up slightly; the choice is the
+   experiment owner's, and the script would need one extra flag.
+2. **`SUMO_B` recovers 6.7% empty wells against A's 2.8%**, and B's Illumina read
+   accuracy is the lowest at 99.01%. Both point at the B encoding or its
+   handling; worth a look before the encodings are treated as interchangeable.
+3. **Audit `figures.py::_save` for the tight-bbox issue** (carried from the
+   2026-08-20 (fourth) entry). `fig1`-`fig4` still inherit it; the new helper
+   `save_figure` does not.
+
+---
+
 ## 2026-08-20 (fourth) — Transparent SVG, and the figure was not 89 mm wide
 
 Output-only change; no number moved.

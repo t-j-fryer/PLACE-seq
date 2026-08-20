@@ -112,6 +112,15 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
             "ytick.color": "black",
             "xtick.direction": "in",
             "ytick.direction": "in",
+            # Keep SVG text as text so the vector stays editable in Illustrator
+            # and the Arial the figure asks for is the Arial that renders.
+            "svg.fonttype": "none",
+            # figures.py sets savefig.bbox="tight" globally, which trims the
+            # canvas: this figure was coming out 87.0 mm instead of the 89.0 mm
+            # single column, and a journal rescaling it to fit would change the
+            # effective type size - the one thing these point sizes exist to
+            # control.  Margins are set by subplots_adjust below instead.
+            "savefig.bbox": "standard",
         }
     )
 
@@ -233,11 +242,16 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
         fontsize=legend_size,
         labelcolor="black",
     )
-    figure.subplots_adjust(left=0.16, right=0.99, top=0.98, bottom=below / height)
+    # right < 1 leaves room for the "100%" tick label, which the tight bbox used
+    # to absorb silently.
+    figure.subplots_adjust(left=0.16, right=0.955, top=0.97, bottom=below / height)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path.with_suffix(".pdf"))
     figure.savefig(path.with_suffix(".png"), dpi=600)
+    # Transparent so the SVG drops onto any figure background; the in-bar text is
+    # white and only ever sits on a filled segment, so nothing vanishes.
+    figure.savefig(path.with_suffix(".svg"), transparent=True)
     plt.close(figure)
     return path.with_suffix(".pdf")
 
@@ -362,7 +376,10 @@ def main() -> int:
         encoding="utf-8",
     )
     figure_path = concordance_figure(results, out_dir / args.stem)
-    print(f"\nwrote {figure_path}, {figure_path.with_suffix('.png')},")
+    print(
+        f"\nwrote {figure_path}, {figure_path.with_suffix('.png')}, "
+        f"{figure_path.with_suffix('.svg')} (transparent),"
+    )
     print(f"      {out_dir / f'{args.stem}_wells.csv'}, {out_dir / f'{args.stem}.json'}")
     return 0
 

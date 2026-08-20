@@ -15,6 +15,58 @@ Conventions:
 
 ---
 
+## 2026-08-20 (fourth) — Transparent SVG, and the figure was not 89 mm wide
+
+Output-only change; no number moved.
+
+### Added
+
+`replicate_concordance.svg` alongside the PDF and PNG, saved with
+`transparent=True` so it drops onto any background: both the figure and axes
+patches are `fill: none`. `svg.fonttype` is set to `none` so text stays text -
+editable in Illustrator, and the Arial the figure asks for is the Arial that
+renders, rather than glyph outlines. Verified: `font-family: 'Arial',
+'Helvetica', 'DejaVu Sans', sans-serif`, 9 kB.
+
+The in-bar text is white but only ever sits on a filled segment, so nothing
+disappears against a light background.
+
+### The bug this uncovered
+
+`figures.py` sets `savefig.bbox: "tight"` for every figure in the repo, which
+trims the canvas to its content. This figure was therefore being written at
+**87.0 mm** wide, not the 89.0 mm single column it was laid out for. A journal
+scaling it up to fill the column would have scaled the type with it, which
+defeats the entire point of setting 6-7 pt sizes by hand.
+
+Measured after the fix:
+
+| format | width | height |
+|---|---|---|
+| SVG | 89.00 mm | 39.62 mm |
+| PDF (MediaBox) | 89.00 mm | 39.62 mm |
+| PNG at 600 dpi | 88.98 mm | 39.62 mm |
+
+Note that `savefig(bbox_inches=None)` does **not** disable it - `None` means
+"use the rcParam". The figure sets `savefig.bbox: "standard"` locally instead.
+
+Removing the trim exposed what the trim had been hiding: the `100%` tick label
+ran off the canvas and was being silently absorbed. Margins are now explicit
+(`subplots_adjust(left=0.16, right=0.955, ...)`).
+
+**Lesson: a tight bounding box makes a figure's physical size an output of its
+content rather than a property you set.** For anything going into a fixed column
+width, set the margins and leave the canvas alone. The other figures in
+`figures.py` are still saved with the tight bbox and are worth auditing for the
+same reason before submission.
+
+### Next step
+
+Audit `figures.py`'s `_save` for the same issue if the report figures are to be
+submitted at a fixed column width; `fig1`-`fig4` currently inherit the trim.
+
+---
+
 ## 2026-08-20 (third) — Figure restyled to the requested house style
 
 Presentation-only change to `replicate_concordance`; no number moved.

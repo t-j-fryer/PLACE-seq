@@ -15,6 +15,99 @@ Conventions:
 
 ---
 
+## 2026-08-20 (eighth) — Chimera detection back on in v5, scoped to the insert
+
+**Scientific change**, run as `runs/260608-RP05-RP08-v5b` (v5 plus chimeras;
+`runs/260608-RP05-RP08-v5` is kept as the no-chimera comparison).
+
+### Why it needed scoping rather than just switching on
+
+Positional k-mer profiling slides a window along a read and asks which
+references match it.  That question only carries information where the
+references differ.  In the full-length library 849 of ~1,200 bases are identical
+across all 684 references, so every window in a constant region matches
+everything and contributes nothing but noise to a signature.
+
+So detection runs on an insert-only view of the same run:
+
+* the inserts are sliced back out of the full-length references by the same span
+  the flanks define - no file is re-read, and the sequences are identical to the
+  insert FASTA by construction;
+* the region is bounded by the *inner* ends of the constant regions
+  (`Flanks.insert_anchors()`) instead of the primer sites.
+
+`insert_anchors()` rejects an anchor that recurs in the constant regions, since
+that could bound the wrong region - the same guard the primer anchors already
+had.
+
+Clones written this way are insert-scoped while their designed neighbours span
+the whole amplicon, which is a mixed convention inside one run.  Rather than
+leave it to be inferred from a length, each carries `region=insert` in its FASTA
+header and a `region` column in `clones.csv`.
+
+### It agrees with the insert-only run
+
+| | v4 (insert-only run) | v5b (full-length run, insert-scoped) |
+|---|---|---|
+| assembly-origin clones written, RP05+RP08 | 84 | 88 |
+| PCR-origin detected, not written | - | 72 |
+| same well + same parent pair | **83 of 84** | |
+| **same junction window** | **83 of 83** | |
+| byte-identical consensus | 64 of 83 | |
+
+Every call the two runs share agrees on *where the junction is*, which is the
+biological claim.  The 19 whose sequence differs do so because the contributing
+read set differs - v5b keeps reads carrying both primer sites, v4 kept reads
+carrying both insert motifs - and a different subset of a well's reads gives a
+consensus a few bases different.  Both are valid consensuses of the same clone.
+Median difference 5 nt; the largest, 48 nt, is a clone where the read sets
+diverge most.
+
+The 5 calls v5b makes that v4 did not all sit at 6-7 reads, right on
+`minimum_depth: 6`: the full-length anchors are present in 92% of reads against
+~85% for the insert motifs, so a few groups tip over the threshold.  The single
+v4-only call sits at 6 reads for the same reason in reverse.
+
+All 88 resolve to a culture plate, all are two-parent, and all are
+assembly-origin - both parents in the same block, so the same colony - which is
+the only kind that can be a real clone.  72 PCR-origin products were counted and
+not written, as before.
+
+### Cost
+
+17.4 min end to end against 14.3 without chimeras, so the stage costs 3.5 min -
+half of v4's 6.7, because only two barcodes are mapped here rather than eleven.
+
+### Lesson
+
+**A stage that depends on references being discriminative needs to be told which
+part of them is.** Switching chimera detection on unchanged would have run it
+over 1,200 bases of which 850 are shared, and it would not have crashed or
+warned - it would have produced worse signatures and fewer calls, and the config
+said nothing about why.  The scoped view is now explicit in the config comment
+and in the function's docstring, and `region=` on every clone says which
+convention produced it.
+
+I also guessed wrong once here: I expected the differing consensuses to be
+explained by the 6-base boundary convention between v4's reverse motif and v5b's
+insert anchor, and tested it - 1 of 19. The real cause was the read sets. Worth
+recording that the test took a minute and stopped a wrong sentence reaching the
+notebook.
+
+### Next steps
+
+1. **The 72 PCR-origin products are still only counted.** In a full-length run
+   their junctions could be localised across the whole amplicon rather than the
+   insert; whether that is worth a second, amplicon-scoped pass is an open
+   question.
+2. **v5 and v5b differ only by the chimera stage.** If disk matters, `v5` can go;
+   it is kept for now as the clean no-chimera comparison.
+3. Carried over: whether to regenerate the insert-level figures against v5b, and
+   whether to give RP06/RP07 a full-length config so replicate concordance covers
+   the whole amplicon.
+
+---
+
 ## 2026-08-20 (seventh) — v5: full-length consensus between the primer sites
 
 **Scientific change.** The consensus now spans the whole amplicon between the two

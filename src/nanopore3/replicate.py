@@ -46,9 +46,11 @@ CATEGORY_ORDER = (
     DEDICATED_ONLY,
 )
 
+# Segments are wells, so the labels say what was true of the well.  "Matched" on
+# its own read as a sequence match and invited exactly the confusion it caused.
 CATEGORY_LABELS = {
-    MATCHED_EXACT: "Matched, exact seq.",
-    MATCHED_DIFFERENT_SEQUENCE: "Matched, different seq.",
+    MATCHED_EXACT: "Same clone, identical seq.",
+    MATCHED_DIFFERENT_SEQUENCE: "Same clone, different seq.",
     DIFFERENT_DESIGN: "Different clone",
     POOL_ONLY: "Pooled barcode only",
     DEDICATED_ONLY: "Dedicated barcode only",

@@ -15,6 +15,37 @@ Conventions:
 
 ---
 
+## 2026-08-20 (second) — Figure labels name their unit
+
+Label-only change to `replicate_concordance`; no number moved.
+
+The two in-bar ratios count different things and the first draft did not say so,
+which was immediately confusing when read:
+
+- `82/82 wells, same clone` — **wells**, over the wells the dedicated barcode
+  saw. Tests demultiplexing, assignment and deconvolution: did the pool put the
+  same clone in the same well of the same culture plate.
+- `83/84 clones, identical seq.` — **clones**, over the clones both datasets
+  found. Tests consensus base-calling, and is a finer check applied inside the
+  matched set.
+
+The denominators differ because a polyclonal well holds more than one clone: on
+plate 1, 82 wells contain 84 comparable sequences (A09 holds two designs, F08 a
+design and a chimera); on plate 2, 93 wells contain 96 (A03, B01 and F05 each
+hold two designs). Well H04 sits in both rows at once - matched as a well,
+not identical as a sequence - which is only readable if the units are named.
+
+Legend labels changed with them: "Matched, exact seq." became "Same clone,
+identical seq." because segments are wells, and "matched" alone read as a
+sequence match.
+
+**Lesson: a ratio in a figure needs its unit in the label, not in the caption.**
+Two ratios stacked in one bar with different denominators and no unit named is a
+misreading waiting to happen, and the reader has no way to resolve it from the
+figure alone.
+
+---
+
 ## 2026-08-20 — Replicate concordance: two culture plates sequenced twice
 
 ### Why

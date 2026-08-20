@@ -161,10 +161,13 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
         axes.text(
             1.8,
             position,
-            f"{summary['wells_matched']}/{summary['wells_dedicated']} matched "
-            f"({100 * summary['matched_fraction']:.1f}%)\n"
-            f"{summary['clones_exact']}/{summary['clones_shared']} exact seq. "
-            f"({100 * summary['exact_fraction']:.1f}%)",
+            # Name the unit in the label.  The two rows count different things -
+            # wells for identity, clones for sequence - and the denominators
+            # differ because a polyclonal well holds more than one clone.
+            f"{summary['wells_matched']}/{summary['wells_dedicated']} wells, "
+            f"same clone ({100 * summary['matched_fraction']:.1f}%)\n"
+            f"{summary['clones_exact']}/{summary['clones_shared']} clones, "
+            f"identical seq. ({100 * summary['exact_fraction']:.1f}%)",
             va="center",
             ha="left",
             fontsize=6.5,

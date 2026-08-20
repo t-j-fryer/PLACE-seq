@@ -171,6 +171,35 @@ def flank_transforms(flanks: Mapping[str, Flanks]):
     }
 
 
+def insert_view(
+    references_by_library: Mapping[str, Mapping[str, str]],
+    flanks: Mapping[str, Flanks],
+) -> tuple[dict[str, dict[str, str]], dict[str, tuple[str, str]]]:
+    """Insert-only references and motifs, for analyses that need discrimination.
+
+    Positional profiling compares windows of a read against the reference set, so
+    it is only informative where the references differ.  With full-length
+    references, 849 of ~1,200 bases are shared by all of them and every window
+    there matches everything.  Slicing the insert back out - by the same span the
+    flanks define - restores the insert-only view without re-reading any file.
+    """
+
+    references: dict[str, dict[str, str]] = {}
+    motifs: dict[str, tuple[str, str]] = {}
+    for library_id, sequences in references_by_library.items():
+        flank = flanks.get(library_id)
+        if flank is None:
+            references[library_id] = dict(sequences)
+            continue
+        sliced: dict[str, str] = {}
+        for name, sequence in sequences.items():
+            start, end = flank.insert_span(len(sequence))
+            sliced[name] = sequence[start:end]
+        references[library_id] = sliced
+        motifs[library_id] = flank.insert_anchors()
+    return references, motifs
+
+
 def qc_regions(flank: Flanks, reference_length: int) -> dict[str, tuple[int, int]]:
     """Named spans for per-region accuracy in a full-length reference."""
 
@@ -790,8 +819,14 @@ def _detect_chimeras(
     references_by_library: Mapping[str, Mapping[str, str]],
     root: Path,
     plan: CompressedPcrPlan | None = None,
+    region_motifs: Mapping[str, tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Group reads by positional signature and write a consensus per clone."""
+    """Group reads by positional signature and write a consensus per clone.
+
+    ``references_by_library`` and ``region_motifs`` scope the work: a full-length
+    run passes the insert-only view, because a window of shared constant sequence
+    matches every reference and carries no signal about a junction.
+    """
 
     settings = config.chimera
     minimum_depth = settings.minimum_depth or config.consensus.minimum_depth
@@ -828,11 +863,16 @@ def _detect_chimeras(
         index = indexes[library]
         signatures = []
         inserts: dict[str, str] = {}
+        scoped = (region_motifs or {}).get(library)
+        left_motif, right_motif = scoped or (
+            reference_settings.forward_motif or config.library.forward_motif,
+            reference_settings.reverse_motif or config.library.reverse_motif,
+        )
         for read_id, sequence in reads:
             extraction = extract_insert(
                 sequence,
-                reference_settings.forward_motif or config.library.forward_motif,
-                reference_settings.reverse_motif or config.library.reverse_motif,
+                left_motif,
+                right_motif,
                 max_edits=(
                     config.library.motif_max_edits
                     if reference_settings.motif_max_edits is None
@@ -887,7 +927,7 @@ def _detect_chimeras(
                 f">{safe_name(plate)}_{normalized_well(well)}_chimera "
                 f"parents={'|'.join(group.signature)} origin={group.origin} "
                 f"reads={group.size} junction_window={group.junction_window} "
-                f"library={library}"
+                f"library={library} region={'insert' if scoped else 'amplicon'}"
             )
             wrapped = "\n".join(
                 result.sequence[i : i + 60] for i in range(0, len(result.sequence), 60)
@@ -913,6 +953,11 @@ def _detect_chimeras(
                 "plate_id": plate, "well_id": well, "reference_library_id": library,
                 "parents": " >> ".join(group.signature), "n_parents": len(group.signature),
                 "origin": group.origin, "reads": group.size,
+                # A full-length run detects chimeras on the insert, so the clone
+                # written here is insert-scoped while its designed neighbours span
+                # the whole amplicon. Say which, rather than leave it to be
+                # inferred from a length.
+                "region": "insert" if scoped else "amplicon",
                 "junction_window": group.junction_window,
                 "ambiguous_bases": result.ambiguous_bases,
                 "length": len(result.sequence),
@@ -1334,9 +1379,13 @@ def run_pipeline(
             resume=resume,
         ) as stage:
             if not stage.reused:
+                chimera_references, chimera_motifs = insert_view(
+                    references_by_library, flanks
+                )
                 summary = _detect_chimeras(
-                    config, demux_reads, references_by_library,
+                    config, demux_reads, chimera_references,
                     stage.output_path("clones"), compressed_plan,
+                    region_motifs=chimera_motifs,
                 )
                 atomic_write_json(stage.output_path("summary.json"), summary)
 

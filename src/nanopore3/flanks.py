@@ -83,6 +83,29 @@ class Flanks:
         start = len(self.inner_upstream)
         return start, full_length - len(self.inner_downstream)
 
+    def insert_anchors(self) -> tuple[str, str]:
+        """The motif pair that bounds the insert, for insert-scoped analyses.
+
+        Chimera detection profiles a read window by window against the reference
+        set, which only discriminates where the references differ.  In a
+        full-length library most of every reference is identical, so that work is
+        done on the insert alone: these are the inner ends of the constant
+        regions, the same boundaries an insert-only run would use.
+        """
+
+        length = len(self.left_anchor)
+        left = self.inner_upstream[-length:]
+        right = self.inner_downstream[:length]
+        if not left or not right:
+            raise FlankError(
+                "the constant regions are too short to yield insert anchors of "
+                f"{length} nt inside the primer anchors"
+            )
+        both = self.upstream + self.downstream
+        _require_unique_anchor(left, both, "insert 5'")
+        _require_unique_anchor(right, both, "insert 3'")
+        return left, right
+
     @property
     def constant_bases(self) -> int:
         """Constant bases added to every reference."""

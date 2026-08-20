@@ -117,11 +117,18 @@ qc:
   upstream_constant: ATGCAGCTT
   downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA
 
-# Positional k-mer chimera detection assumes the region is discriminative, and
-# 849 of ~1200 bases are now identical across every reference. Left off here; use
-# the v4 insert-level run for chimera calls.
+# Positional k-mer profiling only discriminates where the references differ, and
+# 849 of ~1200 bases are identical across all of them here. So chimera detection
+# runs on the insert alone: the insert-only references are sliced back out of the
+# full-length ones and the region is bounded by the inner ends of the constant
+# regions. Clones it writes are therefore insert-scoped, marked region=insert in
+# their FASTA header and in clones.csv, while their designed neighbours span the
+# whole amplicon.
 chimera:
-  enabled: false
+  enabled: true
+  window: 90
+  step: 45
+  write_pcr_origin: false
 
 compressed_pcr:
   enabled: true

@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from nanopore3 import pipeline
+from nanopore3.assignment import extract_insert
 from nanopore3.config import ConfigError, ReferenceSettings, load_config
 from nanopore3.flanks import from_sequences
 from nanopore3.references import read_fasta, read_reference_libraries
@@ -120,7 +121,7 @@ class RegionSpanTests(unittest.TestCase):
         covered = sorted(pipeline.qc_regions(flanks, len(reference)).values())
         self.assertEqual(covered[0][0], 0)
         self.assertEqual(covered[-1][1], len(reference))
-        for (_, end), (start, _) in zip(covered, covered[1:]):
+        for (_, end), (start, _) in zip(covered, covered[1:], strict=False):
             self.assertEqual(end, start)
 
     def test_the_insert_span_selects_the_insert(self) -> None:
@@ -193,3 +194,36 @@ class ShippedConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InsertViewTests(unittest.TestCase):
+    """Chimera detection needs the discriminative part, not the whole amplicon."""
+
+    def setUp(self) -> None:
+        self.flanks = from_sequences(UPSTREAM, DOWNSTREAM)
+        self.full = {
+            "lib": {name: self.flanks.flank(seq) for name, seq in INSERTS.items()}
+        }
+
+    def test_the_insert_is_sliced_back_out_of_a_full_length_reference(self) -> None:
+        references, _motifs = pipeline.insert_view(self.full, {"lib": self.flanks})
+        self.assertEqual(references["lib"], INSERTS)
+
+    def test_the_motifs_bound_the_insert_not_the_amplicon(self) -> None:
+        _references, motifs = pipeline.insert_view(self.full, {"lib": self.flanks})
+        left, right = motifs["lib"]
+        self.assertTrue(UPSTREAM.endswith(left))
+        self.assertTrue(DOWNSTREAM.startswith(right))
+        self.assertNotEqual(left, self.flanks.left_anchor)
+
+    def test_extracting_with_those_motifs_returns_the_insert(self) -> None:
+        _references, motifs = pipeline.insert_view(self.full, {"lib": self.flanks})
+        left, right = motifs["lib"]
+        read = "ACGT" + UPSTREAM + INSERTS["d1"] + DOWNSTREAM + "TGCA"
+        extraction = extract_insert(read, left, right, max_edits=3)
+        self.assertEqual(extraction.sequence, INSERTS["d1"])
+
+    def test_a_library_without_flanks_passes_through_untouched(self) -> None:
+        references, motifs = pipeline.insert_view({"plain": INSERTS}, {})
+        self.assertEqual(references["plain"], INSERTS)
+        self.assertEqual(motifs, {})

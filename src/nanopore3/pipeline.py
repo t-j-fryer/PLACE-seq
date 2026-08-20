@@ -6,7 +6,8 @@ from collections import Counter, defaultdict, deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
 import csv
-from dataclasses import asdict
+import logging
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import gzip
 import hashlib
@@ -57,11 +58,14 @@ from .provenance import (
 )
 from .fragments import FragmentLibrary
 from .qc import evaluate_consensus
-from .references import read_reference_libraries
+from .flanks import Flanks, from_sequences, from_template
+from .references import read_fasta, read_reference_libraries
 from .report import write_html_report
 from .runtime import doctor_report, plan_resources
 from .sequence import reverse_complement
 
+
+LOGGER = logging.getLogger(__name__)
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -70,6 +74,11 @@ U = TypeVar("U")
 # per-future overhead while keeping the tail of the run evenly balanced across
 # workers.  Demultiplexing is far cheaper per read and uses config.chunk_reads.
 _ASSIGNMENT_BATCH_READS = 32
+
+# Tail of the 3' constant region used to locate the terminal stop in a
+# full-length consensus. Long enough to be unique, short enough that a couple of
+# consensus errors cannot hide it.
+CODING_STOP_ANCHOR = 24
 
 
 class PipelineError(RuntimeError):
@@ -85,6 +94,96 @@ def _trimmed_barcodes(settings: BarcodeSettings) -> dict[str, str]:
     }
 
 
+def resolve_flanks(config: PipelineConfig) -> dict[str, Flanks]:
+    """Resolve the constant flanks declared by each reference library.
+
+    Explicit sequences are used as given.  A template is read and the insert it
+    contains is found, which needs the inserts themselves, so the insert FASTA is
+    parsed once plainly before it is parsed again flanked.  Parsing a thousand
+    short records twice costs nothing next to being unable to check the template.
+    """
+
+    resolved: dict[str, Flanks] = {}
+    for library_id, settings in config.reference_sets.items():
+        if not settings.full_length:
+            continue
+        if settings.flanks_template is not None:
+            inserts = [record.sequence for record in read_fasta(settings.fasta).records]
+            template = read_fasta(settings.flanks_template).records
+            if len(template) != 1:
+                raise PipelineError(
+                    f"reference library {library_id!r}: flanks.template must hold exactly "
+                    f"one example construct, found {len(template)}"
+                )
+            flanks, matched = from_template(
+                template[0].sequence,
+                inserts,
+                anchor_length=settings.flanks_anchor_length,
+            )
+            LOGGER.info(
+                "library %s: flanks derived from %s (matched a %d nt insert), "
+                "%d constant bases per reference",
+                library_id,
+                template[0].id,
+                len(matched),
+                flanks.constant_bases,
+            )
+        else:
+            flanks = from_sequences(
+                settings.flanks_upstream or "",
+                settings.flanks_downstream or "",
+                anchor_length=settings.flanks_anchor_length,
+            )
+        resolved[library_id] = flanks
+    return resolved
+
+
+def apply_flanks(config: PipelineConfig, flanks: Mapping[str, Flanks]) -> PipelineConfig:
+    """Return a config whose full-length libraries bound the whole amplicon.
+
+    The region a read is trimmed to is defined by the motif pair, so in
+    full-length mode the motifs become the primer anchors at the outer ends of
+    the constant regions.  An explicitly configured motif still wins, so an
+    unusual construct can override.
+    """
+
+    if not flanks:
+        return config
+    libraries = dict(config.reference_sets)
+    for library_id, flank in flanks.items():
+        settings = libraries[library_id]
+        libraries[library_id] = replace(
+            settings,
+            forward_motif=settings.forward_motif or flank.left_anchor,
+            reverse_motif=settings.reverse_motif or flank.right_anchor,
+        )
+    if config.references is not None:
+        return replace(config, references=libraries["default"])
+    return replace(config, reference_libraries=libraries)
+
+
+def flank_transforms(flanks: Mapping[str, Flanks]):
+    """Sequence transforms that join the constant regions onto each insert."""
+
+    return {
+        library_id: (lambda _identifier, sequence, flank=flank: flank.flank(sequence))
+        for library_id, flank in flanks.items()
+    }
+
+
+def qc_regions(flank: Flanks, reference_length: int) -> dict[str, tuple[int, int]]:
+    """Named spans for per-region accuracy in a full-length reference."""
+
+    start, end = flank.insert_span(reference_length)
+    spans: dict[str, tuple[int, int]] = {}
+    if start:
+        spans["flank_5p"] = (0, start)
+    spans["insert"] = (start, end)
+    if end < reference_length:
+        spans["flank_3p"] = (end, reference_length)
+    return spans
+
+
 def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[str, Any]:
     """Perform complete preflight without creating a run directory."""
 
@@ -97,11 +196,14 @@ def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[
     )
     if missing:
         raise PipelineError("missing input file(s): " + ", ".join(missing))
+    flanks = resolve_flanks(config)
+    config = apply_flanks(config, flanks)
     reference_collection = read_reference_libraries(
         {
             library_id: settings.fasta
             for library_id, settings in config.reference_sets.items()
-        }
+        },
+        transforms=flank_transforms(flanks),
     )
     if config.consensus.backend == "mafft_spoa":
         require_mafft_spoa()
@@ -865,7 +967,12 @@ def run_pipeline(
     """Execute the portable workflow into a new immutable run directory."""
 
     preflight = validate_inputs(config, scan_fastq=True)
+    # The digest covers the configuration as written, which is what a reader
+    # declared; the derived anchors and flank digests are recorded in the
+    # assignment stage manifest instead.
     config_digest = canonical_digest(config.as_dict())
+    flanks = resolve_flanks(config)
+    config = apply_flanks(config, flanks)
     if run_id is None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         run_id = f"{stamp}-{config_digest[:12]}"
@@ -1008,7 +1115,8 @@ def run_pipeline(
         {
             library_id: settings.fasta
             for library_id, settings in config.reference_sets.items()
-        }
+        },
+        transforms=flank_transforms(flanks),
     )
     references_by_library = {
         library_id: {record.id: record.sequence for record in bundle.records}
@@ -1289,20 +1397,34 @@ def run_pipeline(
                         continue
                     aliases = tuple(row["reference_ids"].split("|"))
                     library_id = row["reference_library_id"]
+                    reference_sequence = references_by_library[library_id][aliases[0]]
+                    upstream = (
+                        config.reference_sets[library_id].qc_upstream_constant
+                        or config.qc.upstream_constant
+                    )
+                    downstream = (
+                        config.reference_sets[library_id].qc_downstream_constant
+                        or config.qc.downstream_constant
+                    )
+                    flank = flanks.get(library_id)
                     result = evaluate_consensus(
                         sequence,
-                        references_by_library[library_id][aliases[0]],
+                        reference_sequence,
                         min_identity=config.qc.minimum_identity,
                         min_query_coverage=config.qc.minimum_query_coverage,
                         min_reference_coverage=config.qc.minimum_reference_coverage,
                         length_tolerance=config.qc.length_tolerance,
-                        upstream_constant=(
-                            config.reference_sets[library_id].qc_upstream_constant
-                            or config.qc.upstream_constant
+                        # Full-length consensus: the ORF is inside it, so locate
+                        # it rather than assembling constants around it.
+                        upstream_constant=None if flank else upstream,
+                        downstream_constant=None if flank else downstream,
+                        coding_anchors=(
+                            (upstream, downstream[-CODING_STOP_ANCHOR:])
+                            if flank and upstream and downstream
+                            else None
                         ),
-                        downstream_constant=(
-                            config.reference_sets[library_id].qc_downstream_constant
-                            or config.qc.downstream_constant
+                        spans=(
+                            qc_regions(flank, len(reference_sequence)) if flank else None
                         ),
                     )
                     qc_rows.append(
@@ -1330,6 +1452,18 @@ def run_pipeline(
                 "protein_length",
                 "internal_stop_codon",
             ]
+            # Full-length references report accuracy per region as well as over
+            # the whole amplicon; the columns exist only when a library declares
+            # flanks, so an insert-mode run keeps exactly its old schema.
+            for region in ("flank_5p", "insert", "flank_3p"):
+                if any(f"{region}_identity" in row for row in qc_rows):
+                    fields.extend(
+                        [
+                            f"{region}_length",
+                            f"{region}_edit_distance",
+                            f"{region}_identity",
+                        ]
+                    )
             # Chimeric clones are sequences that are present in the well, so
             # they are graded and exported like any other consensus. They are
             # scored against the spliced parent scaffold, which is the thing a

@@ -183,6 +183,24 @@ class ReferenceSettings:
     motif_max_edits: int | None = None
     qc_upstream_constant: str | None = None
     qc_downstream_constant: str | None = None
+    # Full-length mode.  An oligo-pool tool emits only the variable insert, but
+    # the sequenced molecule is the whole amplicon, so the constant regions are
+    # joined on at load and the reconstructed region is bounded by the primer
+    # sites at their outer ends.  Give the two constant regions directly, or give
+    # one example construct - a binder already in the vector - and let them be
+    # derived from it.
+    flanks_upstream: str | None = None
+    flanks_downstream: str | None = None
+    flanks_template: Path | None = None
+    flanks_anchor_length: int = 20
+
+    @property
+    def full_length(self) -> bool:
+        """Whether references are flanked into whole amplicons."""
+
+        return bool(
+            (self.flanks_upstream and self.flanks_downstream) or self.flanks_template
+        )
 
     def __post_init__(self) -> None:
         if not self.fasta:
@@ -229,6 +247,23 @@ class ReferenceSettings:
             )
         if self.motif_max_edits is not None and self.motif_max_edits < 0:
             raise ConfigError("references.motif_max_edits must be >= 0")
+        for name in ("flanks_upstream", "flanks_downstream"):
+            value = getattr(self, name)
+            if value is not None:
+                _dna(value, f"references.{name}")
+        explicit = (self.flanks_upstream is not None, self.flanks_downstream is not None)
+        if any(explicit) and not all(explicit):
+            raise ConfigError(
+                "references.flanks.upstream and references.flanks.downstream must be "
+                "supplied together, or use references.flanks.template instead"
+            )
+        if all(explicit) and self.flanks_template is not None:
+            raise ConfigError(
+                "references.flanks accepts either upstream/downstream or template, "
+                "not both; two definitions of the same constant regions can disagree"
+            )
+        if self.flanks_anchor_length < 8:
+            raise ConfigError("references.flanks.anchor_length must be >= 8")
         if self.rescue_policy not in ("none", "kmer", "all"):
             raise ConfigError(
                 "references.rescue_policy must be 'none', 'kmer', or 'all'"
@@ -747,8 +782,31 @@ def _parse_references(
         "motif_max_edits",
         "qc_upstream_constant",
         "qc_downstream_constant",
+        "flanks",
     }
     _reject_unknown(mapping, allowed, location)
+    flanks_value = mapping.get("flanks")
+    flanks_fields: dict[str, Any] = {}
+    if flanks_value is not None:
+        flanks_mapping = _mapping(flanks_value, f"{location}.flanks")
+        _reject_unknown(
+            flanks_mapping,
+            {"upstream", "downstream", "template", "anchor_length"},
+            f"{location}.flanks",
+        )
+        for key in ("upstream", "downstream"):
+            raw = flanks_mapping.get(key)
+            flanks_fields[f"flanks_{key}"] = (
+                None if raw is None else _dna(raw, f"{location}.flanks.{key}")
+            )
+        template = flanks_mapping.get("template")
+        flanks_fields["flanks_template"] = (
+            None if template is None else _path(template, base_dir, f"{location}.flanks.template")
+        )
+        if flanks_mapping.get("anchor_length") is not None:
+            flanks_fields["flanks_anchor_length"] = _positive_int(
+                flanks_mapping["anchor_length"], f"{location}.flanks.anchor_length", minimum=8
+            )
     fasta_value = _required(mapping, "fasta", location)
     if isinstance(fasta_value, str):
         fasta_items = [fasta_value]
@@ -780,6 +838,7 @@ def _parse_references(
         )
     }
     return ReferenceSettings(
+        **flanks_fields,
         **optional_dna,
         motif_max_edits=(
             None

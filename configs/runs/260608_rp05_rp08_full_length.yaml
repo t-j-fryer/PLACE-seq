@@ -1,0 +1,188 @@
+schema_version: 1
+run_name: 260608-RP05-RP08-full-length
+output_root: ../../runs
+
+# v5. The consensus now spans the whole amplicon between the two nanopore primer
+# binding sites, and is compared against full-length references: each insert from
+# the oligo-pool tool joined to the constant regions either side. Roughly 850
+# constant bases per read were sequenced and discarded in v4; here they are
+# reconstructed and scored, with accuracy reported per region so an error in a
+# designed insert is never averaged together with one in the vector.
+#
+# Only RP05 (SUMO A+B) and RP08 (LAB stuffer) are mapped: the other barcodes
+# carry other constructs whose constant regions differ.
+
+inputs:
+  - path: /Volumes/TJAF/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
+    sample_id: AI_DBTL
+
+# flanks.upstream/downstream turn the insert-only FASTA into whole amplicons. The
+# primer sites at their outer ends become the region boundaries, so no motif has
+# to be restated. Alternatively give flanks.template: one example construct, and
+# the constant regions are derived from whichever insert it contains.
+reference_libraries:
+  sumo_ab:
+    fasta: ../../runs/refs_260608/sumo_ab.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+    flanks:
+      upstream: CATAATCCGCACGCATCTGGTCGATCCCGCGAAATTAATACGACTCACTATAGGGAGAGGAATTGTGAGCGGATAACAATTCCCCTCTAGAAATAATTTTGTTTAACTTTAAGAAGGAGAGCAGCTATGCAGCTT
+      downstream: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAATGACTCGAGTCTGGTAAAGAAACCGCTGCTGCGAAATTTGAACGCCAGCACATGGACTCGTCTACTAGCGCAGCTTAATTAACCTAGGCTGCTGCCACCGCTGAGCAATAACTAGCATAACCCCTTGGGGCCTCTAAACGGGTCTTGAGGGGTTTTTTGCTGAAAGGAGGAACTATATCCGGATTGGCGAATGGGACGC
+      anchor_length: 20
+  lab:
+    fasta: ../../runs/refs_260608/lab.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+    flanks:
+      upstream: CATAATCCGCACGCATCTGGTCGATCCCGCGAAATTAATACGACTCACTATAGGGAGAGGAATTGTGAGCGGATAACAATTCCCCTCTAGAAATAATTTTGTTTAACTTTAAGAAGGAGAGCAGCTATGCAGCTT
+      downstream: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAATGACTCGAGTCTGGTAAAGAAACCGCTGCTGCGAAATTTGAACGCCAGCACATGGACTCGTCTACTAGCGCAGCTTAATTAACCTAGGCTGCTGCCACCGCTGAGCAATAACTAGCATAACCCCTTGGGGCCTCTAAACGGGTCTTGAGGGGTTTTTTGCTGAAAGGAGGAACTATATCCGGATTGGCGAATGGGACGC
+      anchor_length: 20
+
+plate_reference_map:
+  RP05: sumo_ab
+  RP08: lab
+
+library:
+  name: rp-amplicon-full-length
+  # Unused for these libraries: the per-library primer anchors derived from the
+  # flanks take precedence. Kept so the config is valid on its own.
+  forward_motif: CATAATCCGCACGCATCTGG
+  reverse_motif: CGGATTGGCGAATGGGACGC
+  motif_max_edits: 3
+  # Same read population as v4 so yield is comparable; a read that cannot span
+  # both primer sites is dropped by the anchor search, not by a length guess.
+  minimum_read_length: 500
+  maximum_read_length: 3000
+  minimum_mean_quality: 10
+  allow_empty_reads: true
+
+barcodes:
+  plate:
+    registry_csv: ../barcodes/reverse_primer_families.csv
+    family_id: rp_amplicon
+    trim_bases: 12
+    max_edits: 6
+    search_window: 400
+    search_ends: [head, tail]
+    allow_reverse_complement: true
+    minimum_margin: 0
+    decision_policy: legacy_unique_threshold
+  well:
+    registry_csv: ../barcodes/well_forward_primers_a1_h12.csv
+    family_id: well_forward_full
+    trim_bases: 12
+    max_edits: 7
+    search_window: 400
+    search_ends: [head]
+    allow_reverse_complement: false
+    minimum_margin: 0
+    decision_policy: legacy_unique_best
+
+parallel:
+  backend: process
+  jobs: 8
+  threads_per_job: 1
+  chunk_reads: 1000
+
+random_seed: 141142
+
+consensus:
+  backend: portable
+  minimum_depth: 6
+  maximum_reads: 30
+  minimum_support: 0.60
+
+qc:
+  minimum_identity: 0.98
+  minimum_query_coverage: 0.95
+  minimum_reference_coverage: 0.95
+  # Over ~1.2 kb rather than ~350 nt, so a few indels anywhere in the amplicon
+  # now count against the same budget.
+  length_tolerance: 10
+  # In full-length mode these locate the ORF inside the consensus rather than
+  # being assembled around it: upstream_constant must begin at the start codon,
+  # and the tail of downstream_constant ends at the terminal stop.
+  upstream_constant: ATGCAGCTT
+  downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA
+
+# Positional k-mer chimera detection assumes the region is discriminative, and
+# 849 of ~1200 bases are now identical across every reference. Left off here; use
+# the v4 insert-level run for chimera calls.
+chimera:
+  enabled: false
+
+compressed_pcr:
+  enabled: true
+  block_pattern: "^((?:[AB]_)?Block_\\d+)_"
+  pcr_plates:
+    RP05: [SUMO_A_P1, SUMO_A_P2, SUMO_A_P3, SUMO_A_P4, SUMO_A_P5, SUMO_A_P6, SUMO_A_P7, SUMO_A_P8, SUMO_A_P9, SUMO_A_P10, SUMO_A_P11, SUMO_B_P1, SUMO_B_P2, SUMO_B_P3, SUMO_B_P4, SUMO_B_P5, SUMO_B_P6, SUMO_B_P7, SUMO_B_P8, SUMO_B_P9, SUMO_B_P10, SUMO_B_P11]
+    RP08: [LAB_P1, LAB_P2, LAB_P3, LAB_P4, LAB_P5, LAB_P6, LAB_P7, LAB_P8, LAB_P9, LAB_P10, LAB_P11]
+  clonality:
+    RP05: unspecified
+    RP08: unspecified
+  blocks:
+    sumo_ab:
+      "A_Block_1": [SUMO_A_P1]
+      "A_Block_2": [SUMO_A_P2]
+      "A_Block_3": [SUMO_A_P3]
+      "A_Block_4": [SUMO_A_P4]
+      "A_Block_5": [SUMO_A_P5]
+      "A_Block_6": [SUMO_A_P6]
+      "A_Block_8": [SUMO_A_P6]
+      "A_Block_18": [SUMO_A_P6]
+      "A_Block_9": [SUMO_A_P7]
+      "A_Block_10": [SUMO_A_P7]
+      "A_Block_11": [SUMO_A_P8]
+      "A_Block_12": [SUMO_A_P8]
+      "A_Block_13": [SUMO_A_P9]
+      "A_Block_14": [SUMO_A_P9]
+      "A_Block_15": [SUMO_A_P10]
+      "A_Block_16": [SUMO_A_P10]
+      "A_Block_17": [SUMO_A_P11]
+      "A_Block_7": [SUMO_A_P11]
+      "B_Block_1": [SUMO_B_P1]
+      "B_Block_2": [SUMO_B_P2]
+      "B_Block_3": [SUMO_B_P3]
+      "B_Block_4": [SUMO_B_P4]
+      "B_Block_5": [SUMO_B_P5]
+      "B_Block_6": [SUMO_B_P6]
+      "B_Block_8": [SUMO_B_P6]
+      "B_Block_18": [SUMO_B_P6]
+      "B_Block_9": [SUMO_B_P7]
+      "B_Block_10": [SUMO_B_P7]
+      "B_Block_11": [SUMO_B_P8]
+      "B_Block_12": [SUMO_B_P8]
+      "B_Block_13": [SUMO_B_P9]
+      "B_Block_14": [SUMO_B_P9]
+      "B_Block_15": [SUMO_B_P10]
+      "B_Block_16": [SUMO_B_P10]
+      "B_Block_17": [SUMO_B_P11]
+      "B_Block_7": [SUMO_B_P11]
+    lab:
+      "Block_1": [LAB_P1]
+      "Block_9": [LAB_P1]
+      "Block_2": [LAB_P2]
+      "Block_3": [LAB_P3]
+      "Block_4": [LAB_P4]
+      "Block_5": [LAB_P5]
+      "Block_6": [LAB_P6]
+      "Block_7": [LAB_P7]
+      "Block_8": [LAB_P8]
+      "Block_10": [LAB_P9]
+      "Block_11": [LAB_P9]
+      "Block_12": [LAB_P10]
+      "Block_13": [LAB_P10]
+      "Block_14": [LAB_P11]
+      "Block_15": [LAB_P11]

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .io import open_text_auto
 from .provenance import canonical_digest, sha256_bytes, sha256_file
@@ -198,12 +198,22 @@ def _records_from_path(path: Path) -> list[ReferenceRecord]:
     return records
 
 
-def read_fasta(paths: str | Path | Iterable[str | Path]) -> ReferenceBundle:
+def read_fasta(
+    paths: str | Path | Iterable[str | Path],
+    *,
+    transform: Callable[[str, str], str] | None = None,
+) -> ReferenceBundle:
     """Read one or more plain/gzip FASTAs into a validated reference bundle.
 
     Identifiers must be globally unique across all inputs.  Exact duplicate
     sequences are preserved but exposed as alias groups, preventing arbitrary
     assignment to one of several experimentally indistinguishable names.
+
+    ``transform`` rewrites each sequence, given its ID, as it is read - used to
+    join constant flanks onto insert-only references.  It runs before alias
+    detection and digesting, so the bundle describes the sequences that are
+    actually searched rather than the file on disk.  Flanking cannot merge two
+    distinct inserts or split two identical ones, so alias groups are unaffected.
     """
 
     source_paths = _coerce_paths(paths)
@@ -213,6 +223,13 @@ def read_fasta(paths: str | Path | Iterable[str | Path]) -> ReferenceBundle:
     for path in source_paths:
         source_digests.append((str(path), sha256_file(path)))
         for record in _records_from_path(path):
+            if transform is not None:
+                sequence = transform(record.id, record.sequence)
+                record = replace(
+                    record,
+                    sequence=sequence,
+                    sequence_sha256=sha256_bytes(sequence.encode("ascii")),
+                )
             # "|" joins alias groups in every downstream table, and those tables
             # are split back on it. A reference whose own ID contains "|" would
             # survive assignment and only fail when the group was re-parsed, so
@@ -265,6 +282,8 @@ def read_fasta(paths: str | Path | Iterable[str | Path]) -> ReferenceBundle:
 
 def read_reference_libraries(
     libraries: Mapping[str, str | Path | Iterable[str | Path]],
+    *,
+    transforms: Mapping[str, Callable[[str, str], str]] | None = None,
 ) -> ReferenceLibraryCollection:
     """Read named reference libraries without merging their namespaces.
 
@@ -289,7 +308,15 @@ def read_reference_libraries(
             raise FastaFormatError(
                 f"Reference library identifier {raw_library_id!r} has surrounding whitespace"
             )
-        bundles.append((library_id, read_fasta(libraries[raw_library_id])))
+        bundles.append(
+            (
+                library_id,
+                read_fasta(
+                    libraries[raw_library_id],
+                    transform=(transforms or {}).get(library_id),
+                ),
+            )
+        )
     collection_digest = canonical_digest(
         {
             "schema_version": 1,

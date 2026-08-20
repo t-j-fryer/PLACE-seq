@@ -28,6 +28,23 @@ def load_rows(run_dir: Path) -> list[dict[str, str]]:
         return [row for row in csv.DictReader(handle) if row.get("insert_identity")]
 
 
+def grade_of(run_dir: Path) -> dict[str, str]:
+    """Consensus id to the pipeline's own quality grade.
+
+    Pooling every consensus into one accuracy number lets a handful of wrecked
+    molecules dominate it: this run recovered 188 clones the insert-only run
+    never assembled, averaging 57% insert identity, which dragged the pooled
+    insert figure from 99.8% to 97.3%.  Reporting by grade keeps that visible
+    instead of hiding it in a mean.
+    """
+
+    path = run_dir / "stages" / "05_qc" / "consensus_by_plate" / "index.csv"
+    if not path.is_file():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        return {row["consensus_id"]: row["grade"] for row in csv.DictReader(handle)}
+
+
 def library_of(run_dir: Path) -> dict[str, str]:
     """Consensus id to plate, so the two libraries can be reported apart."""
 
@@ -90,6 +107,17 @@ def main() -> int:
     report = {"all": summarise(rows)}
     for plate, subset in sorted(by_plate.items()):
         report[plate] = summarise(subset)
+    grades = grade_of(args.run_dir)
+    usable = [row for row in rows if grades.get(row["consensus_id"]) in ("perfect", "screenable")]
+    if usable:
+        report["grade:perfect_or_screenable"] = summarise(usable)
+    other = [
+        row
+        for row in rows
+        if grades.get(row["consensus_id"]) not in ("perfect", "screenable")
+    ]
+    if other:
+        report["grade:other"] = summarise(other)
 
     for scope, values in report.items():
         print(f"\n=== {scope} ({values['consensuses']:,} consensuses) ===")

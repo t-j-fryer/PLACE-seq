@@ -15,6 +15,163 @@ Conventions:
 
 ---
 
+## 2026-08-20 (seventh) — v5: full-length consensus between the primer sites
+
+**Scientific change.** The consensus now spans the whole amplicon between the two
+nanopore primer binding sites and is scored against full-length references, built
+by joining each insert from the oligo-pool tool to the constant regions either
+side. v4 reconstructed ~350 nt of insert and discarded ~850 sequenced bases per
+read; those bases are now reconstructed, and accuracy is reported per region.
+
+Run: `runs/260608-RP05-RP08-v5`, config
+`configs/runs/260608_rp05_rp08_full_length.yaml`, RP05 (SUMO A+B) and RP08 (LAB
+stuffer) only - the other barcodes carry constructs whose constant regions
+differ.
+
+### How it is configured
+
+```yaml
+reference_libraries:
+  sumo_ab:
+    fasta: ../../runs/refs_260608/sumo_ab.fasta   # inserts, as the oPool tool emits
+    flanks:
+      upstream: cATAATCCGCACGCATCTGG...GCAGCTATGCAGCTT
+      downstream: agtGGaTCC...ggattggcgaatgggacgc
+      anchor_length: 20
+```
+
+or, for the friendlier route the user asked for, one example construct instead of
+two pasted strings:
+
+```yaml
+    flanks:
+      template: ../../runs/refs_260608/example_construct.fasta
+```
+
+from which the constant regions are derived by finding whichever insert the
+example contains. Nothing else changes: the primer sites at the outer ends of the
+constant regions become the region boundaries automatically, so no motif has to
+be restated, and an explicit motif still wins if a construct needs one.
+
+Given flanks are 135 nt (5') and 754 nt (3'), the anchors take 20 nt from each
+end, so 849 constant bases are added to every reference and full-length
+references run 1,038-1,299 nt against inserts of 177-450 nt.
+
+### Checked before trusting it
+
+- **The reads reach both primer sites.** 91.7% of RP05 and 92.8% of RP08 reads
+  contain both anchors within 3 edits, median anchored span 1,227 nt against an
+  expected 1,240 for a 351 nt insert.
+- **The flanks are the right ones.** Raw read identity to the full-length
+  references is 97.6% median - a wrong constant region would have collapsed this.
+- **The built reference is what the pipeline extracts.** A round-trip test builds
+  a synthetic read, runs `extract_insert` with the derived anchors and asserts the
+  result equals the built reference, so the "inner flanks" convention cannot
+  silently drift.
+- **The ORF spine is whole codons.** 9 nt upstream of the insert plus 555 nt to
+  the terminal stop = 564, divisible by 3, so frame reduces to the insert's own
+  length as it did in insert mode.
+
+### Result: QC-passing clones are now verified across the whole amplicon
+
+2,931 of 3,284 consensuses (89%) grade `perfect` or `screenable`. For those:
+
+| region | length | mean identity | exact | errors/kb |
+|---|---|---|---|---|
+| 5' constant | 115 nt | 99.998% | 99.8% | 0.02 |
+| insert | 315 nt | 99.991% | 97.4% | 0.09 |
+| 3' constant | 734 nt | 99.999% | 99.2% | 0.01 |
+| whole amplicon | ~1.2 kb | **99.996%** | **96.4%** | - |
+
+**96.4% of passing clones are now confirmed base-perfect across the entire 1.2 kb
+amplicon, not just the insert.** That is the claim v4 could not make at all. Of
+the insert-perfect clones, only 1.09% differ from the reference anywhere in the
+constant region, which answers the open question from earlier today: mutations
+hiding in LgBit are rare, and now they are measured rather than assumed.
+
+The 353 clones that fail QC put their damage almost entirely in the insert:
+
+| region | mean identity | errors/kb |
+|---|---|---|
+| 5' constant | 98.993% | 10.1 |
+| insert | 75.110% | 257.6 |
+| 3' constant | 99.180% | 8.2 |
+
+25x the error rate in the synthesised insert against the clonal vector in the
+same molecules. The vector is an internal control in every read: it says the
+consensus procedure itself is near-perfect, so insert differences are real
+synthesis and assembly errors rather than sequencing artefacts. That control did
+not exist when only the insert was reconstructed.
+
+### Full-length mode does not degrade the insert, and finds more clones
+
+| | clones | insert mean identity | insert exact |
+|---|---|---|---|
+| called by both v4 and v5 | 3,096 | v5 **99.755%** / v4 **99.759%** | 93.6% both |
+| v5 only | 188 | 57.150% | 4.8% |
+| v4 only | 14 | 88.149% | 0.0% |
+
+On every clone both runs call, the two agree to 0.004 points and 97.2% of inserts
+are byte-identical (v5 has *fewer* ambiguous bases: 157 against 271). v5 finds
+188 clones v4 never assembled, because the primer anchors are present in 92% of
+reads where both insert motifs were present in ~85%. Those extra clones are
+wrecked molecules - 57% insert identity, 4.8% exact - which is useful data about
+what is in the wells, but they are not a like-for-like accuracy population.
+
+**The mistake I made, recorded because it is the easy one to make here.** My
+first summary pooled all 3,284 consensuses and reported the insert at 97.3% mean
+identity and 29 errors/kb, which read as though full-length mode had made the
+insert three times worse. It had not: 188 wrecked clones out of 3,284 moved the
+pooled mean by 2.4 points. I only caught it by asking why two numbers over the
+same clones disagreed, and confirming per clone that they did not.
+`summarise_regions.py` now reports by grade so the split is visible rather than
+averaged away. **A mean over a population that changed is not a comparison.**
+
+### Performance
+
+14.3 min end to end against v4's 20.2, on the same 2.55 M reads. Assignment cost
+3.1 min against 2.8 despite references 3.5x longer, because the
+specificity-weighted k-mer prefilter is unaffected: constant-region k-mers are
+owned by all 684 references and weighted 1/684, so the insert k-mers still decide
+the shortlist. Consensus 0.9 min against 0.6. v5 has no chimera stage, which is
+where v4 spent 6.7 min.
+
+`chimera.enabled: false` in this config on purpose: positional k-mer profiling
+assumes the region discriminates between references, and 849 of ~1,200 bases are
+now identical across every reference. Use the v4 insert-level run for chimera
+calls.
+
+### Added
+
+- `src/nanopore3/flanks.py`, `configs/runs/260608_rp05_rp08_full_length.yaml`,
+  `scripts/summarise_regions.py`
+- `references.read_fasta` takes a sequence transform, so flanking happens before
+  alias detection and digesting: the reference digest describes what is searched,
+  not the file on disk. Flanking cannot merge two distinct inserts or split two
+  identical ones, and there is a test for each.
+- `qc.region_metrics` and `qc.coding_checks_in_consensus`; the QC table gains
+  `{flank_5p,insert,flank_3p}_{length,edit_distance,identity}` columns, present
+  only when a library declares flanks, so an insert-mode run keeps its schema.
+- 32 tests across `tests/test_flanks.py`, `tests/test_qc_full_length.py` and
+  `tests/test_full_length_wiring.py`; 241 pass.
+
+### Next steps
+
+1. **The insert-level figures from earlier today are still v4's.** The platform
+   comparison, the replicate concordance and the culture-plate figures all read
+   the v4 run. Decide whether they should be regenerated against v5 - the
+   deconvolution and demultiplexing are unchanged, so only the accuracy panels
+   would move.
+2. **353 QC-failing clones with 258 errors/kb in the insert** are worth a look
+   as a set: how many are truncations, how many chimeras, how many point
+   mutations. The v4 chimera stage covers some of this; a full-length view would
+   localise junctions much better than an insert-only one.
+3. **RP01-RP04 and RP06, RP07, RP09-RP11 have no full-length config.** RP06 and
+   RP07 share this construct and would extend the replicate concordance to the
+   whole amplicon; the others need their own constant regions.
+
+---
+
 ## 2026-08-20 (sixth) — Allocated wells set the depth; outcome populations replace mean accuracy
 
 Three changes to the platform comparison, requested after reading the first

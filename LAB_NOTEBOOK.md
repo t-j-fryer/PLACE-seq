@@ -15,6 +15,153 @@ Conventions:
 
 ---
 
+## 2026-08-20 — Replicate concordance: two culture plates sequenced twice
+
+### Why
+
+Two SUMO A culture plates were sequenced twice in the 260608 run: once on their
+own barcodes (RP06, RP07) and once inside the compressed RP05 pool, where 22
+culture plates share every well. That is an independent measurement of the same
+physical wells, so the agreement between them tests demultiplexing, assignment,
+consensus and compressed-PCR deconvolution against data rather than against the
+pipeline's own summaries. An equivalent figure exists from the legacy analysis,
+so this also compares the two pipelines on the same question.
+
+**This is an analysis, not a pipeline change.** No stage, threshold or default
+was touched, so no result in `runs/260608-AI-DBTL-v4/stages/` changes.
+
+### The pairing was tested, not assumed
+
+The user's recollection was that RP06 and RP07 correspond to SUMO A plates 1 and
+2. That is an experimental claim, so `replicate.verify_pairing` checks it from the
+data: every design carries a block name, and the run's own
+`compressed_pcr.blocks` map says which culture plate that block came from.
+
+| barcode | blocks seen | culture plate implied |
+|---|---|---|
+| RP06 | `A_Block_1` only, 83/83 clones | SUMO_A_P1 |
+| RP07 | `A_Block_2` only, 95/95 clones | SUMO_A_P2 |
+
+Unanimous, with nothing unresolved. `compare_replicate_plates.py` refuses to plot
+an unconfirmed pairing unless `--allow-unconfirmed-pairing` is passed, so a
+mistaken pairing fails loudly instead of producing a plausible figure.
+
+### What was added
+
+- `src/nanopore3/replicate.py` — comparison logic, no plotting: `load_calls`,
+  `compare_wells`, `summarise`, `verify_pairing`. Chimeras participate, keyed by
+  their parent signature, because a chimera is real sequence in a real well.
+- `scripts/compare_replicate_plates.py` — CLI and figure.
+- `tests/test_replicate.py` — 13 tests. 164 pass overall.
+
+Reproduce with:
+
+```
+python scripts/compare_replicate_plates.py \
+    --run-dir runs/260608-AI-DBTL-v4 \
+    --pair RP06=RP05/SUMO_A_P1 \
+    --pair RP07=RP05/SUMO_A_P2
+```
+
+Outputs into `runs/260608-AI-DBTL-v4/figures/`: `replicate_concordance.pdf/.png`,
+`replicate_concordance_wells.csv` (one row per well), `replicate_concordance.json`
+(summary plus the pairing check).
+
+### Result
+
+| | RP06 / SUMO_A_P1 | RP07 / SUMO_A_P2 |
+|---|---|---|
+| dedicated wells matched | 82/82 (100%) | 93/93 (100%) |
+| shared clones byte-identical | 83/84 (98.8%) | 96/96 (100%) |
+| wells recovered only from the pool | 12 | 1 |
+| wells recovered only from the dedicated barcode | 0 | 0 |
+| clones called as different designs | 0 | 0 |
+| chimeric clones matched | 1 | 1 |
+
+Every well the dedicated barcode saw was also recovered from the pool, assigned
+to the right culture plate, with the same clone. Legacy reported 82/83 and 93/95
+matched on the same plates with one well not called and one pool-only; the new
+analysis has no unmatched wells.
+
+**Definitions.** The bar spans every well with a sequenced clone in *either*
+dataset, so a well only the pool recovered widens the bar instead of vanishing.
+The matched fraction is over wells the *dedicated* barcode saw — a pool-only well
+is extra yield, not a disagreement, and putting it in the denominator would have
+reported plate 1 as 87% concordant when nothing disagreed.
+
+### Two findings
+
+**1. Row G of RP06 failed at the bench, and the pool rescued it.** All 12
+pool-only wells on plate 1 are G01-G12. Reads per row on RP06:
+
+| row | A | B | C | D | E | F | **G** | H |
+|---|---|---|---|---|---|---|---|---|
+| reads | 4,898 | 3,609 | 3,283 | 3,506 | 3,329 | 3,524 | **37** | 3,152 |
+
+37 reads against ~3,000-4,900 elsewhere, and RP07's row G is normal at 2,947, so
+this is that plate's colony PCR or pooling, not the pipeline. The compressed pool
+recovered all 12 clones. This is an argument *for* compressed PCR: the redundant
+route covered a row the dedicated route lost.
+
+**2. The single non-identical clone is one ambiguity code, not a disagreement.**
+Well H04, design `A_Block_1_dTF085_88_0`, 30 reads each side, 240 bases, one
+position differs: `N` on RP06 against `G` on RP05. RP06 called that well
+`mixed_variants` (polyclonal) while the pooled reads reached the 0.60 support
+threshold for G. No base is called differently anywhere in 180 shared clones.
+
+### How strong is this evidence
+
+The consensus is reference-guided, so two runs of a clone that matches its design
+will both return the design sequence, and 171 of the 179 exactly-agreeing
+designed clones are graded `perfect`. The informative cases are the 8 that are
+not: 3 `screenable`, 2 `premature_stop`, 1 `frameshift` and both chimeras agreed
+byte-for-byte from independent read sets. Deviations from the design reproduce,
+which they would not if consensus were smoothing reads toward the reference.
+
+The claim this supports strongly is that demultiplexing, assignment and
+deconvolution are right. The claim it supports weakly is per-base accuracy,
+since most clones are perfect matches where agreement is close to trivial.
+
+### Figure
+
+`figures/replicate_concordance.pdf`, 89 mm single column, print style from
+`figures.use_print_style`.
+
+The palette needed changing rather than copying. The source figure separates
+"matched, different seq." (pale teal) from "not called" (pale grey), and
+
+```
+scripts/validate_palette.py "#2E6F6A,#93C4BD,#B4462F,#D9A441,#DCE3E7" --pairs all
+```
+
+puts that pair at dE 13.6, below the 15.0 normal-vision floor — those two thin
+slivers genuinely are hard to tell apart, which matters when a sliver is the
+entire finding. The chosen set `#2E6F6A, #6FA9A0, #A8442E, #E0A33A` (plus the
+neutral `#EEF1F3`) reaches worst normal-vision dE 17.8 and worst CVD dE 9.5,
+above the 8.0 target. The validator's per-colour chroma and contrast checks are
+relaxed here on purpose: these are large area fills carrying a legend and white
+in-bar text, not thin line series, and neutrals are already exempt by the
+convention in `figures.py`.
+
+Legend labels are clearer than the source's rather than verbatim: "Pooled
+barcode only" for what legacy called "Polyclonal Seq only", and "Dedicated
+barcode only" for "Not called", both of which are ambiguous out of context. Say
+so if the verbatim wording is needed for a direct comparison.
+
+### Next steps
+
+1. **RP08 has no dedicated replicate**, so the 11 LAB culture plates have no
+   equivalent check. If any LAB plate was sequenced separately, add it as a
+   `--pair` — the script takes any number.
+2. **Ask at the bench what happened to row G of the RP06 plate.** The pipeline
+   has nothing more to say about it; 37 reads is an absence of data.
+3. **Consider running this comparison as a pipeline stage** when a config
+   declares a dedicated replicate of a pooled culture plate. It is currently a
+   script because the pairing is knowledge about the experiment, not about the
+   data.
+
+---
+
 ## 2026-08-19 (fifth) — QC output follows the culture plates, and chimeras are graded
 
 ### What changed

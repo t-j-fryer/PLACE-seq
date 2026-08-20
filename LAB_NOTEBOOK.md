@@ -15,6 +15,37 @@ Conventions:
 
 ---
 
+## 2026-08-20 (third) — Figure restyled to the requested house style
+
+Presentation-only change to `replicate_concordance`; no number moved.
+
+| element | before | now |
+|---|---|---|
+| font | Helvetica first, Arial as fallback | Arial first, embedded as `ArialMT` / `Arial-BoldMT` (checked with `pdffonts`) |
+| text | dark grey `#1B1F24` | black, white only where it sits on a filled segment |
+| axes and ticks | grey spines, outward ticks | black spines, ticks pointing in |
+| bars | white segment edges | black, 0.5 pt, on bars and on every segment |
+| in-bar text | left-aligned | centred in the bar |
+| bar labels | `Plate 1` over `RP06 \u00b7 SUMO_A_P1` | `Plate 1` alone |
+| ratios | `82/82 matched`, `83/84 exact seq.` | `82/82 wells with same content`, `83/84 clones with identical sequence` |
+| legend | two rows | one row |
+
+The barcode-to-culture-plate mapping dropped off the bars, so it now lives only
+in the caption, `replicate_concordance.json` and the notebook. Anyone reading the
+figure alone cannot tell which barcodes "Plate 1" refers to - state it in the
+caption.
+
+Legend labels shortened to fit one row: "Same content, identical seq.", "Same
+content, different seq.", "Pooled only", "Dedicated only", "Different content".
+
+**One row is measured, not assumed.** The three current labels fill 89 mm at 6 pt
+almost exactly, so a fourth category would have run off the page silently. The
+figure now estimates the required width from label lengths and drops to two rows
+if a single row would need less than 5 pt. Percentages were kept in the in-bar
+text, as in the source figure; say so if they should go.
+
+---
+
 ## 2026-08-20 (second) — Figure labels name their unit
 
 Label-only change to `replicate_concordance`; no number moved.

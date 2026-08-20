@@ -33,15 +33,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
-from matplotlib.transforms import blended_transform_factory  # noqa: E402
 
 from nanopore3 import replicate  # noqa: E402
-from nanopore3.figures import (  # noqa: E402
-    INK,
-    MUTED,
-    SINGLE_COLUMN,
-    use_print_style,
-)
+from nanopore3.figures import SINGLE_COLUMN, use_print_style  # noqa: E402
 
 # Teal for agreement, warm hues for the two ways a well can be seen only once,
 # brick for outright disagreement, neutral for "no data".
@@ -106,20 +100,50 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
     """
 
     use_print_style()
+    # Arial throughout, black text and furniture, white only where text sits on
+    # a filled segment.
+    plt.rcParams.update(
+        {
+            "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
+            "text.color": "black",
+            "axes.labelcolor": "black",
+            "axes.edgecolor": "black",
+            "xtick.color": "black",
+            "ytick.color": "black",
+            "xtick.direction": "in",
+            "ytick.direction": "in",
+        }
+    )
+
     present = [
         category
         for category in replicate.CATEGORY_ORDER
         if any(r["summary"]["counts"][category] for r in results)
     ]
-    columns = 2 if len(present) <= 4 else 3
-    legend_rows = -(-len(present) // columns)
-    # Height is built from the parts rather than guessed, so adding a plate pair
-    # or a category does not push the legend into the axis label.
+    # One row, as long as one row is legible.  Three short labels fit 89 mm at
+    # 6 pt almost exactly, so the fit is measured rather than assumed: below 5 pt
+    # the legend wraps to two rows instead of running off the page.
+    labels = [replicate.CATEGORY_LABELS[c] for c in present]
+    width_pt = SINGLE_COLUMN * 72
+    per_entry = 2.4  # handle + padding + column gap, in font-size units
+    required = sum(len(label) for label in labels) * 0.52 + len(present) * per_entry
+    legend_size = min(6.0, width_pt / required)
+    if legend_size < 5.0:
+        columns = -(-len(present) // 2)
+        required = (
+            max(sum(len(label) for label in labels[:columns]), 1) * 0.52
+            + columns * per_entry
+        )
+        legend_size = min(6.0, width_pt / required)
+        legend_rows = 2
+    else:
+        columns = len(present)
+        legend_rows = 1
+
     bars = 0.40 * len(results) + 0.16
     below = 0.42 + 0.18 * legend_rows
     height = bars + below
     figure, axes = plt.subplots(figsize=(SINGLE_COLUMN, height))
-    label_transform = blended_transform_factory(axes.transAxes, axes.transData)
 
     positions = list(range(len(results)))[::-1]
     for position, result in zip(positions, results, strict=True):
@@ -138,8 +162,8 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
                 left=left,
                 height=0.60,
                 color=CATEGORY_COLOURS[category],
-                edgecolor="white",
-                linewidth=0.4,
+                edgecolor="black",
+                linewidth=0.5,
                 zorder=2,
             )
             # Name a minority segment in place where it is wide enough to read;
@@ -158,18 +182,17 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
                 )
             left += width
 
+        # Two ratios over two different units, each naming its own, centred in
+        # the bar.  White because it sits on the filled segment.
         axes.text(
-            1.8,
+            50.0,
             position,
-            # Name the unit in the label.  The two rows count different things -
-            # wells for identity, clones for sequence - and the denominators
-            # differ because a polyclonal well holds more than one clone.
-            f"{summary['wells_matched']}/{summary['wells_dedicated']} wells, "
-            f"same clone ({100 * summary['matched_fraction']:.1f}%)\n"
-            f"{summary['clones_exact']}/{summary['clones_shared']} clones, "
-            f"identical seq. ({100 * summary['exact_fraction']:.1f}%)",
+            f"{summary['wells_matched']}/{summary['wells_dedicated']} wells with "
+            f"same content ({100 * summary['matched_fraction']:.1f}%)\n"
+            f"{summary['clones_exact']}/{summary['clones_shared']} clones with "
+            f"identical sequence ({100 * summary['exact_fraction']:.1f}%)",
             va="center",
-            ha="left",
+            ha="center",
             fontsize=6.5,
             fontweight="bold",
             color="white",
@@ -177,41 +200,23 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
             zorder=3,
         )
 
-        # Bar labels are drawn by hand so the plate name can carry weight while
-        # the barcode-to-culture-plate mapping stays recessive but present.
-        axes.text(
-            -0.02,
-            position + 0.11,
-            result["label"],
-            transform=label_transform,
-            ha="right",
-            va="center",
-            fontsize=7,
-            color=INK,
-        )
-        axes.text(
-            -0.02,
-            position - 0.14,
-            f"{result['dedicated_plate']} \u00b7 {result['culture_plate']}",
-            transform=label_transform,
-            ha="right",
-            va="center",
-            fontsize=5.8,
-            color=MUTED,
-        )
-
-    axes.set_yticks([])
+    axes.set_yticks(positions)
+    axes.set_yticklabels([r["label"] for r in results])
+    axes.tick_params(axis="y", length=0)
+    axes.tick_params(axis="x", direction="in", length=3, width=0.6, color="black")
     axes.set_xlim(0, 100)
     axes.set_xticks([0, 20, 40, 60, 80, 100])
     axes.set_xticklabels([f"{v}%" for v in (0, 20, 40, 60, 80, 100)])
     axes.set_xlabel("Outcome across wells with a sequenced clone")
     axes.set_ylim(-0.6, len(results) - 0.4)
-    for side in ("top", "right", "left"):
+    for side in ("top", "right"):
         axes.spines[side].set_visible(False)
-    axes.spines["bottom"].set_color(MUTED)
+    for side in ("left", "bottom"):
+        axes.spines[side].set_color("black")
+        axes.spines[side].set_linewidth(0.6)
 
     handles = [
-        Patch(facecolor=CATEGORY_COLOURS[c], edgecolor="white", linewidth=0.4)
+        Patch(facecolor=CATEGORY_COLOURS[c], edgecolor="black", linewidth=0.5)
         for c in present
     ]
     figure.legend(
@@ -223,11 +228,12 @@ def concordance_figure(results: list[dict[str, object]], path: Path) -> Path:
         frameon=False,
         handlelength=1.0,
         handleheight=0.85,
-        columnspacing=1.1,
-        fontsize=6.5,
-        labelcolor=INK,
+        columnspacing=1.0,
+        handletextpad=0.4,
+        fontsize=legend_size,
+        labelcolor="black",
     )
-    figure.subplots_adjust(left=0.30, right=0.99, top=0.98, bottom=below / height)
+    figure.subplots_adjust(left=0.16, right=0.99, top=0.98, bottom=below / height)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path.with_suffix(".pdf"))

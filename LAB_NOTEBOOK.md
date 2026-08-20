@@ -15,6 +15,102 @@ Conventions:
 
 ---
 
+## 2026-08-20 (sixth) — Allocated wells set the depth; outcome populations replace mean accuracy
+
+Three changes to the platform comparison, requested after reading the first
+version. Analysis only; no stage or default touched.
+
+### 1. Matched depth now uses allocated wells, not recovered ones
+
+Previously Illumina was given as many reads per block as the nanopore run had
+wells *yielding* a clone of that block. That charged nanopore's own failures to
+Illumina as reduced depth. It now uses the wells **allocated** to each block -
+the colonies actually picked.
+
+Which well got which block is recorded nowhere, so a plate's 95 allocated wells
+are apportioned among the blocks it carried in the ratio the recovered clones
+show, by largest remainder, with every plate contributing exactly 95. Total
+depth rises from 3,000 to **3,135 reads** (1,045 per set, over 51 blocks).
+
+Perfect recovery, with the change:
+
+| set | nanopore | Illumina, recovered-well depth | Illumina, allocated-well depth |
+|---|---|---|---|
+| Library 1 (stuffer) | 75.0% | 54.5% | **55.7%** |
+| Library 3 (A) | 85.7% | 67.3% | **66.4%** |
+| Library 3 (B) | 80.4% | 62.9% | **63.7%** |
+| Library 3 (A+B) | 96.5% | 84.5% | **85.7%** |
+
+Movement is under 1.3 points either way, so the headline - nanopore recovers more
+designs than Illumina at equal effort, and A+B beats both encodings alone - does
+not rest on the depth definition. Both are in `platform_comparison.json`
+(`matched_depth_per_block` and `recovered_wells_per_block`).
+
+### 2. Outcome populations replace mean identity
+
+The mean-identity figure is gone, replaced by
+`platform_sequence_populations`: the percentage of **consensus sequences**
+(nanopore) or **reads** (Illumina) falling in each outcome. Same three
+categories and same layout as the recovery figure, so the two read together;
+the difference is the denominator - observations here, designs there.
+
+| set | nanopore consensuses | | | Illumina reads | | |
+|---|---|---|---|---|---|---|
+| | Perfect | Screen. | Other | Perfect | Screen. | Other |
+| Library 1 (stuffer) | 93.7% | 2.5% | 3.8% | 79.2% | 16.0% | 4.8% |
+| Library 3 (A) | 93.7% | 2.4% | 3.9% | 76.9% | 18.7% | 4.4% |
+| Library 3 (B) | 92.2% | 2.7% | 5.2% | 78.5% | 16.2% | 5.4% |
+| Library 3 (A+B) | 93.0% | 2.5% | 4.5% | 77.7% | 17.5% | 4.9% |
+
+A nanopore consensus is perfect ~93% of the time; a single Illumina read is
+perfect ~78% of the time, with most of the difference landing in Screenable.
+Averaging over reads inside a well is what buys that, and it is the same point
+the mean-identity figure made (consensus 99.7% against read 95.6%) in units that
+match the rest of the set. The mean-identity numbers remain in
+`platform_comparison.json` under `read_accuracy`.
+
+Note the asymmetry, unchanged from the previous entry: our `mixed_variants`
+grade sits in Other and has no Illumina analogue, since a read is one molecule.
+
+### 3. Widths cut to fit the content
+
+| figure | before | now |
+|---|---|---|
+| `platform_sequences_per_well` | 89 x 47 mm | **68 x 39 mm** |
+| `platform_reference_recovery` | 183 x 58 mm | **114 x 50 mm** |
+| `platform_sequence_populations` | 89 x 50 mm | **114 x 50 mm** |
+
+The recovery and population figures are now **two panels**: Perfect on a 0-100%
+axis, Screenable and Other on a magnified one. On one axis the small categories
+were a smear along the floor and two thirds of a 183 mm canvas was blank. Split,
+the width goes to data and the small bars become readable.
+
+**The magnified ceiling is computed from the data.** A hard-coded 5% clipped the
+Library 3 (A) Illumina Screenable bar at 5.26% the first time it ran - a clipped
+bar still looks like a bar, so nothing about the figure said it was wrong. It now
+takes a round ceiling above the tallest bar in the panel.
+
+`platform_read_accuracy.{pdf,png,svg}` was deleted rather than left to rot beside
+the figures that replaced it.
+
+### Added
+
+10 more tests in `tests/test_platforms.py` (193 pass), covering the
+apportionment (single-block plate, shared plate, exact sums under rounding,
+allocated exceeding recovered) and the population counts.
+
+### Next steps
+
+Unchanged from the previous entry, minus the depth question, which is settled:
+
+1. **`SUMO_B` looks weaker than A on two independent measures** - 6.7% empty
+   wells against 2.8%, and the lowest Illumina read accuracy at 98.4%. Worth
+   understanding before the encodings are treated as interchangeable.
+2. **Audit `figures.py::_save`** for the tight-bbox issue; `fig1`-`fig4` still
+   inherit it, while `save_figure` does not.
+
+---
+
 ## 2026-08-20 (fifth) — Nanopore clone picking against pooled Illumina
 
 Three figures remaking and extending an earlier comparison, over the same

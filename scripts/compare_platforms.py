@@ -39,12 +39,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
 from nanopore3 import platforms  # noqa: E402
-from nanopore3.figures import (  # noqa: E402
-    DOUBLE_COLUMN,
-    SINGLE_COLUMN,
-    save_figure,
-    use_journal_style,
-)
+from nanopore3.figures import MM, save_figure, use_journal_style  # noqa: E402
+
+# Widths chosen to fit the content rather than a column: wide enough to read at
+# 6 pt, with no blank margin to spare.
+NARROW = 68 * MM
+COMPACT = 114 * MM
 
 # Which barcode and culture plates hold which library.  This is knowledge about
 # the experiment, not about the data: RP08 carried the stuffer library, RP05
@@ -133,11 +133,24 @@ def grouped_bars(
         axes.spines[side].set_linewidth(0.6)
 
 
+def two_panel(figure_width: float, height: float, ratios: tuple[float, float]):
+    """Two panels sharing a y scale is how the small categories stay readable.
+
+    On one axis the Perfect bars run to 100% and everything else is a smear along
+    the floor; splitting the axis spends the width on data instead of blank space.
+    """
+
+    figure, axes = plt.subplots(
+        1, 2, figsize=(figure_width, height), gridspec_kw={"width_ratios": list(ratios)}
+    )
+    return figure, axes
+
+
 def sequences_per_well_figure(histograms: dict[str, dict[int, int]], allocated: int, path: Path):
     """How many distinct sequences each allocated well yielded."""
 
     use_journal_style()
-    figure, axes = plt.subplots(figsize=(SINGLE_COLUMN, 1.85))
+    figure, axes = plt.subplots(figsize=(NARROW, 1.55))
     buckets = [0, 1, 2, 3]
     series = [
         (
@@ -163,45 +176,104 @@ def sequences_per_well_figure(histograms: dict[str, dict[int, int]], allocated: 
         title=f"n = {allocated:,} wells each",
         title_fontsize=6,
         alignment="left",
+        borderpad=0.1,
+        labelspacing=0.35,
     )
-    figure.subplots_adjust(left=0.16, right=0.98, top=0.97, bottom=0.24)
+    figure.subplots_adjust(left=0.155, right=0.995, top=0.97, bottom=0.235)
     return save_figure(figure, path)
 
 
-def reference_recovery_figure(recovery: dict[str, dict[str, dict[str, float]]], path: Path):
-    """Percentage of each designed library recovered, by platform."""
+def _nice_limit(largest: float) -> float:
+    """A round ceiling just above the tallest bar, so nothing is clipped."""
 
-    use_journal_style()
-    figure, axes = plt.subplots(figsize=(DOUBLE_COLUMN, 2.3))
+    for step in (0.25, 0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10, 12.5, 20, 25):
+        if largest <= step * 4:
+            return step * 4
+    return 100.0
+
+
+def _outcome_panels(
+    axes,
+    values_for,
+    *,
+    ylabel: str,
+) -> None:
+    """Perfect on a full axis, the other two outcomes on a magnified one.
+
+    The magnified ceiling comes from the data.  A fixed one silently clipped a
+    bar the first time this ran, which is the sort of error that survives review
+    because a clipped bar still looks like a bar.
+    """
+
     sets = [*LIBRARIES, UNION]
-    series = []
-    for library in sets:
-        for platform, hatch in (("nanopore", None), ("illumina", ILLUMINA_HATCH)):
-            values = [recovery[library.key][platform][name] for name in platforms.CLASS_ORDER]
-            style = {"color": COLOURS[library.key]}
-            if hatch:
-                style |= {"hatch": hatch, "color": "white", "edgecolor": COLOURS[library.key]}
-            series.append((library.key, library.label, values, style))
-    grouped_bars(axes, list(platforms.CLASS_ORDER), series, width=0.86)
-    axes.set_ylim(0, 100)
-    axes.set_yticks([0, 25, 50, 75, 100])
-    axes.set_ylabel("Recovered references (%)")
+    small_limit = _nice_limit(
+        max(
+            values_for(library, platform, name)
+            for library in sets
+            for platform in ("nanopore", "illumina")
+            for name in platforms.CLASS_ORDER[1:]
+        )
+    )
+    panels = (
+        (axes[0], [PERFECT_LABEL], (0, 100), [0, 25, 50, 75, 100]),
+        (
+            axes[1],
+            list(platforms.CLASS_ORDER[1:]),
+            (0, small_limit),
+            [small_limit * f for f in (0, 0.25, 0.5, 0.75, 1.0)],
+        ),
+    )
+    for panel, categories, limits, ticks in panels:
+        series = []
+        for library in sets:
+            for platform, hatch in (("nanopore", None), ("illumina", ILLUMINA_HATCH)):
+                style = {"color": COLOURS[library.key]}
+                if hatch:
+                    style |= {
+                        "hatch": hatch,
+                        "color": "white",
+                        "edgecolor": COLOURS[library.key],
+                    }
+                series.append(
+                    (
+                        library.key,
+                        library.label,
+                        [values_for(library, platform, name) for name in categories],
+                        style,
+                    )
+                )
+        grouped_bars(panel, categories, series, width=0.88)
+        panel.set_ylim(*limits)
+        panel.set_yticks(ticks)
+        if all(float(value).is_integer() for value in ticks):
+            panel.set_yticklabels([f"{int(value)}" for value in ticks])
+    axes[0].set_ylabel(ylabel)
+    axes[1].tick_params(axis="y", labelsize=6)
 
-    library_legend = axes.legend(
+
+PERFECT_LABEL = platforms.CLASS_ORDER[0]
+
+
+def _outcome_legend(figure, *, rows_at: tuple[float, float]) -> None:
+    """Libraries on one row, platforms on the next, both under the panels."""
+
+    sets = [*LIBRARIES, UNION]
+    figure.legend(
         handles=[
             Patch(facecolor=COLOURS[s.key], edgecolor="black", linewidth=0.5, label=s.label)
             for s in sets
         ],
-        loc="upper right",
-        bbox_to_anchor=(1.0, 1.02),
+        loc="lower center",
+        bbox_to_anchor=(0.5, rows_at[0]),
+        ncol=len(sets),
         frameon=False,
         fontsize=6,
         handlelength=1.0,
         handleheight=0.85,
         handletextpad=0.4,
+        columnspacing=1.0,
     )
-    axes.add_artist(library_legend)
-    axes.legend(
+    figure.legend(
         handles=[
             Patch(
                 facecolor="#8C8C8C",
@@ -217,62 +289,45 @@ def reference_recovery_figure(recovery: dict[str, dict[str, dict[str, float]]], 
                 label="Illumina, block-matched depth",
             ),
         ],
-        loc="upper right",
-        bbox_to_anchor=(1.0, 0.62),
+        loc="lower center",
+        bbox_to_anchor=(0.5, rows_at[1]),
+        ncol=2,
         frameon=False,
         fontsize=6,
         handlelength=1.0,
         handleheight=0.85,
         handletextpad=0.4,
+        columnspacing=1.2,
     )
-    figure.subplots_adjust(left=0.085, right=0.99, top=0.97, bottom=0.12)
+
+
+def reference_recovery_figure(recovery: dict[str, dict[str, dict[str, float]]], path: Path):
+    """Percentage of each designed library recovered, by platform."""
+
+    use_journal_style()
+    figure, axes = two_panel(COMPACT, 1.95, (1.0, 1.9))
+    _outcome_panels(
+        axes,
+        lambda library, platform, name: recovery[library.key][platform][name],
+        ylabel="Recovered references (%)",
+    )
+    figure.subplots_adjust(left=0.115, right=0.995, top=0.97, bottom=0.27, wspace=0.26)
+    _outcome_legend(figure, rows_at=(0.10, 0.005))
     return save_figure(figure, path)
 
 
-def read_accuracy_figure(accuracy: dict[str, dict[str, dict[str, float]]], path: Path):
-    """Identity to the design, per read and per consensus."""
+def population_figure(population: dict[str, dict[str, dict[str, float]]], path: Path):
+    """Where the sequences themselves fall: consensuses against reads."""
 
     use_journal_style()
-    figure, axes = plt.subplots(figsize=(SINGLE_COLUMN, 1.95))
-    levels = [
-        ("nanopore_read", "Nanopore\nread"),
-        ("nanopore_consensus", "Nanopore\nconsensus"),
-        ("illumina_read", "Illumina\nread"),
-    ]
-    sets = [*LIBRARIES, UNION]
-    series = [
-        (
-            library.key,
-            library.label,
-            [100.0 * accuracy[library.key][level]["mean"] for level, _ in levels],
-            {"color": COLOURS[library.key]},
-        )
-        for library in sets
-    ]
-    grouped_bars(axes, [label for _, label in levels], series, width=0.86)
-    # A truncated axis: every value sits above 95%, and a 0-100 axis would hide
-    # the differences this figure exists to show.  The floor is labelled.
-    axes.set_ylim(90, 100)
-    axes.set_yticks([90, 92, 94, 96, 98, 100])
-    axes.set_ylabel("Mean identity to design (%)")
-    # Below the axes: at this scale the bars fill the panel, and a legend inside
-    # it landed on top of them.
-    figure.legend(
-        handles=[
-            Patch(facecolor=COLOURS[s.key], edgecolor="black", linewidth=0.5, label=s.label)
-            for s in sets
-        ],
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.0),
-        ncol=len(sets),
-        frameon=False,
-        fontsize=6,
-        handlelength=1.0,
-        handleheight=0.85,
-        handletextpad=0.4,
-        columnspacing=1.0,
+    figure, axes = two_panel(COMPACT, 1.95, (1.0, 1.9))
+    _outcome_panels(
+        axes,
+        lambda library, platform, name: population[library.key][platform][name],
+        ylabel="Sequences recovered (%)",
     )
-    figure.subplots_adjust(left=0.17, right=0.98, top=0.97, bottom=0.30)
+    figure.subplots_adjust(left=0.115, right=0.995, top=0.97, bottom=0.27, wspace=0.26)
+    _outcome_legend(figure, rows_at=(0.10, 0.005))
     return save_figure(figure, path)
 
 
@@ -308,12 +363,20 @@ def main() -> int:
         f"and {len(illumina):,} Illumina reads"
     )
 
-    # Matched depth: wells sequenced per block becomes reads drawn per block.
+    # Matched depth: allocated wells per block becomes reads drawn per block.
+    # Allocated, not recovered - the effort spent is the colonies picked, and
+    # charging nanopore's failures to Illumina as reduced depth would flatter us.
     depths: dict[tuple[str, int], int] = {}
+    recovered: dict[tuple[str, int], int] = {}
     for library in LIBRARIES:
-        per_block = platforms.wells_sequenced_per_block(platforms.clones_in(clones, library))
-        for block, wells in per_block.items():
+        set_clones = platforms.clones_in(clones, library)
+        allocated_blocks = platforms.allocated_wells_per_block(
+            set_clones, wells_per_plate=args.wells_per_plate
+        )
+        for block, wells in allocated_blocks.items():
             depths[(library.illumina_groups[0], block)] = wells
+        for block, wells in platforms.wells_sequenced_per_block(set_clones).items():
+            recovered[(library.illumina_groups[0], block)] = wells
     sample = platforms.subsample_by_block(illumina, depths, seed=args.seed)
     print(
         f"matched depth: {sum(depths.values()):,} Illumina reads "
@@ -373,6 +436,29 @@ def main() -> int:
             f"Illumina full depth {recovery[library.key]['illumina_full_depth']['Perfect']:.1f}%"
         )
 
+    population: dict[str, dict[str, dict[str, float]]] = {}
+    for library in [*LIBRARIES, UNION]:
+        nano = platforms.nanopore_population(platforms.clones_in(clones, library))
+        ill = platforms.illumina_population(sample, allowed_by_set[library.key])
+        population[library.key] = {
+            "nanopore": platforms.population_fractions(nano),
+            "illumina": platforms.population_fractions(ill),
+            "nanopore_counts": dict(nano),
+            "illumina_counts": dict(ill),
+        }
+        print(
+            f"  {library.label}: consensuses "
+            + ", ".join(
+                f"{n} {population[library.key]['nanopore'][n]:.1f}%"
+                for n in platforms.CLASS_ORDER
+            )
+            + " | Illumina reads "
+            + ", ".join(
+                f"{n} {population[library.key]['illumina'][n]:.1f}%"
+                for n in platforms.CLASS_ORDER
+            )
+        )
+
     read_identities = platforms.load_nanopore_read_identities(args.run_dir, [*LIBRARIES, UNION])
     consensus_identities = platforms.load_consensus_identities(args.run_dir, [*LIBRARIES, UNION])
     accuracy: dict[str, dict[str, dict[str, float]]] = {}
@@ -410,9 +496,13 @@ def main() -> int:
                 "allocated_wells_per_set": allocated,
                 "wells_per_plate": args.wells_per_plate,
                 "matched_depth_per_block": {f"{g}:{b}": n for (g, b), n in sorted(depths.items())},
+                "recovered_wells_per_block": {
+                    f"{g}:{b}": n for (g, b), n in sorted(recovered.items())
+                },
                 "sequences_per_well": histograms,
                 "reference_recovery": recovery,
                 "read_accuracy": accuracy,
+                "populations": population,
             },
             indent=2,
             sort_keys=True,
@@ -424,7 +514,7 @@ def main() -> int:
     paths = [
         sequences_per_well_figure(histograms, allocated, out_dir / "platform_sequences_per_well"),
         reference_recovery_figure(recovery, out_dir / "platform_reference_recovery"),
-        read_accuracy_figure(accuracy, out_dir / "platform_read_accuracy"),
+        population_figure(population, out_dir / "platform_sequence_populations"),
     ]
     print("\nwrote:")
     for path in paths:

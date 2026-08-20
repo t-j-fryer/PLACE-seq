@@ -236,6 +236,46 @@ def wells_sequenced_per_block(clones: list[Clone]) -> Counter[int]:
     return Counter({block: len(wells) for block, wells in per_block.items()})
 
 
+def allocated_wells_per_block(
+    clones: list[Clone],
+    *,
+    wells_per_plate: int,
+) -> Counter[int]:
+    """Allocated wells per block: every well picked, not only those that worked.
+
+    A culture plate holds a fixed number of allocated wells but may carry several
+    blocks, and which well got which block is recorded nowhere - only the clones
+    that came back say.  So each plate's allocated wells are apportioned among
+    its blocks in the ratio the recovered clones show, by largest remainder, and
+    every plate contributes exactly `wells_per_plate`.
+
+    This counts the colonies actually picked, which is the sampling effort to
+    match.  Using recovered wells instead would credit nanopore's own failures to
+    Illumina as reduced depth.
+    """
+
+    by_plate: dict[str, dict[int, set[tuple[str, str]]]] = defaultdict(lambda: defaultdict(set))
+    for clone in clones:
+        by_plate[clone.culture_plate][clone.block].add((clone.culture_plate, clone.well_id))
+
+    allocated: Counter[int] = Counter()
+    for blocks in by_plate.values():
+        observed = {block: len(wells) for block, wells in blocks.items()}
+        total = sum(observed.values())
+        if not total:
+            continue
+        # Largest remainder, so a plate's wells are neither lost nor invented.
+        exact = {block: wells_per_plate * count / total for block, count in observed.items()}
+        floors = {block: int(value) for block, value in exact.items()}
+        remainder = wells_per_plate - sum(floors.values())
+        order = sorted(exact, key=lambda block: (-(exact[block] - floors[block]), block))
+        for block in order[:remainder]:
+            floors[block] += 1
+        for block, count in floors.items():
+            allocated[block] += count
+    return allocated
+
+
 def subsample_by_block(
     reads: list[IlluminaRead],
     depths: dict[tuple[str, int], int],
@@ -289,6 +329,43 @@ def distinct_sequences_per_well(
     allocated = culture_plates * wells_per_plate
     histogram[0] = allocated - sum(histogram.values())
     return histogram
+
+
+def nanopore_population(clones: list[Clone]) -> Counter[str]:
+    """How the consensus sequences themselves fall across the three outcomes.
+
+    Counts sequences, not designs: a design recovered in forty wells contributes
+    forty observations, which is the quantity comparable to a read population.
+    """
+
+    return Counter(
+        GRADE_CLASS[clone.grade]
+        for clone in clones
+        if clone.kind != "chimera" and clone.grade in GRADE_CLASS
+    )
+
+
+def illumina_population(
+    reads: list[IlluminaRead],
+    universe: set[tuple[str, int, str]],
+) -> Counter[str]:
+    """How the reads themselves fall across the three outcomes."""
+
+    return Counter(
+        CATEGORY_CLASS[read.category]
+        for read in reads
+        if (read.encoding, read.block, read.design_key) in universe
+        and read.category in CATEGORY_CLASS
+    )
+
+
+def population_fractions(population: Counter[str]) -> dict[str, float]:
+    """Percentage of observations at each outcome."""
+
+    total = sum(population.values())
+    if not total:
+        return {name: 0.0 for name in CLASS_ORDER}
+    return {name: 100.0 * population.get(name, 0) / total for name in CLASS_ORDER}
 
 
 def best_class(classes: list[str]) -> str | None:

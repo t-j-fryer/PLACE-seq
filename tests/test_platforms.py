@@ -170,6 +170,96 @@ class MatchedDepthTests(unittest.TestCase):
         self.assertEqual(len(sample), 1)
 
 
+class AllocatedWellsTests(unittest.TestCase):
+    """Effort is the colonies picked, not the ones that worked."""
+
+    def test_a_single_block_plate_gets_all_its_allocated_wells(self) -> None:
+        clones = [clone(1, f"d{i}", "perfect", well=f"A{i:02d}") for i in range(50)]
+        allocated = platforms.allocated_wells_per_block(clones, wells_per_plate=95)
+        self.assertEqual(dict(allocated), {1: 95})
+
+    def test_a_shared_plate_splits_in_the_ratio_the_clones_show(self) -> None:
+        clones = [clone(1, f"d{i}", "perfect", well=f"A{i:02d}") for i in range(30)]
+        clones += [clone(2, f"e{i}", "perfect", well=f"B{i:02d}") for i in range(10)]
+        allocated = platforms.allocated_wells_per_block(clones, wells_per_plate=80)
+        self.assertEqual(dict(allocated), {1: 60, 2: 20})
+
+    def test_every_plate_contributes_exactly_its_allocation(self) -> None:
+        """Largest remainder, so wells are neither lost nor invented to rounding."""
+
+        clones = []
+        for block in (1, 2, 3):
+            for i in range(7):
+                clones.append(clone(block, f"d{block}-{i}", "perfect", well=f"{block}{i:02d}"))
+        allocated = platforms.allocated_wells_per_block(clones, wells_per_plate=95)
+        self.assertEqual(sum(allocated.values()), 95)
+        self.assertEqual(sorted(allocated.values()), [31, 32, 32])
+
+    def test_two_plates_each_contribute_their_allocation(self) -> None:
+        clones = [
+            clone(1, "d1", "perfect", plate="P1", well="A01"),
+            clone(2, "d2", "perfect", plate="P2", well="A01"),
+        ]
+        allocated = platforms.allocated_wells_per_block(clones, wells_per_plate=95)
+        self.assertEqual(dict(allocated), {1: 95, 2: 95})
+
+    def test_allocated_exceeds_recovered_because_failures_are_not_illuminas_gain(self) -> None:
+        clones = [clone(1, f"d{i}", "perfect", well=f"A{i:02d}") for i in range(60)]
+        recovered = sum(platforms.wells_sequenced_per_block(clones).values())
+        allocated = sum(platforms.allocated_wells_per_block(clones, wells_per_plate=95).values())
+        self.assertEqual(recovered, 60)
+        self.assertEqual(allocated, 95)
+
+
+class PopulationTests(unittest.TestCase):
+    """Where the sequences themselves fall, not where the designs do."""
+
+    def test_every_consensus_of_a_design_counts_once_each(self) -> None:
+        clones = [
+            clone(1, "d1", "perfect", well="A01"),
+            clone(1, "d1", "perfect", well="B01"),
+            clone(1, "d1", "frameshift", well="C01"),
+        ]
+        population = platforms.nanopore_population(clones)
+        self.assertEqual(population[platforms.PERFECT], 2)
+        self.assertEqual(population[platforms.OTHER], 1)
+
+    def test_fractions_are_over_observations_and_sum_to_a_hundred(self) -> None:
+        clones = [
+            clone(1, "d1", "perfect", well="A01"),
+            clone(1, "d2", "screenable", well="B01"),
+            clone(1, "d3", "truncated", well="C01"),
+            clone(1, "d4", "perfect", well="D01"),
+        ]
+        fractions = platforms.population_fractions(platforms.nanopore_population(clones))
+        self.assertEqual(fractions[platforms.PERFECT], 50.0)
+        self.assertAlmostEqual(sum(fractions.values()), 100.0)
+
+    def test_chimeras_are_left_out_of_the_population(self) -> None:
+        clones = [clone(1, "d1", "perfect", kind="chimera")]
+        self.assertEqual(platforms.nanopore_population(clones), {})
+
+    def test_illumina_population_respects_the_library_universe(self) -> None:
+        reads = [
+            read(1, "d1", "perfect_match"),
+            read(1, "d2", "nonsynonymous"),
+            read(1, "d3", "frameshift", enc="B"),
+        ]
+        universe = {("A", 1, "d1"), ("A", 1, "d2")}
+        fractions = platforms.population_fractions(
+            platforms.illumina_population(reads, universe)
+        )
+        self.assertEqual(fractions[platforms.PERFECT], 50.0)
+        self.assertEqual(fractions[platforms.SCREENABLE], 50.0)
+        self.assertEqual(fractions[platforms.OTHER], 0.0)
+
+    def test_an_empty_population_is_zeros_not_a_division_error(self) -> None:
+        self.assertEqual(
+            platforms.population_fractions(platforms.nanopore_population([])),
+            {platforms.PERFECT: 0.0, platforms.SCREENABLE: 0.0, platforms.OTHER: 0.0},
+        )
+
+
 class IdentityTests(unittest.TestCase):
     def test_illumina_identity_is_one_minus_edits_over_reference_length(self) -> None:
         reads = [read(1, "d1", "nonsynonymous", edit=3, length=300)]

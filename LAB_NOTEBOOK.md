@@ -15,6 +15,62 @@ Conventions:
 
 ---
 
+## 2026-08-21 (fifth) — Refining "ceiling", which was not self-explanatory
+
+Refines the 2026-08-21 (fourth) entry. The three numbers, all from the same 1,045
+picked wells of encoding A:
+
+| | designs | % | meaning |
+|---|---|---|---|
+| perfect clone recovered in some well | 294 | **86.0%** | what the recovery figure reports |
+| A's DNA seen in at least one read | 323 | **94.4%** | the design demonstrably exists in the A pool |
+| A's DNA seen in no read at all | 19 | 5.6% | A never made it |
+
+"Ceiling" meant the second row: a clone cannot be recovered from a design that is
+not in the pool, so it bounds what any amount of picking could reach. That was not
+obvious from the word alone.
+
+### The 29 designs in between are not equivalent
+
+| | designs | would more picking find them? |
+|---|---|---|
+| under 6 reads in total | 18 | yes - below `minimum_depth`, simply under-sampled |
+| 6-29 reads | 5 | probably |
+| **30+ reads, never a clean copy** | **6** | **no** |
+
+The last group matters: one design has **681 reads across 9 wells** and never
+yielded a perfect consensus, another 312 reads across 2 wells. Their A version is
+present in quantity and always wrong, which reads like a synthesis error fixed in
+the A oligo so that every copy carries it. Picking more colonies cannot fix that.
+
+**So 94.4% was an over-generous bound.** A's realistic reach is about **92.7%**
+(294 recovered + 23 plausibly recoverable), with 94.4% as the hard stop.
+
+### The ladder, corrected
+
+| | |
+|---|---|
+| A, as sampled | 86.0% |
+| A, with much deeper picking | ~92.7% |
+| A, absolute limit | 94.4% |
+| A+B, as sampled at twice the effort | 96.5% |
+| A+B, absolute limit | 99.7% |
+
+The conclusion is unchanged and slightly stronger: **A+B's actual result already
+exceeds A's hard limit**, so no amount of extra single-encoding picking reaches it.
+But the benefit over a deeply sampled single encoding is ~4 points, not the 10.5
+the bar chart implies.
+
+### Lesson
+
+**A word like "ceiling" is not a definition.** I reported it as though it
+explained itself, and it needed three counts and a breakdown to become meaningful
+- during which it moved by 1.7 points, because part of what I had called reachable
+is not. If a derived quantity needs a paragraph to justify, the paragraph belongs
+next to the number.
+
+---
+
 ## 2026-08-21 (fourth) — Oversampling or encoding? Separating the two
 
 The A+B bar recovers 96.5% of designs against A alone at 86.0%, but A+B spends

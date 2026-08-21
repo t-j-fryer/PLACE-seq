@@ -436,15 +436,13 @@ class ChimeraSettings:
     # written, so those reads then contribute to nothing. "none" lets one molecule
     # appear twice: once as itself and once as a mutated version of one parent.
     #
-    # The default is "none" despite that, because exclusion is only as sound as
-    # the chimera calls it rests on, and measurement says they are not sound
-    # enough yet: of 103 chimeric clones written for the 260608 run, 50 are
-    # explained as well or better by a single design than by their spliced pair,
-    # and only 10 fit their own scaffold within 10 edits. With exclusion on,
-    # those false positives deleted four genuine clones - one with 146 reads at
-    # 100% identity. Turn this on once a chimera has to earn its call by beating
-    # the best single reference. See the 2026-08-21 notebook entry.
-    exclude_reads: str = "none"
+    # Default "written". Four clones removed by it looked genuine - one reported
+    # 100% identity from 146 reads - and were checked one at a time: every one is
+    # a chimera of two designs only ~50% identical to each other, in reads 500-590
+    # nt long against designs of 285-405 nt. They reported perfect identity only
+    # because a reference-guided consensus represents the part of a molecule that
+    # aligns and silently drops the rest. Removing them is right.
+    exclude_reads: str = "written"
 
     def __post_init__(self) -> None:
         if self.exclude_reads not in ("written", "all", "none"):

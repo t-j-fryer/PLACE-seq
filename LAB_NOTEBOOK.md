@@ -15,6 +15,116 @@ Conventions:
 
 ---
 
+## 2026-08-21 (second) — CORRECTION: the chimera calls were right, my analysis was not
+
+This corrects the 2026-08-21 entry, which concluded that read exclusion deleted
+four genuine clones and should ship disabled. **Both conclusions were wrong.**
+`exclude_reads` is back on.
+
+### What I got wrong, and how
+
+I read "146 reads, 100% identity" as "146 reads that perfectly match this
+design". It is not. It is *one consensus*, built from 30 of those reads, that
+aligns to the design with zero edits. Those are different claims, and the
+difference is the whole problem.
+
+Checking each of the four one at a time:
+
+| well | design length | read length (median) | dominant signature | parents' identity to each other |
+|---|---|---|---|---|
+| RP05 A10 | 285 nt | 458 nt | 145/146 reads, 2 segments | **52%** |
+| RP05 E6 | 321 nt | 588 nt | 112/113 reads, 2 segments | **53%** |
+| RP05 H1 | 405 nt | 508 nt | 244/246 reads, 2 segments | **48%** |
+| RP08 C6 | 330 nt | 526 nt | 76/79 reads, 2 segments | **48%** |
+
+Every one is a chimera of two *unrelated* designs, in reads 150-250 nt longer
+than the design they were assigned to, agreed by essentially every read in the
+well. The chimera detector was right in all four cases. **The exclusion did not
+delete genuine clones; it deleted four chimeras that were being reported as
+perfect designed clones.**
+
+I also tested the detector against pristine input, which I should have done first:
+profiling all **1,016 error-free reference sequences** through it, every single one
+reads as exactly itself. Zero false positives. My "similar designs confuse the
+window calls" story had no basis - and it was checkable in one command.
+
+The "50 of 103 calls explained as well by a single design" measurement stands as
+a number but not as an interpretation: it measures **scaffold quality**, not
+whether a molecule is chimeric. The acceptance test I proposed on the back of it
+- reject a chimera unless its spliced pair beats the best single reference -
+would have **rejected these four true chimeras**, causing exactly the error I
+thought I was preventing. Dropped.
+
+### Why a chimera reports 100% identity to one of its parents
+
+This is the finding worth keeping, and it is not about chimeras:
+
+**A reference-guided consensus represents the part of a molecule that aligns to
+the reference, and silently drops the rest.** The consensus takes its length from
+the reference, so 250 nt of foreign sequence in the reads has nowhere to appear.
+Identity comes out 1.000. Coverage cannot see it either: QC compares consensus
+length to reference length, and those are equal by construction.
+
+And the thresholds that should have stopped the reads did not, because of
+full-length references:
+
+| metric, over the whole amplicon | median for those 146 chimeric reads | floor |
+|---|---|---|
+| identity | 0.927 | 0.80 |
+| query coverage | 0.862 | 0.70 |
+| reference coverage | 1.000 | 0.70 |
+
+The constant flanks are 849 of ~1,200 bases - **70% of every reference is
+identical across the whole library**. A 250 nt foreign segment is 17% of the
+molecule and cannot pull a whole-amplicon metric below a floor that was set when
+the reference *was* the insert. Over the insert alone that read covers ~0.53 and
+would fail outright.
+
+### The clean fix, in the pipeline's own terms
+
+**Apply the identity and coverage floors to the insert region, not the whole
+amplicon.** The pipeline already locates the insert span - that is how the region
+metrics work. Then a read carrying foreign insert sequence fails at assignment on
+its own merits: no cross-stage plumbing, no read claiming, and it cannot cost a
+genuine clone, because a genuine clone's insert covers its design.
+
+That makes read exclusion belt-and-braces rather than the only defence. Not
+implemented: it changes what gets assigned, so it needs its own run and its own
+comparison. **It is the right next change.**
+
+### Measured effect of exclusion, now that it is trusted
+
+Reads whose alignment leaves part of the molecule unexplained, per designed
+consensus:
+
+| | v5c (no exclusion) | v6b (exclusion on) |
+|---|---|---|
+| consensuses with >2% unexplained | 7 | **1** |
+| consensuses with >10% unexplained | 5 | **0** |
+| worst | 0.773 coverage | 0.932 |
+
+### Lessons
+
+1. **"100% identity" is a statement about a consensus, not about a molecule.** A
+   reference-guided consensus cannot report what it has no coordinates for.
+2. **Test a detector on perfect input before theorising about why it fails.** One
+   command over 1,016 references would have killed my false-positive story
+   immediately.
+3. **When thresholds move to a longer reference, they get weaker.** Moving from
+   350 nt inserts to 1,200 nt amplicons diluted every insert-level defect by 3.5x
+   against floors nobody re-derived. Which is the actual bug.
+
+### Next steps
+
+1. **Insert-scoped identity and coverage floors at assignment** - the fix above.
+2. Then re-check whether `exclude_reads` is still needed at all, or has become
+   redundant.
+3. Scaffold synthesis fits its own clone within 10 edits in only 10 of 103 cases;
+   worth improving, but it affects the chimera consensus, not whether a molecule
+   is called chimeric.
+
+---
+
 ## 2026-08-21 — The chimeric-read exclusion works, and must not be switched on yet
 
 Implemented as agreed, measured, and then **defaulted off**, because measuring it

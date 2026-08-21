@@ -15,6 +15,123 @@ Conventions:
 
 ---
 
+## 2026-08-21 (seventh) — A against B: what the two encodings say about failure
+
+`scripts/encoding_defects.py`, output in `figures/encoding_defects.json`. Every
+design in this library was ordered twice as two different DNA sequences, assembled
+separately and picked separately, which makes the pair a controlled experiment on
+the DNA rather than on the protein.
+
+### The outcome matrix, 342 designs
+
+| A \ B | perfect | imperfect | reads only | absent | total |
+|---|---|---|---|---|---|
+| **perfect** | **238** | 6 | 29 | 21 | 294 |
+| **imperfect** | 3 | 0 | 0 | 2 | 5 |
+| **reads only** | 18 | 2 | 4 | 0 | 24 |
+| **absent** | 15 | 1 | 2 | **1** | 19 |
+| total | 274 | 9 | 35 | 24 | |
+
+Perfect in A 86.0%, in B 80.1%, in both 69.6%, in at least one 96.5%. One design
+appears in neither encoding.
+
+### Failures are independent between encodings
+
+If a failure were a property of the *design* - hard to synthesise, toxic,
+unclonable - the two encodings would fail together. They do not:
+
+| | designs |
+|---|---|
+| perfect in both, observed | **238** |
+| expected if the encodings failed independently | **236** |
+
+Two designs' difference on 342. **Failure is a property of the individual DNA
+molecule, not of the protein it encodes.** That is the result that justifies dual
+encoding: an independent second attempt recovers designs the first lost, and there
+is no subset of designs that is inherently unrecoverable.
+
+### Nothing about the DNA predicts failure
+
+Permutation test, 10,000 shuffles, one-sided for failures scoring higher:
+
+| encoding | measure | recovered | failed | p |
+|---|---|---|---|---|
+| A | GC % | 47.61 | 48.27 | 0.262 |
+| A | longest homopolymer | 4.02 | 3.98 | 0.949 |
+| A | longest G-run | 3.22 | 3.27 | 0.355 |
+| B | GC % | 47.42 | **49.05** | **0.035** |
+| B | longest homopolymer | 4.03 | 3.97 | 0.969 |
+| B | longest G-run | 3.22 | 3.28 | 0.282 |
+
+Only B's GC content reaches nominal significance, at p = 0.035 across six tests -
+which is what one would expect from six tests of nothing. Homopolymers and G-runs
+show no effect at all in either encoding.
+
+Fragment count barely matters either: designs needing 2 synthesised fragments
+recover at 84.2% (330/392) against 81.5% (238/292) for 3 fragments. Real
+direction, small size.
+
+**So failure is stochastic per molecule and not predicted by the usual
+synthesis-difficulty proxies.** Useful negative result: there is no obvious
+sequence feature to design against.
+
+### Block-level differences are mostly picking effort
+
+Recovery by assembly block runs from 33% (B block 17) to 100%, but recovery rate
+correlates with colonies picked per design at **r = 0.41** across 36 encoding-block
+pairs. B block 17 had 2.53 wells per design against a mean near 3. Before reading
+a block as badly assembled, normalise for how many colonies it got - and note that
+block 17 lands on the `SUMO_B_P11` plate flagged as under-picked back on
+2026-08-19.
+
+### Revisiting yesterday's "oligo defect" claim
+
+The 2026-08-21 (sixth) entry said the three single-substitution designs were
+"per-oligo defects in the A pool". **That was over-stated.** Testing it properly:
+
+- **No design anywhere in the run shows the same error in every well that yielded
+  it** - which is what a pool-level defect looks like. The three cases each come
+  from a *single* well, so consensus alone cannot separate an error in the oligo
+  from an error in that colony.
+- Read-level evidence, per well, at the substituted position:
+
+| design | main well | other wells |
+|---|---|---|
+| `dTF079_1_..._15_6` | 311 reads: **T 61%, G 32%** | 1 read (H12, the dead control well): G |
+| `dTF090_..._317_0` | 223 reads: C 98%, G 4 | 1 read C, 1 read C, 7 reads G in H12, 1 read A |
+| `dTF019_...mpnn1` | 172 reads: T 91%, G 5 | 1 read T, 1 read T |
+
+Two of the three have corroborating variant reads in *other* wells of the same
+culture plate, which is weak support for the variant being in the pool rather than
+the colony. One - `dTF079_1` - is not a clean substitution at all: **that well is
+61% T against 32% G**, a mixed position that the consensus called confidently
+because `minimum_support: 0.60` was just cleared.
+
+**That last point is a finding about the pipeline, not the biology.** A position
+with 61/32 support is not a clean base call, and nothing downstream says so: the
+consensus records zero ambiguous bases and QC passes it. Either `minimum_support`
+is too low for a two-allele position, or the consensus should record per-position
+support so a marginal call is visible. Worth deciding before these numbers go in a
+paper.
+
+### Lesson
+
+**"Every well agrees" is the test for a pool-level defect, and I asserted the
+conclusion without running it.** The test was cheap - group consensuses by design
+and compare their error sets - and it returned zero cases across the whole run,
+immediately showing my claim had no support of that kind. The read-level evidence
+that does exist is weaker and more interesting than what I claimed.
+
+### Next steps
+
+1. **Decide on `minimum_support`** or record per-position support. A 61/32 position
+   currently reads as a confident substitution.
+2. Designs recovered in only one well cannot distinguish oligo from colony errors.
+   Deeper picking of specific designs would settle the three cases.
+3. The one design absent from both encodings remains worth checking in the order.
+
+---
+
 ## 2026-08-21 (sixth) — Why three A designs are always wrong, and what the thin reads are
 
 Two questions from the bench, both answerable from v7.

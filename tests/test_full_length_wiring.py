@@ -135,7 +135,7 @@ FULL_LENGTH_CONFIG = (
     Path(__file__).resolve().parents[1]
     / "configs"
     / "runs"
-    / "260608_rp05_rp08_full_length.yaml"
+    / "260608_full_length.yaml"
 )
 INSERT_CONFIG = (
     Path(__file__).resolve().parents[1]

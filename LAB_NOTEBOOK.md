@@ -15,6 +15,77 @@ Conventions:
 
 ---
 
+## 2026-08-20 (tenth) — v5c: RP06 and RP07 join the full-length run
+
+`runs/260608-full-length-v5c`, 21.3 min. `configs/runs/260608_full_length.yaml`
+(renamed from `260608_rp05_rp08_full_length.yaml`, which the barcode list had
+outgrown) now maps RP05, RP06, RP07 and RP08 - all four share this construct.
+RP06 and RP07 are dedicated barcodes for two of RP05's pooled culture plates, so
+including them makes the concordance check run over the whole amplicon.
+
+### The strongest validation in the set
+
+Each of those two culture plates was sequenced twice, independently: once on its
+own barcode and once inside the 22-plate RP05 pool.
+
+| | RP06 / SUMO_A_P1 | RP07 / SUMO_A_P2 |
+|---|---|---|
+| dedicated wells matched | 82/82 (100%) | 93/93 (100%) |
+| shared clones byte-identical over ~1.2 kb | **84/84 (100%)** | **96/97 (99.0%)** |
+| wells recovered only from the pool | 13 | 2 |
+| wells recovered only from the dedicated barcode | 0 | 0 |
+
+**180 of 181 clones are byte-identical across the full amplicon from two
+independent sets of reads** - roughly 216 kb of independently reconstructed
+sequence with one disagreement. At the insert level (v4) plate 1 had one
+non-identical clone; over 1.2 kb it has none.
+
+### The one disagreement is a well the pipeline already flags
+
+RP07 A12 / `A_Block_2_dTF079_2_SUMO_l117_s583407_mpnn1_model2_42_4`, 32 nt apart
+between the two runs:
+
+- both runs grade it **`mixed_variants`** - the reads for this design disagree
+  with each other beyond the support threshold, so the pipeline says in both runs
+  that this is not a single clean clone;
+- both carry ambiguity codes (24 bases from 12 reads in the pool, 8 from 19 on
+  the dedicated barcode) and both differ from the design (78 and 67 insert
+  edits);
+- **all 32 differences are inside the insert. Both constant regions are
+  byte-identical in both runs, and both match the reference exactly.**
+
+That last line is what full-length references buy. Two independent samples of a
+heterogeneous well give two different consensuses over the variable region while
+agreeing perfectly over the 849 constant bases - so the disagreement is the well,
+not the method, and the reader can see that rather than take it on trust. The
+same well also holds a chimeric clone, which *is* byte-identical between the two
+runs.
+
+### Figures
+
+All four, in `runs/260608-full-length-v5c/figures/`:
+`replicate_concordance`, `platform_sequences_per_well`,
+`platform_reference_recovery`, `platform_sequence_populations`, plus their CSV and
+JSON companions and `region_summary.json`. The report stage's `fig1`-`fig4` are in
+`stages/06_report/figures/` as always.
+
+Numbers unchanged from v5b where they should be: insert-scoped recovery 75.0 /
+86.0 / 80.4 / 96.5 and per-region accuracy 99.997% / 99.991% / 99.999% over 3,105
+QC-passing consensuses, 96.4% base-perfect across the whole amplicon. Adding two
+barcodes adds clones without moving the per-clone measurements, which is the
+expected result and worth having checked.
+
+### Next steps
+
+1. **RP01-RP04 and RP09-RP11 still have no full-length config.** RP01-RP04 are
+   opTF001 on the same 5' motif but a different insert set; RP09-RP11 end at a
+   different 3' constant region and would each need their own flanks.
+2. The 72 PCR-origin chimeras are counted but not localised (carried over).
+3. **v4, v5, v5b and v5c now coexist**, 2-3 GB each. v5c supersedes v5b, which
+   superseded v5. Worth pruning once the figures are settled - say which to keep.
+
+---
+
 ## 2026-08-20 (ninth) — v5b figures, and a like-for-like fix
 
 Figures for `runs/260608-RP05-RP08-v5b`. Two sets, in two places:

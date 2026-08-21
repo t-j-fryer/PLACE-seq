@@ -1,5 +1,5 @@
 schema_version: 1
-run_name: 260608-RP05-RP08-full-length
+run_name: 260608-full-length
 output_root: ../../runs
 
 # v5. The consensus now spans the whole amplicon between the two nanopore primer
@@ -9,8 +9,11 @@ output_root: ../../runs
 # reconstructed and scored, with accuracy reported per region so an error in a
 # designed insert is never averaged together with one in the vector.
 #
-# Only RP05 (SUMO A+B) and RP08 (LAB stuffer) are mapped: the other barcodes
-# carry other constructs whose constant regions differ.
+# RP05 (SUMO A+B pooled), RP06 and RP07 (SUMO A plates 1 and 2, each sequenced on
+# their own barcode) and RP08 (LAB stuffer pooled) share this construct. RP06 and
+# RP07 are the replicates of two of RP05's culture plates, so including them lets
+# the concordance check run over the whole amplicon instead of the insert. The
+# remaining barcodes carry constructs whose constant regions differ.
 
 inputs:
   - path: /Volumes/TJAF/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
@@ -52,6 +55,8 @@ reference_libraries:
 
 plate_reference_map:
   RP05: sumo_ab
+  RP06: sumo_ab
+  RP07: sumo_ab
   RP08: lab
 
 library:

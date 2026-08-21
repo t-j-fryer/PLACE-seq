@@ -15,6 +15,85 @@ Conventions:
 
 ---
 
+## 2026-08-21 (fourth) — Oversampling or encoding? Separating the two
+
+The A+B bar recovers 96.5% of designs against A alone at 86.0%, but A+B spends
+twice the colony picking, so the comparison confounds effort with encoding. Asked
+and answered three ways. `scripts/rarefy_encodings.py`,
+`figures/encoding_rarefaction.{pdf,png,svg}` and `.json`.
+
+### The three measurements
+
+| set | wells picked | recovered, as sampled | at one encoding's effort (1,045 wells) | ceiling |
+|---|---|---|---|---|
+| A | 1,045 | 86.0% | 86.0% | **94.4%** |
+| B | 1,045 | 80.1% | 80.1% | **93.0%** |
+| A+B | 2,090 | **96.5%** | **87.6%** | **99.7%** |
+
+- **At matched effort** the union beats the better single encoding by **1.6
+  points**, not 10.5. Halving A+B to 1,045 wells - the inverse framing - gives
+  87.6% against A's 86.0%. Interpolating downwards needs no model: it re-samples
+  wells that exist.
+- **The ceiling** is the designs each route produced *at all*, in any well, at any
+  depth: a design that never appears in a single read cannot be found by picking
+  more colonies. A alone cannot exceed **94.4%** however deep you go. A+B reaches
+  **99.7%**.
+
+### Decomposition of the 10.5-point headline gain
+
+| | points |
+|---|---|
+| structural - designs A never produced but B did | **5.3** |
+| oversampling - designs A produces but had not yet been sampled deeply enough to see | **5.2** |
+
+**So: about half the advantage is real complementarity and about half is spending
+twice the effort.** Doubling A's sampling would climb towards its own 94.4%
+ceiling, so roughly 94% at best - still 2.5 points below what A+B actually
+achieved, and it could never reach 99.7%. The dual encoding does buy something no
+amount of single-encoding picking can, but it is ~2-5 points, not ~10.
+
+The figure shows this directly: the A+B curve sits on top of the A curve up to
+1,045 wells, then keeps climbing and crosses A's ceiling at about 1,500 picks.
+
+### Structure
+
+| | designs |
+|---|---|
+| produced by A only | 23 |
+| produced by B only | 18 |
+| produced by neither | **1** |
+
+41 of 342 designs (12%) are recoverable in only one of the two encodings, which is
+why the ceilings differ. One design appears in no read of either encoding - worth
+checking whether it is absent from both oligo pools.
+
+Note B is the weaker encoding on every measure (80.1% recovered, 93.0% ceiling).
+The honest reading is "a second, somewhat worse encoding adds 5.3 points of
+ceiling", not "two encodings are twice as good".
+
+### A method note worth keeping
+
+**Chao1 was wrong here, and confidently.** Extrapolating A alone to 2,090 wells
+gave 96.0%, with an asymptote of 98.3% - above A's real ceiling of 94.4%. Chao1
+assumes an unobserved design is *rare*; here 19 of them are *absent*, never
+appearing in a single read across 1,045 wells. Estimators built on singleton and
+doubleton counts cannot see a structural zero.
+
+I nearly reported the extrapolation as the answer, which would have said "doubling
+A gets you to 96%, so the encoding buys nothing". The ceiling measurement -
+counting designs that ever appeared at all - contradicted it, and is the one that
+holds. *When an estimator assumes what is unobserved is merely rare, check whether
+it is impossible.*
+
+### Next steps
+
+1. **The single design produced by neither encoding** is worth a look in the oPool
+   order: 1 of 342 is consistent with a synthesis dropout.
+2. If a third encoding is ever ordered, this analysis predicts the ceiling gain
+   rather than the sampled gain, which is the number worth designing against.
+
+---
+
 ## 2026-08-21 (third) — v7: insert-scoped acceptance floors, and the artefact is gone
 
 `runs/260608-full-length-v7`, 18.6 min - the same as v6b, so the extra alignment

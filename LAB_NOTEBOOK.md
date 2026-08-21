@@ -15,6 +15,70 @@ Conventions:
 
 ---
 
+## 2026-08-21 (tenth) — What the replicate discordance actually is
+
+Investigated the four wells where `replicate_concordance` (v8c) reports the two
+barcodes disagreeing. Analysis only.
+
+### Three of the four wells hold two clones
+
+Splitting each well's reads by the base at the contested position and building a
+consensus from each group separately:
+
+| well | dedicated barcode | pooled barcode |
+|---|---|---|
+| B9 | 325 reads -> mutant (1 edit) · 7 reads -> design | 37 -> mutant · **26 -> design, 0 edits** |
+| A6 | 248 reads -> mutant · 11 reads (too few) | 68 -> mutant · **42 -> design, 0 edits** |
+| B3 | 233 reads -> mutant · **49 -> design, 0 edits** | 176 -> mutant · **60 -> design, 0 edits** |
+
+Each subgroup builds a clean consensus and the two differ by exactly one edit.
+These are two genuine clones sharing a culture well: one with a point mutation,
+one matching the design exactly.
+
+**The discordance is which side of the 20% flag threshold each independent
+amplification landed on.** The minor clone measures 2% / 41% (B9), 4% / 37% (A6)
+and 17% / 25% (B3) in the dedicated and pooled runs. Same well, two colony PCRs,
+very different sampled ratios - consistent with a template bottleneck, since the
+pooled PCR gives each culture plate roughly 1/22 of the template.
+
+B3 shows `minimum_minor_fraction: 0.20` deciding exactly as intended: 17% stays
+silent, 25% flags.
+
+The fourth well, F8, is unrelated - 13 and 7 reads, and the pooled consensus is
+132 N. That is depth.
+
+### Which reframes the metric
+
+**v7 agreed more because it hid this.** It took the majority on both barcodes,
+called the mutant confidently in both, and reported perfect agreement - while the
+well held a second, perfect clone at up to 41% of reads. So 179/180 -> 176/180 is
+not a regression; the disagreement is the finding.
+
+I had guessed, and written in the previous entry, that the cause was "N placement
+is depth-dependent". That was a plausible-sounding mechanism I did not check. The
+real mechanism is heterogeneity in the source well, and it took splitting the
+reads to see it.
+
+### An opportunity this exposes
+
+In B3 the **dedicated** run has a perfect design-matching clone in 49 of 285 reads
+and the pipeline reports the mutant, discarding it. Same on the pooled side of B9
+and A6. Splitting a flagged well's reads by the contested allele recovered a clean
+consensus every time it was tried here - three for three.
+
+So for any well graded `mixed_variants`, both clones could be emitted rather than
+one plus an `N`. That changes what a "clone" means in the output tree, so it is a
+decision rather than a fix. Recorded, not built.
+
+### Lesson
+
+**A mechanism that explains the numbers is not the same as the mechanism.** "N
+placement is depth-dependent" fit the observation, required no work, and was
+wrong. Four wells was a small enough set to examine individually, and doing so
+turned a caveat about a metric into a finding about the biology.
+
+---
+
 ## 2026-08-21 (ninth) — Stacked bars for the outcome figures
 
 Presentation only; no number moved. `--style stacked` (now the default) or

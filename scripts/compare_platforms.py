@@ -36,15 +36,13 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.legend_handler import HandlerPatch  # noqa: E402
-from matplotlib.lines import Line2D  # noqa: E402
-from matplotlib.patches import Patch, Rectangle  # noqa: E402
+from matplotlib.colors import to_rgb  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 
 from nanopore3 import platforms  # noqa: E402
 from nanopore3.figures import (  # noqa: E402
     MM,
     draw_dashes,
-    draw_stripes,
     save_figure,
     use_journal_style,
 )
@@ -114,12 +112,31 @@ COLOURS = {
     "sumo_b": "#D55E00",
     "sumo_ab": "#009E73",
 }
-ILLUMINA_HATCH = "///"
+# In the grouped panels the colour carries the library, so the platform can be
+# carried by strength of fill: the same hue for both, mixed towards white for
+# Illumina.  Measured with scripts/validate_palette.py: at 0.40 the four pale
+# library colours still separate by dE 8.6 under both CVD simulations (floor 6)
+# and each pale colour sits dE 14.2 from its full-strength counterpart.
+#
+# The stacked figure cannot use this, because there the colour carries the
+# *outcome*: tinting those three collapses them to dE 4.7 under CVD.  It labels
+# the platform inside the bar instead.  Hatching, which both styles used before,
+# is an SVG <pattern> and importers discard it.
+ILLUMINA_TINT = 0.40
+
+
+def tint(colour: str, amount: float = ILLUMINA_TINT) -> tuple[float, float, float]:
+    """Mix a colour towards white; 0 leaves it alone, 1 is white."""
+
+    return tuple(c + (1.0 - c) * amount for c in to_rgb(colour))
 
 # In a stacked bar the colour has to carry the outcome, because the x position
 # carries the library. Same three tones as the replicate figure, already checked:
 # worst normal-vision dE 17.8, worst CVD dE 9.5.
-_striped_proxy = Patch(facecolor="white", edgecolor="black", linewidth=0.5)
+PLATFORM_LABELS = (("nanopore", "Nanopore"), ("illumina", "Illumina"))
+# Percent of bar height the rotated platform label needs to sit inside the
+# bottom (Perfect) segment; below this it goes above the bar in black instead.
+_LABEL_HEADROOM = 25.0
 
 OUTCOME_COLOURS = {
     platforms.PERFECT: "#2E6F6A",
@@ -248,14 +265,9 @@ def _outcome_panels(
     for panel, categories, limits, ticks in panels:
         series = []
         for library in sets:
-            for platform, hatch in (("nanopore", None), ("illumina", ILLUMINA_HATCH)):
-                style = {"color": COLOURS[library.key]}
-                if hatch:
-                    style |= {
-                        "hatch": hatch,
-                        "color": "white",
-                        "edgecolor": COLOURS[library.key],
-                    }
+            for platform, pale in (("nanopore", False), ("illumina", True)):
+                colour = COLOURS[library.key]
+                style = {"color": tint(colour) if pale else colour}
                 series.append(
                     (
                         library.key,
@@ -304,9 +316,8 @@ def _outcome_legend(figure, *, rows_at: tuple[float, float]) -> None:
                 label="Nanopore, picked clones",
             ),
             Patch(
-                facecolor="white",
+                facecolor=tint("#8C8C8C"),
                 edgecolor="black",
-                hatch=ILLUMINA_HATCH,
                 linewidth=0.5,
                 label="Illumina, block-matched depth",
             ),
@@ -332,6 +343,15 @@ def stacked_figure(
 ):
     """One bar per library and platform, stacked by outcome.
 
+    Every bar is drawn in the same full-strength outcome colours and the platform
+    is written inside it, rather than being encoded in the fill.  Two encodings
+    were tried and both cost something real: hatching is noisy at 6 pt and is an
+    SVG ``<pattern>``, which importers discard, and mixing the Illumina fills
+    towards white pulls the three outcomes to a worst colour-vision-deficiency dE
+    of 4.7, under the floor of 6 the other figures are held to.  A word inside the
+    bar costs no width, no legend row and no colour budget, and cannot be
+    misread.
+
     ``complete_to_100`` outlines the full height, for the recovery figure where
     the three outcomes do not sum to 100 and the gap is the part of the library
     never recovered.  The population figure needs no outline: every sequence lands
@@ -342,17 +362,11 @@ def stacked_figure(
     sets = [*LIBRARIES, UNION]
     figure, axes = plt.subplots(figsize=(STACKED, 2.3))
     width = 0.36
-    positions: list[float] = []
     labels: list[str] = []
-    # Patches to stripe once the layout is final; the angle depends on it.
-    striped: list[tuple[object, str]] = []
     outlines: list[tuple[float, float]] = []
     for index, library in enumerate(sets):
-        for offset, (platform, hatch) in enumerate(
-            (("nanopore", None), ("illumina", ILLUMINA_HATCH))
-        ):
+        for offset, (platform, name) in enumerate(PLATFORM_LABELS):
             centre = index + (offset - 0.5) * width * 1.06
-            positions.append(centre)
             bottom = 0.0
             if complete_to_100:
                 # The remainder up to 100% is the part of the library never
@@ -363,26 +377,21 @@ def stacked_figure(
                 value = values_for(library, platform, outcome)
                 if value <= 0:
                     continue
-                style = {"facecolor": OUTCOME_COLOURS[outcome]}
-                if hatch:
-                    style = {"facecolor": "white", "edgecolor": OUTCOME_COLOURS[outcome]}
-                container = axes.bar(
-                    centre, value, width=width, bottom=bottom,
-                    linewidth=0.5, zorder=2, **style,
-                )
-                if hatch:
-                    striped.append((container[0], OUTCOME_COLOURS[outcome]))
-                if not hatch:
-                    axes.bar(
-                        centre, value, width=width, bottom=bottom,
-                        facecolor="none", edgecolor="black", linewidth=0.5, zorder=3,
-                    )
-                bottom += value
-            if hatch:
                 axes.bar(
-                    centre, bottom, width=width, facecolor="none",
-                    edgecolor="black", linewidth=0.5, zorder=3,
+                    centre, value, width=width, bottom=bottom,
+                    facecolor=OUTCOME_COLOURS[outcome],
+                    edgecolor="black", linewidth=0.5, zorder=2,
                 )
+                bottom += value
+            # Inside the bar where there is room for it, above it where there is
+            # not, so a short bar never gets a label running off the baseline.
+            inside = values_for(library, platform, PERFECT_LABEL) >= _LABEL_HEADROOM
+            axes.annotate(
+                name,
+                (centre, 2.5 if inside else bottom + 2.0),
+                ha="center", va="bottom", rotation=90, fontsize=4.8,
+                color="white" if inside else "black", zorder=4,
+            )
         labels.append(library.label.replace("Library ", "Lib "))
 
     axes.set_xticks(range(len(sets)))
@@ -398,56 +407,18 @@ def stacked_figure(
     for side in ("left", "bottom"):
         axes.spines[side].set_linewidth(0.6)
 
-    # Two legends rather than one: matplotlib fills a legend column-major, which
-    # interleaved the outcomes with the platforms and read as five unrelated keys.
-    class _StripedKey(HandlerPatch):
-        """Legend key for the striped bars, drawn as lines rather than a hatch."""
-
-        def create_artists(self, legend, orig_handle, xdescent, ydescent,
-                           width, height, fontsize, trans):
-            box = Rectangle((-xdescent, -ydescent), width, height,
-                            facecolor="white", edgecolor="black", linewidth=0.5)
-            box.set_transform(trans)
-            out = [box]
-            step = width / 3.2
-            offset = -xdescent - width
-            while offset < width:
-                line = Line2D(
-                    [offset, offset + height], [-ydescent, -ydescent + height],
-                    color="black", linewidth=0.5,
-                )
-                line.set_transform(trans)
-                line.set_clip_path(box)
-                out.append(line)
-                offset += step
-            return out
-
-    outcomes = figure.legend(
+    figure.legend(
         [
             Patch(facecolor=OUTCOME_COLOURS[o], edgecolor="black", linewidth=0.5)
             for o in platforms.CLASS_ORDER
         ],
         list(platforms.CLASS_ORDER),
-        loc="lower center", bbox_to_anchor=(0.5, 0.105), ncol=3, frameon=False,
+        loc="lower center", bbox_to_anchor=(0.5, 0.005), ncol=3, frameon=False,
         fontsize=5.8, handlelength=1.0, handleheight=0.85, handletextpad=0.4,
         columnspacing=1.1,
     )
-    figure.add_artist(outcomes)
-    figure.legend(
-        [
-            Patch(facecolor="#8C8C8C", edgecolor="black", linewidth=0.5),
-            _striped_proxy,
-        ],
-        ["Nanopore, picked clones", "Illumina, block-matched depth"],
-        loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False,
-        fontsize=5.8, handlelength=1.0, handleheight=0.85, handletextpad=0.4,
-        columnspacing=1.1,
-        handler_map={_striped_proxy: _StripedKey()},
-    )
-    figure.subplots_adjust(left=0.155, right=0.99, top=0.97, bottom=0.33)
-    # Both of these need the final axes box, so they come last.
-    for patch, colour in striped:
-        draw_stripes(axes, patch, colour)
+    figure.subplots_adjust(left=0.145, right=0.99, top=0.975, bottom=0.175)
+    # Needs the final axes box, so it comes last.
     for centre, bar_width in outlines:
         for x in (centre - bar_width / 2, centre + bar_width / 2):
             draw_dashes(axes, (x, 0.0), (x, 100.0))
@@ -505,8 +476,9 @@ def main() -> int:
         choices=("stacked", "panels"),
         default="stacked",
         help=(
-            "stacked: one bar per library and platform, split by outcome, so the "
-            "composition of what was recovered is visible in one shape. panels: "
+            "stacked: one panel per platform and one bar per library, split by "
+            "outcome, so the composition of what was recovered is visible in one "
+            "shape. panels: "
             "grouped bars with Perfect on its own axis and the small categories "
             "magnified."
         ),

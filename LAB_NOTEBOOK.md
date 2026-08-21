@@ -15,6 +15,78 @@ Conventions:
 
 ---
 
+## 2026-08-21 (thirteenth) — No hatching: the platform is a word, not a texture
+
+Presentation only; no number moved. Corrects the *encoding* chosen in the
+2026-08-21 (twelfth) entry, which kept the hatching and only changed how it was
+drawn. Reported from the bench: the hatching is ugly. It is, and it was also
+doing work that did not need a texture at all.
+
+### Why not simply tint the Illumina bars
+
+The obvious replacement is the same colour, mixed towards white. Measured rather
+than judged, with `scripts/validate_palette.py`'s own OKLab and
+Machado-Oliveira-Fernandes machinery:
+
+| tint | 3 outcome colours, worst pair dE | under CVD | full vs pale, same outcome |
+|---|---|---|---|
+| 0.30 | 13.3 | 6.8 | 9.5 |
+| 0.40 | 11.1 | 5.8 | 12.6 |
+| 0.55 | 8.3 | **4.2** | 17.3 |
+
+There is no setting that works. Tinting enough for "pale" to read as a platform
+needs about 0.5, and by then the three outcomes inside the pale bar are dE 4.2
+apart under protanopia - below the floor of 6 every other figure here is held to.
+**The stacked bar has already spent its colour budget on the outcome**, so the
+platform cannot also be paid for in colour.
+
+Panels were the next candidate - one per platform - and they fail for a duller
+reason: four bars per panel leaves about 9 mm per x label and `Lib 1 (stuffer)`
+needs 18 mm, so the library names collide. Fixing that means either 150 mm of
+width or rotated labels, and the bench asked for compact.
+
+### What it does instead
+
+The platform is written vertically inside the bar, in white, at the bottom of the
+Perfect segment: `Nanopore`, `Illumina`. Both bars stay at full strength, the
+legend drops to three keys, and the label costs no width, no colour and no extra
+canvas. A bar whose Perfect segment is under 25% would put the label above the bar
+in black instead, which no current bar needs but which stops a short bar from
+running its label off the baseline.
+
+`--style panels` keeps the tint, because there the colour carries the *library*
+and there are only two things per group to separate. Re-measured at tint 0.40: the
+four pale library colours stay dE 8.6 apart under both CVD simulations and each
+sits dE 14.2 from its full-strength partner.
+
+### Removed
+
+`figures.draw_stripes` and `figures.axes_visual_slope`, added yesterday. Nothing
+draws stripes any more. The analytic clipping they needed is the sort of thing
+that is worth keeping only while something uses it.
+
+`figures.draw_dashes` stays - the 100% outline on the recovery figure still needs
+it, and both SVGs still report zero `<pattern>` and zero `stroke-dasharray`.
+
+Regenerated:
+
+```
+python scripts/compare_platforms.py \
+    --run-dir runs/260608-full-length-v8c \
+    --illumina "<OneDrive>/.../20260724_AI_DBTL_ILLIMINA/Analysis/results/LAB_STUFFER_SUMO_CONCORDANT"
+```
+
+`runs/260608-full-length-v8c/figures/platform_reference_recovery` and
+`platform_sequence_populations`. 273 tests pass.
+
+### Lesson
+
+An encoding is a budget, not a preference. Before reaching for texture, ask what
+each channel in the figure is already paying for: here position had the library,
+colour had the outcome, and the only unspent channel was the inside of the bar.
+
+---
+
 ## 2026-08-21 (twelfth) — Figures that survive Illustrator
 
 Presentation only; no number moved. Reported from the bench: the dashed lines

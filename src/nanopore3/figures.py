@@ -136,66 +136,6 @@ def use_journal_style() -> None:
     )
 
 
-def axes_visual_slope(axes) -> float:
-    """Data-space slope that renders at 45 degrees on the page.
-
-    Needs the axes box and the data limits, so call it only once both are final.
-    """
-
-    width_in, height_in = axes.figure.get_size_inches()
-    position = axes.get_position()
-    box_w = max(position.width * width_in, 1e-9)
-    box_h = max(position.height * height_in, 1e-9)
-    x0, x1 = axes.get_xlim()
-    y0, y1 = axes.get_ylim()
-    return ((y1 - y0) / box_h) / ((x1 - x0) / box_w)
-
-
-def draw_stripes(
-    axes,
-    patch,
-    colour: str,
-    *,
-    spacing_points: float = 2.6,
-    linewidth: float = 0.5,
-) -> None:
-    """Fill a patch with real diagonal segments instead of a hatch.
-
-    Matplotlib writes hatching as an SVG ``<pattern>``, and Illustrator drops
-    those on import - the stripes simply vanish, silently, after the figure has
-    left this repository.  Drawn segments are ordinary paths that every importer
-    understands.  Call after the axes limits and layout are final: the 45-degree
-    angle depends on both.
-    """
-
-    from matplotlib.collections import LineCollection
-
-    slope = axes_visual_slope(axes)
-    bounds = patch.get_bbox()
-    x_a, x_b = bounds.x0, bounds.x1
-    y_a, y_b = bounds.y0, bounds.y1
-    if x_b <= x_a or y_b <= y_a:
-        return
-    height_in = axes.get_position().height * axes.figure.get_size_inches()[1]
-    y_range = axes.get_ylim()[1] - axes.get_ylim()[0]
-    step = (spacing_points / 72) * (y_range / max(height_in, 1e-9)) * 1.414
-    span = slope * (x_b - x_a)
-    intercepts = []
-    value = y_a - span
-    while value <= y_b + step:
-        intercepts.append(value)
-        value += step
-    segments = [
-        [(x_a, c), (x_b, c + span)]
-        for c in intercepts
-    ]
-    collection = LineCollection(
-        segments, colors=colour, linewidths=linewidth, zorder=patch.get_zorder() + 0.1
-    )
-    collection.set_clip_path(patch)
-    axes.add_collection(collection)
-
-
 def draw_dashes(
     axes,
     start: tuple[float, float],
@@ -631,9 +571,7 @@ def write_all(
 __all__ = [
     "use_journal_style",
     "save_figure",
-    "axes_visual_slope",
     "draw_dashes",
-    "draw_stripes",
     "CulturePlateSummary",
     "culture_plate_figure",
     "summarize_culture_plates",

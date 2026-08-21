@@ -15,6 +15,112 @@ Conventions:
 
 ---
 
+## 2026-08-21 (eleventh) — What the replicate discordance is, and whether medaka helps
+
+Two questions, one following from the other.
+
+### 1. It is not two colonies of the same design
+
+The bench view was that two independently picked colonies of the *same* design
+differing by one base is implausible, which was right, and my "two clones" reading
+was lazy. Where the four discordant wells actually differ:
+
+| well | contested position | dedicated | pooled |
+|---|---|---|---|
+| B9 | **3' constant flank**, +104 nt | 96% variant | 58% variant / 41% design |
+| A6 | **3' constant flank** | 92% variant | 60% / 37% |
+| B3 | **insert** | 82% variant / 17% design | 73% / 25% |
+| F8 | - | 13 reads | 7 reads, 132 N |
+
+**Two of the three are in the vector backbone, not the design.** Same insert, same
+clone lineage, a mutation in the plasmid - so "two colonies of one design" was
+never the right frame. A single colony carrying a **mixed plasmid population**
+explains all three: two independent colony PCRs then sample that population
+differently, and the pooled PCR gets roughly 1/22 of the template so it bottlenecks
+harder.
+
+The variant is well-specific, not systematic: at the same constant-region offset
+across 118 other clone groups the minority allele runs at a median of 1.3% and a
+maximum of 2.5%, with **none** above 20%.
+
+F8 is unrelated - 13 and 7 reads.
+
+**A test I ran that was worthless:** strand balance. The `orientation` column is
+`unknown` for 209k reads, `forward` for 190k and `reverse` for 2, so it cannot
+distinguish a strand-biased artefact from real DNA. Extraction normalises
+orientation before that field is meaningful. Worth either fixing or removing,
+because it looks like it answers a question it cannot.
+
+### 2. medaka and spoa on this data
+
+Installed on macOS arm64 straight from PyPI - `medaka 2.2.2` with torch, no conda
+needed - plus `pyabpoa` and `pyspoa`. The read headers say
+`dna_r10.4.1_e8.2_400bps_sup@v5.2.0`, and medaka has an **exact model match**,
+`r1041_e82_400bps_sup_v5.2.0`, which is also its default. So the chemistry
+question has a clean answer.
+
+Four real clone groups through `medaka smolecule`, against our caller:
+
+| case | ours | spoa draft | medaka |
+|---|---|---|---|
+| clean, 239 reads | **0 edits** | 9 edits | 9 edits |
+| mixed in vector, 64 reads | 1 edit, **N at the contested base** | 10 edits, calls T | 10 edits, calls T |
+| mixed in insert, 285 reads | 1 edit, calls the variant | 5 edits, calls the variant | 5 edits |
+| shallow, 104 reads | **20 edits** | 45 edits | 45 edits |
+
+Three things follow.
+
+**Reference-guided beats reference-free here, by a lot.** spoa's consensus is
+5-45 edits from the design and 9-22 nt too long - homopolymer indels, the known
+POA weakness. Part of our advantage is definitional: our consensus is anchored to
+the design, so on a clean clone matching that design, zero edits is partly a
+tautology. The `mixed_insert` case is the fair test - the true clone differs from
+the design at one position, and ours reports the variant rather than the
+reference, so the anchoring is not simply overriding the data.
+
+**Neither tool can express what our edge cases are:** both emit one sequence, so
+the mixed-vector well silently becomes T where ours says N. The mixture is not
+reported, it is resolved by majority and discarded. Same for chimeras - one
+consensus cannot represent a two-parent molecule.
+
+**My medaka benchmark is inconclusive and I am not claiming otherwise.** Its
+output was byte-identical to the spoa draft for all four molecules. I checked the
+obvious causes: the BAM has full per-molecule coverage (239/64/285/104 records
+across 4 references), the model is the matching one, the log is clean, and both
+input conventions - shared read name in one file, and one file per molecule - give
+the same result. So medaka ran with correct inputs and changed nothing, which for a
+draft 9 edits from the truth is surprising and unexplained. Treat the medaka
+column as "did not improve the draft in this configuration", not as a measurement
+of medaka.
+
+### Is it sensible to use here?
+
+**Not as a replacement.** It is reference-free, so it discards the thing we
+actually know - which design a read belongs to - and on this data the draft it
+polishes starts 5-45 edits behind where we start. It cannot report a mixed well.
+And `smolecule` wants subreads grouped per molecule, so wiring 3,334 clone groups
+through it means 3,334 files or a naming convention, plus torch.
+
+**Possibly as a cross-check** on a sample of wells, if the polish can be made to
+work - it would be an independent read on our accuracy claims. Unproven.
+
+**Where it would genuinely win** is the case we do not currently handle: a well
+whose molecule is not in the reference set at all - a chimera, a large insertion,
+a truncation. There a de novo consensus is the only option, and spoa alone gets
+within a few edits. Worth keeping in mind for the chimera path, which currently
+splices parents rather than assembling reads.
+
+### Next steps
+
+1. **The `orientation` column is misleading** - fix or drop it.
+2. If the medaka polish is worth pursuing, the next step is `medaka inference` on a
+   hand-built BAM rather than `smolecule`, to see whether the no-op is specific to
+   that entry point.
+3. A de novo (spoa) consensus for chimeric clones would likely beat the spliced
+   scaffold, which fits its own reads within 10 edits in only 10 of 103 cases.
+
+---
+
 ## 2026-08-21 (tenth) — What the replicate discordance actually is
 
 Investigated the four wells where `replicate_concordance` (v8c) reports the two

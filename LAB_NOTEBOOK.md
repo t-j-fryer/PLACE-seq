@@ -15,6 +15,126 @@ Conventions:
 
 ---
 
+## 2026-08-21 (eighth) — Consensus base calling rebuilt, after a literature check
+
+**Scientific change.** `runs/260608-full-length-v8c`, 21.1 min against v7's 18.6.
+
+### Why
+
+Reviewed our base caller against current practice, reading LevSeq's implementation
+rather than only its paper (`fhalab/LevSeq`, `main`, read 2026-08-21). LevSeq
+aligns a well's reads to one parent with minimap2, estimates a per-well background
+error rate, runs a one-sided **binomial test per position per base** against it,
+corrects for multiple testing, calls a mutation where the non-reference frequency
+exceeds 0.5, and flags a **mixed well** when more than one allele at a position is
+significant.
+
+Ours was a flat 0.60 support fraction over **quality-weighted** votes, on at most
+30 reads. Three things were wrong with that:
+
+1. **No statistical model.** The 61%/32% well found on 2026-08-21 (seventh) was
+   called a confident T. Two alleles, each a hundred times any plausible error
+   rate, reported as one clean base.
+2. **The weighting was unprincipled.** Votes weighted by `max(1, Phred Q)` made
+   `minimum_support` a fraction of *weighted* votes, so the effective threshold
+   moved with the quality composition of the reads. Nothing in the config said so.
+3. **The cap discarded 84% of the eligible reads.** Median reads available per
+   clone was 164; we used 30.
+
+### What it is now
+
+| | |
+|---|---|
+| depth | cap 30 -> **300** (above p90; also bounds memory, since retained reads are held while streaming). Median used 30 -> 164 |
+| quality | gates whether a base observation is **counted** (Q>=10); no longer scales a vote |
+| substitutions | one-sided binomial test against the group's own substitution rate, Bonferroni-corrected, **plus** a 20% minor-allele floor |
+| deletions | majority at `minimum_support`, measured against reads spanning the position; **never** reported as mixture |
+| insertions | majority plus the same test against the deletion rate |
+| new columns | `mixed_positions`, `background_error_rate`, `deletion_error_rate`, `weakest_support`, `low_quality_bases` |
+
+`caller="majority"` preserves the old behaviour and is what clustering uses to
+polish drafts, where abstaining mid-refinement destroys information.
+
+### Why substitutions and deletions are handled differently
+
+Measured on these reads: mean substitution disagreement **0.23%**, mean deletion
+disagreement **1.1%** - and the deletion rate is wildly position-specific, with
+individual positions running 20-25% deletions and no mixture present. That is the
+platform's error mode, and no per-group scalar describes it; learning it is what
+medaka exists for. A substitution minority at 20% is a hundred times its
+background and cannot be error. So substitutions get the test and deletions get a
+majority rule.
+
+### Result
+
+| | v7 | v8c |
+|---|---|---|
+| QC pass / fail | 3,136 / 301 | **3,165 / 272** |
+| whole amplicon, exact across ~1.2 kb | 96.4% | **97.2%** |
+| insert exact | 97.5% | **97.7%** |
+| 3' constant region, mean identity | 99.999% | **100.000%** |
+| insert-perfect clones differing in the constant region | 1.16% | **0.53%** |
+| consensuses flagged two-allele | 52 | **117** (68 newly) |
+| **insert-perfect designs** | **3,072** | **3,072** |
+| designs recovered perfectly (A / B / A+B) | 86.0 / 80.4 / 96.5% | 86.0 / 80.1 / 96.5% |
+
+**The science does not move and the reporting gets better.** Design recovery is
+unchanged, per-region accuracy improves, and 68 clones that were being reported as
+clean now say they hold two alleles. The 61%/32% well is one of them.
+
+Two things went the other way, both for the same reason: whole-amplicon exact
+matches fell 2,989 -> 2,976, and replicate concordance went 179/180 -> 176/180
+byte-identical. An `N` at a contested position counts as a mismatch, and which
+positions look contested depends on depth, so two independent read sets of one
+well can disagree about where the `N` goes. That is the price of saying "two
+alleles here" instead of picking one, and it is worth paying - but it means
+**concordance figures are no longer directly comparable across versions**.
+
+### Three bugs, all found by measurement, none by review
+
+1. **The binomial test alone was catastrophic**: `consensus_pass` 1,349 -> **15**.
+   Nanopore error is neither independent nor uniform, so at 300x depth almost
+   every position had a "significant" second allele. 1,778 of 1,789 contested
+   positions were deletions. Fixed by the 20% floor and by separating the two
+   error classes.
+2. **I moved the deletion threshold** from >=0.60 to >0.50 while restructuring,
+   and **76 clones silently lost bases** - nanopore deletion rates sit exactly in
+   that band. Found by breaking the "worsened" clones down by *what* changed
+   rather than by how much: 76 of 134 were "only got shorter", which is not
+   uncertainty, it is a wrong deletion.
+3. **The quality filter shrank the deletion denominator.** Excluding low-quality
+   bases from the count of reads at a position raises the deletion share, pushing
+   0.55-0.58 positions over 0.60. **71 more clones shortened.** Found by examining
+   one clone at read level and seeing the deletion fractions straddle the
+   threshold. Quality decides whether a base is *counted*; it must not decide how
+   many reads were *there*.
+
+Each fix has a test naming the failure it prevents. 271 pass.
+
+**Lesson: an aggregate that moved is not a diagnosis.** "Mean identity fell 0.15
+points" was true after bug 2 and after bug 3, and in both cases I could have
+explained it away as the cost of honest ambiguity. Splitting the affected clones
+by *mechanism* - gained an N, lost a base, both - separated the intended effect
+from the regression immediately, twice.
+
+Also: **the smoke subset was the wrong instrument.** At 4% of the data its median
+depth is 9 reads, so it exercises the low-depth regime rather than the one this
+change targets. Tuning against it would have been meaningless. The offline harness
+built instead - 400-600 real groups at median 214x, both callers on identical
+reads, seconds per run - is what made three iterations affordable.
+
+### Next steps
+
+1. **A `medaka` backend** remains the honest comparison for accuracy claims; the
+   backend abstraction already exists. Our per-region numbers are strong without
+   it, but "matches ONT best practice" is not yet a claim we can make.
+2. **`minimum_minor_fraction: 0.20` is a judgement, not a measurement.** Worth a
+   sensitivity sweep: how many mixtures appear at 0.10, 0.15, 0.30.
+3. The 23 clones still shorter than in v7 sit at deletion fractions the deeper
+   read set estimates differently. Probably the better estimate; unverified.
+
+---
+
 ## 2026-08-21 (seventh) — A against B: what the two encodings say about failure
 
 `scripts/encoding_defects.py`, output in `figures/encoding_defects.json`. Every

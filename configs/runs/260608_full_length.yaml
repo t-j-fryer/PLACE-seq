@@ -106,8 +106,25 @@ random_seed: 141142
 consensus:
   backend: portable
   minimum_depth: 6
-  maximum_reads: 30
+  # Was 30, which discarded 84% of eligible reads - the median clone had 164
+  # available. 300 is above the 90th percentile, so almost every clone now uses
+  # all its reads, and the ones that do not keep far more evidence than a
+  # binomial test needs.
+  maximum_reads: 300
+  # Only used by the majority caller that polishes clustering drafts. The
+  # statistical caller below decides bases instead.
   minimum_support: 0.60
+  # A base observation below Q10 is not counted. Quality gates admission, it does
+  # not scale a vote.
+  minimum_base_quality: 10
+  # An allele is called only if it beats this group's own background error rate
+  # at this adjusted p. A flat support fraction called 61% against 32% a
+  # confident base; that split is two alleles, and this says so.
+  significance: 0.05
+  # And an allele needs this share of the reads to count at all. Significance
+  # alone flagged systematic homopolymer error as a second allele and passed only
+  # 15 clones out of 2,031.
+  minimum_minor_fraction: 0.20
 
 qc:
   minimum_identity: 0.98

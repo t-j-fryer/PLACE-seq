@@ -55,6 +55,14 @@ class ConsensusResult:
     ambiguous_bases: int
     backend: str = "portable"
     failure_reason: str | None = None
+    # Positions where more than one allele beat the background error rate, the
+    # rate itself, the weakest winning support, and base observations dropped for
+    # quality. All zero for backends that do not compute them.
+    mixed_positions: int = 0
+    background_error_rate: float = 0.0
+    deletion_error_rate: float = 0.0
+    weakest_support: float = 0.0
+    low_quality_bases: int = 0
 
 
 def _stable_rank(read_uid: str, seed: int, group_id: str) -> str:
@@ -112,21 +120,155 @@ def require_mafft_spoa(
     return mafft, spoa
 
 
-def _weight(qualities: tuple[int, ...] | None, index: int) -> int:
-    if qualities is None:
-        return 1
-    return max(1, qualities[index])
+# Estimated per-group error rates outside this range are not believable and would
+# make every position either trivially significant or trivially not.
+_MIN_ERROR_RATE, _MAX_ERROR_RATE = 0.002, 0.25
 
 
-def _choice(votes: Counter[str], *, min_support: float) -> str:
-    if not votes:
-        return "N"
-    ordered = sorted(votes.items(), key=lambda item: (-item[1], item[0]))
-    winner, support = ordered[0]
-    total = sum(votes.values())
-    if total == 0 or support / total < min_support:
-        return "N"
-    return winner
+def binomial_upper_tail(successes: int, trials: int, probability: float) -> float:
+    """P(X >= successes) for X ~ Binomial(trials, probability).
+
+    Summed from the observed count upwards, which converges in a few terms in the
+    upper tail where it is used.  Written out rather than taken from scipy so the
+    portable backend keeps its only dependency being edlib.
+    """
+
+    if successes <= 0:
+        return 1.0
+    if successes > trials:
+        return 0.0
+    if probability <= 0.0:
+        return 0.0
+    if probability >= 1.0:
+        return 1.0
+    log_term = (
+        math.lgamma(trials + 1)
+        - math.lgamma(successes + 1)
+        - math.lgamma(trials - successes + 1)
+        + successes * math.log(probability)
+        + (trials - successes) * math.log1p(-probability)
+    )
+    term = math.exp(log_term)
+    total = term
+    index = successes
+    ratio = probability / (1.0 - probability)
+    while index < trials:
+        term *= (trials - index) / (index + 1) * ratio
+        index += 1
+        total += term
+        if term <= total * 1e-15:
+            break
+    return min(1.0, total)
+
+
+def _majority_call(
+    counts: Counter[str],
+    *,
+    depth: int,
+    min_support: float,
+) -> tuple[str, bool, float]:
+    """Plain majority, for polishing a draft rather than judging a clone.
+
+    Iterative polishing wants the reads' own consensus with no reference bias and
+    no abstentions: an ``N`` mid-refinement removes information the next round
+    needs.  Significance testing belongs where a clone is being reported, not
+    where a scaffold is being improved.
+    """
+
+    if not counts or depth <= 0:
+        return "N", False, 0.0
+    winner, winning = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0]
+    support = winning / depth
+    if support < min_support:
+        return "N", False, support
+    return winner, False, support
+
+
+def _call_position(
+    counts: Counter[str],
+    reference_base: str,
+    *,
+    depth: int,
+    spanning: int,
+    substitution_error: float,
+    deletion_error: float,
+    positions: int,
+    significance: float,
+    minor_fraction: float,
+    deletion_support: float,
+) -> tuple[str, bool, float]:
+    """Decide one position: the base, whether it is mixed, and its support.
+
+    An allele has to clear two independent bars: a one-sided binomial test against
+    the group's own background error rate, and a minimum share of the reads.
+
+    Both are needed.  A flat support fraction alone accepts 61% against 32% as a
+    confident base, when that split is two alleles.  The test alone is worse: it
+    assumes errors are independent at a uniform rate, and nanopore errors are
+    neither - they cluster in homopolymers and awkward contexts, so at a hard
+    position 15% of reads can disagree *systematically*.  Run on its own at 300x
+    depth the test called nearly every position mixed.  The fraction floor is what
+    makes it usable.
+
+    Only substitutions are judged this way.  Measured on this data the mean
+    substitution disagreement is 0.23% while the mean deletion disagreement is
+    1.1%, and the deletion rate is wildly position-specific: individual positions
+    run 20-25% deletions with no mixture present, which is the platform's error
+    mode and not something a single per-group rate can describe.  Testing
+    deletions against a scalar rate made 1,778 of 1,789 contested positions
+    deletions.  So a deletion is taken only when it is the outright majority, as
+    before, and never reported as mixture; a substitution minority at 20% is a
+    hundred times its background and cannot be error.
+    """
+
+    if not counts or depth <= 0:
+        return "N", False, 0.0
+
+    # A deletion is a majority decision at the same threshold the majority caller
+    # uses, never a mixture call. Taking one at >50% instead silently shortened 76
+    # clones in a full run, because nanopore deletion rates sit in that band.
+    deletions = counts.get("-", 0)
+    bases = Counter({a: c for a, c in counts.items() if a != "-"})
+    # Against every read that spanned the position, not only those whose base
+    # survived the quality filter.
+    reads_here = spanning or depth
+    if deletions and deletions / reads_here >= deletion_support:
+        return "-", False, deletions / reads_here
+    if not bases:
+        return "N", False, deletions / depth
+
+    winner, winning_count = sorted(bases.items(), key=lambda item: (-item[1], item[0]))[0]
+    support = winning_count / depth
+
+    # Which substitutions are more common than substitution error explains?
+    significant = [
+        allele
+        for allele, count in bases.items()
+        if count >= 2
+        and count / depth >= minor_fraction
+        and count > substitution_error * depth
+        and binomial_upper_tail(count, depth, substitution_error) * positions
+        < significance
+    ]
+    if len(significant) > 1:
+        return "N", True, support
+    if winner == reference_base:
+        return winner, False, support
+    # A non-reference winner has to be significant in its own right; otherwise the
+    # position is noise and saying nothing is more honest than picking a side.
+    if winner in significant:
+        return winner, False, support
+    return "N", False, support
+
+
+def _median(values: Sequence[float]) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return 0.0
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
 
 
 def _build_portable_consensus(
@@ -138,6 +280,10 @@ def _build_portable_consensus(
     max_reads: int = 100,
     min_support: float = 0.60,
     seed: int = 0,
+    min_base_quality: int = 10,
+    significance: float = 0.05,
+    minor_fraction: float = 0.20,
+    caller: str = "statistical",
 ) -> ConsensusResult:
     """Build the edlib reference-guided consensus used by the portable backend."""
 
@@ -148,6 +294,8 @@ def _build_portable_consensus(
         raise ValueError("min_depth and max_reads must be positive")
     if not 0.5 <= min_support <= 1.0:
         raise ValueError("min_support must be between 0.5 and 1.0")
+    if not 0.0 < significance < 1.0:
+        raise ValueError("significance must be between 0 and 1")
 
     available = len(reads)
     selected = select_reads(reads, max_reads=max_reads, seed=seed, group_id=group_id)
@@ -166,8 +314,14 @@ def _build_portable_consensus(
 
     base_votes: list[Counter[str]] = [Counter() for _ in ref]
     base_observations = [0 for _ in ref]
+    # Reads spanning a position, whatever the base quality. Quality decides
+    # whether a base is *counted*, and must not decide how many reads were there:
+    # shrinking the denominator raises the deletion share, and at nanopore
+    # deletion rates that silently shortened 71 clones in a full run.
+    spanning_reads = [0 for _ in ref]
     deletion_votes = [0 for _ in ref]
     insert_votes: dict[int, Counter[str]] = defaultdict(Counter)
+    low_quality_bases = 0
 
     for read in selected:
         query = read.sequence.upper()
@@ -182,8 +336,20 @@ def _build_portable_consensus(
             count = int(count_text)
             if operation in "=X":
                 for _ in range(count):
-                    base_votes[ri][query[qi]] += _weight(read.qualities, qi)
-                    base_observations[ri] += 1
+                    # Quality gates whether an observation is counted; it does not
+                    # scale the vote. Weighting votes by Phred value made the
+                    # support fraction a fraction of weighted votes, which is not
+                    # the quantity a threshold on "support" appears to describe,
+                    # and is not what a binomial test can be run on.
+                    spanning_reads[ri] += 1
+                    if (
+                        read.qualities is None
+                        or read.qualities[qi] >= min_base_quality
+                    ):
+                        base_votes[ri][query[qi]] += 1
+                        base_observations[ri] += 1
+                    else:
+                        low_quality_bases += 1
                     qi += 1
                     ri += 1
             elif operation == "I":
@@ -195,26 +361,92 @@ def _build_portable_consensus(
                     deletion_votes[ri] += 1
                     ri += 1
 
+    # The group's own background error rate, from how often its reads disagree
+    # with the reference at all. The mean rather than the median: the median sits
+    # at the easy positions and understates what error does at the hard ones,
+    # which made the test fire on systematic error.
+    substitution_disagreement: list[float] = []
+    deletion_disagreement: list[float] = []
+    for ri, ref_base in enumerate(ref):
+        observed = base_observations[ri]
+        depth = observed + deletion_votes[ri]
+        if observed:
+            substitution_disagreement.append(
+                (observed - base_votes[ri].get(ref_base, 0)) / observed
+            )
+        if depth:
+            deletion_disagreement.append(deletion_votes[ri] / depth)
+
+    def _rate(values: list[float]) -> float:
+        mean = sum(values) / len(values) if values else _MIN_ERROR_RATE
+        return min(max(mean, _MIN_ERROR_RATE), _MAX_ERROR_RATE)
+
+    substitution_error = _rate(substitution_disagreement)
+    deletion_error = _rate(deletion_disagreement)
+    error_rate = substitution_error
+    testable = sum(1 for value in substitution_disagreement if value > 0) or 1
+
     sequence_parts: list[str] = []
     depths: list[int] = []
     ambiguous = 0
-    for ri, _ref_base in enumerate(ref):
+    mixed_positions = 0
+    weakest = 1.0
+    for ri, ref_base in enumerate(ref):
         if ri in insert_votes:
             insertion, support = sorted(
                 insert_votes[ri].items(), key=lambda item: (-item[1], item[0])
             )[0]
-            if support >= min_depth and support / len(selected) >= min_support:
+            insertion_depth = spanning_reads[ri] + deletion_votes[ri] + support
+            if caller == "majority":
+                accept = support >= min_depth and support / len(selected) >= min_support
+            else:
+                accept = (
+                    support >= min_depth
+                    and insertion_depth
+                    and support / insertion_depth >= 0.5
+                    and binomial_upper_tail(support, insertion_depth, deletion_error)
+                    * testable
+                    < significance
+                )
+            if accept:
                 sequence_parts.append(insertion)
         votes = base_votes[ri]
         base_depth = base_observations[ri]
         position_depth = base_depth + deletion_votes[ri]
         depths.append(position_depth)
-        if position_depth and deletion_votes[ri] / position_depth >= min_support:
+        if base_depth < min_depth and position_depth < min_depth:
+            ambiguous += 1
+            sequence_parts.append("N")
             continue
-        base = "N" if base_depth < min_depth else _choice(votes, min_support=min_support)
+        alleles = Counter(votes)
+        if deletion_votes[ri]:
+            alleles["-"] = deletion_votes[ri]
+        # Every read that reached this position, whatever its base quality.
+        reads_spanning = spanning_reads[ri] + deletion_votes[ri]
+        if caller == "majority":
+            base, mixed, support = _majority_call(
+                alleles, depth=position_depth, min_support=min_support
+            )
+        else:
+            base, mixed, support = _call_position(
+                alleles,
+                ref_base,
+                depth=position_depth,
+                spanning=reads_spanning,
+                substitution_error=substitution_error,
+                deletion_error=deletion_error,
+                positions=testable,
+                significance=significance,
+                minor_fraction=minor_fraction,
+                deletion_support=min_support,
+            )
+        if mixed:
+            mixed_positions += 1
         if base == "N":
             ambiguous += 1
-        sequence_parts.append(base)
+        weakest = min(weakest, support)
+        if base != "-":
+            sequence_parts.append(base)
 
     sequence = "".join(sequence_parts)
     status = "mixed_variants" if ambiguous else "consensus_pass"
@@ -227,6 +459,11 @@ def _build_portable_consensus(
         mean_depth=sum(depths) / len(depths) if depths else math.nan,
         min_depth=min(depths) if depths else 0,
         ambiguous_bases=ambiguous,
+        mixed_positions=mixed_positions,
+        background_error_rate=error_rate,
+        deletion_error_rate=deletion_error,
+        weakest_support=weakest,
+        low_quality_bases=low_quality_bases,
     )
 
 
@@ -384,6 +621,10 @@ def build_reference_consensus(
     max_reads: int = 100,
     min_support: float = 0.60,
     seed: int = 0,
+    min_base_quality: int = 10,
+    significance: float = 0.05,
+    minor_fraction: float = 0.20,
+    caller: str = "statistical",
     backend: str = "portable",
     threads: int = 1,
     mafft_path: str | Path | None = None,
@@ -407,6 +648,10 @@ def build_reference_consensus(
             max_reads=max_reads,
             min_support=min_support,
             seed=seed,
+            min_base_quality=min_base_quality,
+            significance=significance,
+            minor_fraction=minor_fraction,
+            caller=caller,
         )
     return _build_mafft_spoa_consensus(
         reference,

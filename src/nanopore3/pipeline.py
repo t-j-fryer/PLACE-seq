@@ -1597,16 +1597,21 @@ def run_pipeline(
                 ref = references_by_library[library_id][aliases[0]]
                 group_id = "|".join((sample, plate, well, library_id, *aliases))
                 result = build_reference_consensus(
-                    ref,
-                    reads,
-                    group_id=group_id,
-                    min_depth=config.consensus.minimum_depth,
-                    max_reads=config.consensus.maximum_reads,
-                    min_support=config.consensus.minimum_support,
-                    seed=config.random_seed,
-                    backend=config.consensus.backend,
-                    threads=config.parallel.threads_per_job,
-                )
+                        ref,
+                        reads,
+                        group_id=group_id,
+                        min_depth=config.consensus.minimum_depth,
+                        # 0 means every eligible read: the cap used to discard 84%
+                        # of them, and the discarded depth is what a second allele
+                        # shows up in.
+                        max_reads=config.consensus.maximum_reads or len(reads),
+                        min_support=config.consensus.minimum_support,
+                        min_base_quality=config.consensus.minimum_base_quality,
+                        significance=config.consensus.significance,
+                        minor_fraction=config.consensus.minimum_minor_fraction,
+                        seed=config.random_seed,
+                        backend=config.consensus.backend,
+                    )
                 consensus_id = "cons-" + canonical_digest({"group": group_id, "sequence": result.sequence})[:16]
                 row = {
                     "consensus_id": consensus_id, "sample_id": sample, "plate_id": plate, "well_id": well,
@@ -1615,7 +1620,15 @@ def run_pipeline(
                     "culture_plate": "|".join(sorted(culture_plates.get(key, ()))),
                     "n_reads_available": available[key], "n_reads_used": result.n_reads_used,
                     "mean_depth": f"{result.mean_depth:.4f}", "min_depth": result.min_depth,
-                    "ambiguous_bases": result.ambiguous_bases, "backend": result.backend,
+                    "ambiguous_bases": result.ambiguous_bases,
+                    # Marginal calls used to leave no trace: a base decided on 61%
+                    # support looked identical to one decided on 100%. These make
+                    # the evidence behind a consensus auditable.
+                    "mixed_positions": result.mixed_positions,
+                    "background_error_rate": f"{result.background_error_rate:.5f}",
+                    "weakest_support": f"{result.weakest_support:.4f}",
+                    "low_quality_bases": result.low_quality_bases,
+                    "backend": result.backend,
                     "sequence_sha256": hashlib.sha256(result.sequence.encode()).hexdigest() if result.sequence else "",
                     "failure_reason": result.failure_reason or "",
                 }
@@ -1847,6 +1860,10 @@ def run_pipeline(
                             "n_reads_available": row["reads"], "n_reads_used": row["reads"],
                             "mean_depth": row["reads"], "min_depth": row["reads"],
                             "ambiguous_bases": row["ambiguous_bases"],
+                            "mixed_positions": 0,
+                            "background_error_rate": "",
+                            "weakest_support": "",
+                            "low_quality_bases": 0,
                             "backend": "portable", "sequence_sha256": "",
                             "failure_reason": "",
                         })

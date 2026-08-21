@@ -364,17 +364,46 @@ class ConsensusSettings:
     """Portable consensus thresholds and deterministic depth cap."""
 
     minimum_depth: int = 3
-    maximum_reads: int = 100
+    # A cap discards depth exactly where a well is deepest, which is where the
+    # evidence for a second allele lives. 300 sits above the 90th percentile of
+    # reads per clone in the 260608 run while keeping memory bounded: the cap also
+    # limits how many reads are held while streaming, and 0 (unbounded) costs
+    # ~1.5 GB there. Beyond a few hundred reads a binomial test learns nothing
+    # more, so this is depth where it counts rather than depth for its own sake.
+    maximum_reads: int = 300
+    # Retained for the "majority" caller used when polishing a draft. The
+    # statistical caller does not use it: a flat fraction cannot tell 61% against
+    # 32% (two alleles) from 61% against scattered error (one allele plus noise).
     minimum_support: float = 0.60
+    # A base observation below this Phred is not counted. Quality gates whether an
+    # observation is admitted; it does not scale a vote, which would make the
+    # support fraction a fraction of weighted votes rather than of reads.
+    minimum_base_quality: int = 10
+    # Adjusted p below which an allele is held to exceed the group's own
+    # background error rate.
+    significance: float = 0.05
+    # And the share of reads an allele needs before it counts as an allele at all.
+    # The binomial test assumes independent errors at a uniform rate; nanopore
+    # errors cluster in homopolymers, so the test alone flags systematic error as
+    # a second allele. Both bars are required.
+    minimum_minor_fraction: float = 0.20
     backend: str = "portable"
 
     def __post_init__(self) -> None:
-        if self.minimum_depth < 1 or self.maximum_reads < 1:
+        if self.minimum_depth < 1 or self.maximum_reads < 0:
             raise ConfigError("consensus depth settings must be positive")
-        if self.minimum_depth > self.maximum_reads:
+        if self.maximum_reads and self.minimum_depth > self.maximum_reads:
             raise ConfigError("consensus.minimum_depth must not exceed maximum_reads")
         if not 0.5 <= self.minimum_support <= 1.0:
             raise ConfigError("consensus.minimum_support must be between 0.5 and 1")
+        if self.minimum_base_quality < 0:
+            raise ConfigError("consensus.minimum_base_quality must be >= 0")
+        if not 0.0 < self.significance < 1.0:
+            raise ConfigError("consensus.significance must be between 0 and 1")
+        if not 0.0 < self.minimum_minor_fraction <= 0.5:
+            raise ConfigError(
+                "consensus.minimum_minor_fraction must be between 0 and 0.5"
+            )
         if self.backend not in {"portable", "mafft_spoa"}:
             raise ConfigError(
                 "consensus.backend must be portable or mafft_spoa"
@@ -1045,17 +1074,41 @@ def _parse_consensus(value: Any) -> ConsensusSettings:
     mapping = _mapping(value, location)
     _reject_unknown(
         mapping,
-        {"minimum_depth", "maximum_reads", "minimum_support", "backend"},
+        {
+            "minimum_depth",
+            "maximum_reads",
+            "minimum_support",
+            "minimum_base_quality",
+            "significance",
+            "minimum_minor_fraction",
+            "backend",
+        },
         location,
     )
     return ConsensusSettings(
         minimum_depth=_positive_int(mapping.get("minimum_depth", 3), "consensus.minimum_depth"),
-        maximum_reads=_positive_int(mapping.get("maximum_reads", 100), "consensus.maximum_reads"),
+        maximum_reads=_positive_int(
+            mapping.get("maximum_reads", 300), "consensus.maximum_reads", minimum=0
+        ),
         minimum_support=_number(
             mapping.get("minimum_support", 0.60),
             "consensus.minimum_support",
             minimum=0.5,
             maximum=1,
+        ),
+        minimum_base_quality=_positive_int(
+            mapping.get("minimum_base_quality", 10),
+            "consensus.minimum_base_quality",
+            minimum=0,
+        ),
+        significance=_number(
+            mapping.get("significance", 0.05), "consensus.significance", minimum=0, maximum=1
+        ),
+        minimum_minor_fraction=_number(
+            mapping.get("minimum_minor_fraction", 0.20),
+            "consensus.minimum_minor_fraction",
+            minimum=0,
+            maximum=0.5,
         ),
         backend=_nonempty_string(mapping.get("backend", "portable"), "consensus.backend"),
     )

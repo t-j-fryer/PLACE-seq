@@ -369,6 +369,8 @@ def _cluster_consensus(
     result = build_reference_consensus(
         scaffold, selected, group_id="cluster",
         min_depth=1, max_reads=len(selected), min_support=min_support,
+        # Polishing a draft, not judging a clone: plain majority, no abstentions.
+        caller="majority",
     )
     return result.sequence
 

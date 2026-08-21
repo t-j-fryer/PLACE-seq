@@ -36,10 +36,18 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.patches import Patch  # noqa: E402
+from matplotlib.legend_handler import HandlerPatch  # noqa: E402
+from matplotlib.lines import Line2D  # noqa: E402
+from matplotlib.patches import Patch, Rectangle  # noqa: E402
 
 from nanopore3 import platforms  # noqa: E402
-from nanopore3.figures import MM, save_figure, use_journal_style  # noqa: E402
+from nanopore3.figures import (  # noqa: E402
+    MM,
+    draw_dashes,
+    draw_stripes,
+    save_figure,
+    use_journal_style,
+)
 
 # Widths chosen to fit the content rather than a column: wide enough to read at
 # 6 pt, with no blank margin to spare.
@@ -111,6 +119,8 @@ ILLUMINA_HATCH = "///"
 # In a stacked bar the colour has to carry the outcome, because the x position
 # carries the library. Same three tones as the replicate figure, already checked:
 # worst normal-vision dE 17.8, worst CVD dE 9.5.
+_striped_proxy = Patch(facecolor="white", edgecolor="black", linewidth=0.5)
+
 OUTCOME_COLOURS = {
     platforms.PERFECT: "#2E6F6A",
     platforms.SCREENABLE: "#6FA9A0",
@@ -334,6 +344,9 @@ def stacked_figure(
     width = 0.36
     positions: list[float] = []
     labels: list[str] = []
+    # Patches to stripe once the layout is final; the angle depends on it.
+    striped: list[tuple[object, str]] = []
+    outlines: list[tuple[float, float]] = []
     for index, library in enumerate(sets):
         for offset, (platform, hatch) in enumerate(
             (("nanopore", None), ("illumina", ILLUMINA_HATCH))
@@ -343,27 +356,22 @@ def stacked_figure(
             bottom = 0.0
             if complete_to_100:
                 # The remainder up to 100% is the part of the library never
-                # recovered; drawn faintly so it reads as context, not as data.
-                axes.bar(
-                    centre, 100.0, width=width, facecolor="none",
-                    edgecolor="#9AA4AC", linewidth=0.4, linestyle=(0, (1, 2.2)),
-                    zorder=1,
-                )
+                # recovered. Drawn as real dashes after layout, because an SVG
+                # dash array is one of the things an importer may discard.
+                outlines.append((centre, width))
             for outcome in platforms.CLASS_ORDER:
                 value = values_for(library, platform, outcome)
                 if value <= 0:
                     continue
                 style = {"facecolor": OUTCOME_COLOURS[outcome]}
                 if hatch:
-                    style = {
-                        "facecolor": "white",
-                        "hatch": hatch,
-                        "edgecolor": OUTCOME_COLOURS[outcome],
-                    }
-                axes.bar(
+                    style = {"facecolor": "white", "edgecolor": OUTCOME_COLOURS[outcome]}
+                container = axes.bar(
                     centre, value, width=width, bottom=bottom,
                     linewidth=0.5, zorder=2, **style,
                 )
+                if hatch:
+                    striped.append((container[0], OUTCOME_COLOURS[outcome]))
                 if not hatch:
                     axes.bar(
                         centre, value, width=width, bottom=bottom,
@@ -392,6 +400,28 @@ def stacked_figure(
 
     # Two legends rather than one: matplotlib fills a legend column-major, which
     # interleaved the outcomes with the platforms and read as five unrelated keys.
+    class _StripedKey(HandlerPatch):
+        """Legend key for the striped bars, drawn as lines rather than a hatch."""
+
+        def create_artists(self, legend, orig_handle, xdescent, ydescent,
+                           width, height, fontsize, trans):
+            box = Rectangle((-xdescent, -ydescent), width, height,
+                            facecolor="white", edgecolor="black", linewidth=0.5)
+            box.set_transform(trans)
+            out = [box]
+            step = width / 3.2
+            offset = -xdescent - width
+            while offset < width:
+                line = Line2D(
+                    [offset, offset + height], [-ydescent, -ydescent + height],
+                    color="black", linewidth=0.5,
+                )
+                line.set_transform(trans)
+                line.set_clip_path(box)
+                out.append(line)
+                offset += step
+            return out
+
     outcomes = figure.legend(
         [
             Patch(facecolor=OUTCOME_COLOURS[o], edgecolor="black", linewidth=0.5)
@@ -406,14 +436,22 @@ def stacked_figure(
     figure.legend(
         [
             Patch(facecolor="#8C8C8C", edgecolor="black", linewidth=0.5),
-            Patch(facecolor="white", edgecolor="black", hatch=ILLUMINA_HATCH, linewidth=0.5),
+            _striped_proxy,
         ],
         ["Nanopore, picked clones", "Illumina, block-matched depth"],
         loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False,
         fontsize=5.8, handlelength=1.0, handleheight=0.85, handletextpad=0.4,
         columnspacing=1.1,
+        handler_map={_striped_proxy: _StripedKey()},
     )
     figure.subplots_adjust(left=0.155, right=0.99, top=0.97, bottom=0.33)
+    # Both of these need the final axes box, so they come last.
+    for patch, colour in striped:
+        draw_stripes(axes, patch, colour)
+    for centre, bar_width in outlines:
+        for x in (centre - bar_width / 2, centre + bar_width / 2):
+            draw_dashes(axes, (x, 0.0), (x, 100.0))
+        draw_dashes(axes, (centre - bar_width / 2, 100.0), (centre + bar_width / 2, 100.0))
     return save_figure(figure, path)
 
 

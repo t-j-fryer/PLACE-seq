@@ -39,7 +39,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from nanopore3.figures import MM, save_figure, use_journal_style  # noqa: E402
+from nanopore3.figures import (  # noqa: E402
+    MM,
+    draw_dashes,
+    save_figure,
+    use_journal_style,
+)
 
 PREFIX = re.compile(r"^(?:([AB])_)?Block_(\d+)_")
 COLOURS = {"A": "#0072B2", "B": "#D55E00", "A+B": "#009E73"}
@@ -177,6 +182,7 @@ def main() -> int:
     use_journal_style()
     figure, axes = plt.subplots(figsize=(NARROW, 2.1))
     grid = list(range(1, 2 * per_encoding + 1, 10))
+    ceilings: list[tuple[float, str]] = []
     for name, (counts, effort, ever) in sets.items():
         values = list(counts.values())
         xs = [n for n in grid if n <= effort]
@@ -185,9 +191,12 @@ def main() -> int:
             xs, ys, color=COLOURS[name], linewidth=1.1, zorder=3,
             label=f"Library 3 ({name})",
         )
-        axes.axhline(100 * len(ever) / args.universe, color=COLOURS[name],
-                     linewidth=0.6, linestyle=(0, (3, 2)), zorder=2)
-    axes.axvline(per_encoding, color="black", linewidth=0.6, linestyle=(0, (1, 2)), zorder=1)
+        # Drawn as real segments after layout: an SVG dash array is one of the
+        # things Illustrator discards on import, and a ceiling line that arrives
+        # solid reads as data rather than as a bound.
+        ceilings.append((100 * len(ever) / args.universe, COLOURS[name]))
+    # Same reason as the ceilings: drawn, not dash-arrayed.
+    effort_marker = per_encoding
     axes.annotate(
         "effort of one\nencoding", xy=(per_encoding, 12),
         xytext=(per_encoding * 0.62, 12),
@@ -208,6 +217,17 @@ def main() -> int:
     axes.legend(loc="lower right", frameon=False, fontsize=6, handlelength=1.4,
                 borderpad=0.2, labelspacing=0.3)
     figure.subplots_adjust(left=0.145, right=0.99, top=0.97, bottom=0.20)
+    x_lo, x_hi = axes.get_xlim()
+    y_lo, y_hi = axes.get_ylim()
+    draw_dashes(
+        axes, (effort_marker, y_lo), (effort_marker, y_hi), colour="black",
+        linewidth=0.6, dash_points=0.9, gap_points=1.6, zorder=1,
+    )
+    for level, colour in ceilings:
+        draw_dashes(
+            axes, (x_lo, level), (x_hi, level), colour=colour, linewidth=0.6,
+            dash_points=2.4, gap_points=1.8, zorder=2,
+        )
     path = save_figure(figure, out_dir / "encoding_rarefaction")
 
     (out_dir / "encoding_rarefaction.json").write_text(

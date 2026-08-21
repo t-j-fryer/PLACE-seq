@@ -15,6 +15,59 @@ Conventions:
 
 ---
 
+## 2026-08-21 (twelfth) — Figures that survive Illustrator
+
+Presentation only; no number moved. Reported from the bench: the dashed lines
+disappear when these SVGs are imported into Illustrator.
+
+### What was actually being lost
+
+| element | how matplotlib writes it | what Illustrator does |
+|---|---|---|
+| hatching (the Illumina bars) | an SVG `<pattern>` in `<defs>` | drops it - the stripes vanish |
+| dashed and dotted lines | `stroke-dasharray` | drops it - the line arrives solid or not at all |
+
+Affected: `platform_reference_recovery` (4 patterns, 8 dash arrays),
+`platform_sequence_populations` (4 patterns), `encoding_rarefaction` (5 dash
+arrays - the ceilings and the effort marker).
+
+The hatching was the bigger loss and the one hardest to notice: a bar that should
+read "Illumina" arrives as an empty white box, which still looks like a bar.
+
+### The fix: draw the geometry
+
+`figures.draw_stripes` and `figures.draw_dashes` emit ordinary line segments
+instead. Every SVG now reports **zero** `<pattern>` elements and **zero**
+`stroke-dasharray` attributes, so there is nothing left for an importer to
+discard.
+
+Both need the final axes box, because a 45-degree stripe and a dash length in
+points are page-space quantities, so they run after `subplots_adjust`.
+`axes_visual_slope` converts the page angle into the data-space slope.
+
+The legend needed the same treatment: its striped key is a small
+`HandlerPatch` that draws the box and three clipped diagonals, rather than a
+hatched proxy that would have vanished with the bars.
+
+### One thing that did not work, twice
+
+Clipping the stripes to their bar with `set_clip_path` failed silently - first
+passing the patch, then passing path-plus-transform. In both cases the stripes ran
+outside the bar and up into empty space, which looked like data. Replaced by
+solving for where each line crosses the rectangle, which needs no transform and
+cannot leak:
+
+    left  = max(x_a, x_a + (y_a - c) / slope)
+    right = min(x_b, x_a + (y_b - c) / slope)
+
+**Lesson: a figure is not finished when it looks right here.** These two SVGs were
+committed, reviewed on screen and reported in three notebook entries before anyone
+opened them in Illustrator. Anything that renders through a `<defs>` indirection -
+patterns, dash arrays, gradients, clip paths - is a promise about the importer, not
+about the file. Drawn geometry is the only thing that travels.
+
+---
+
 ## 2026-08-21 (eleventh) — What the replicate discordance is, and whether medaka helps
 
 Two questions, one following from the other.

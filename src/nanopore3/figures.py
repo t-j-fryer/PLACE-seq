@@ -136,6 +136,110 @@ def use_journal_style() -> None:
     )
 
 
+def axes_visual_slope(axes) -> float:
+    """Data-space slope that renders at 45 degrees on the page.
+
+    Needs the axes box and the data limits, so call it only once both are final.
+    """
+
+    width_in, height_in = axes.figure.get_size_inches()
+    position = axes.get_position()
+    box_w = max(position.width * width_in, 1e-9)
+    box_h = max(position.height * height_in, 1e-9)
+    x0, x1 = axes.get_xlim()
+    y0, y1 = axes.get_ylim()
+    return ((y1 - y0) / box_h) / ((x1 - x0) / box_w)
+
+
+def draw_stripes(
+    axes,
+    patch,
+    colour: str,
+    *,
+    spacing_points: float = 2.6,
+    linewidth: float = 0.5,
+) -> None:
+    """Fill a patch with real diagonal segments instead of a hatch.
+
+    Matplotlib writes hatching as an SVG ``<pattern>``, and Illustrator drops
+    those on import - the stripes simply vanish, silently, after the figure has
+    left this repository.  Drawn segments are ordinary paths that every importer
+    understands.  Call after the axes limits and layout are final: the 45-degree
+    angle depends on both.
+    """
+
+    from matplotlib.collections import LineCollection
+
+    slope = axes_visual_slope(axes)
+    bounds = patch.get_bbox()
+    x_a, x_b = bounds.x0, bounds.x1
+    y_a, y_b = bounds.y0, bounds.y1
+    if x_b <= x_a or y_b <= y_a:
+        return
+    height_in = axes.get_position().height * axes.figure.get_size_inches()[1]
+    y_range = axes.get_ylim()[1] - axes.get_ylim()[0]
+    step = (spacing_points / 72) * (y_range / max(height_in, 1e-9)) * 1.414
+    span = slope * (x_b - x_a)
+    intercepts = []
+    value = y_a - span
+    while value <= y_b + step:
+        intercepts.append(value)
+        value += step
+    segments = [
+        [(x_a, c), (x_b, c + span)]
+        for c in intercepts
+    ]
+    collection = LineCollection(
+        segments, colors=colour, linewidths=linewidth, zorder=patch.get_zorder() + 0.1
+    )
+    collection.set_clip_path(patch)
+    axes.add_collection(collection)
+
+
+def draw_dashes(
+    axes,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    *,
+    colour: str = "#9AA4AC",
+    linewidth: float = 0.4,
+    dash_points: float = 1.1,
+    gap_points: float = 1.8,
+    zorder: float = 1.0,
+) -> None:
+    """Draw a dashed straight line as real segments.
+
+    ``stroke-dasharray`` is another thing an importer may quietly discard, so the
+    dashes are emitted as individual paths.
+    """
+
+    from matplotlib.collections import LineCollection
+
+    width_in, height_in = axes.figure.get_size_inches()
+    position = axes.get_position()
+    x0, x1 = axes.get_xlim()
+    y0, y1 = axes.get_ylim()
+    per_point_x = ((x1 - x0) / max(position.width * width_in, 1e-9)) / 72
+    per_point_y = ((y1 - y0) / max(position.height * height_in, 1e-9)) / 72
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length_points = ((dx / per_point_x) ** 2 + (dy / per_point_y) ** 2) ** 0.5
+    if length_points <= 0:
+        return
+    stride = dash_points + gap_points
+    segments = []
+    travelled = 0.0
+    while travelled < length_points:
+        a = travelled / length_points
+        b = min(travelled + dash_points, length_points) / length_points
+        segments.append(
+            [(start[0] + dx * a, start[1] + dy * a), (start[0] + dx * b, start[1] + dy * b)]
+        )
+        travelled += stride
+    axes.add_collection(
+        LineCollection(segments, colors=colour, linewidths=linewidth, zorder=zorder)
+    )
+
+
 def save_figure(figure, path: Path) -> Path:
     """Write PDF, 600-dpi PNG and a transparent SVG at the figure's exact size."""
 
@@ -527,6 +631,9 @@ def write_all(
 __all__ = [
     "use_journal_style",
     "save_figure",
+    "axes_visual_slope",
+    "draw_dashes",
+    "draw_stripes",
     "CulturePlateSummary",
     "culture_plate_figure",
     "summarize_culture_plates",

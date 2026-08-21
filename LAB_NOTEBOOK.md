@@ -15,6 +15,104 @@ Conventions:
 
 ---
 
+## 2026-08-21 (sixth) — Why three A designs are always wrong, and what the thin reads are
+
+Two questions from the bench, both answerable from v7.
+
+### 1. The designs with many reads that never give a clean clone
+
+Five designs in encoding A have 30+ reads and no perfect consensus. They are not
+one phenomenon:
+
+| design | A result | same design in B |
+|---|---|---|
+| `dTF079_1_..._15_6` | **1 substitution**, G>T at insert nt 78, 30/30 reads, QC pass | **0 edits** |
+| `dTF090_..._317_0` | **1 substitution**, G>C at insert nt 110, 30/30 reads, QC pass | **0 edits** |
+| `dTF019_SUMO_l128_s367046_mpnn1` | **1 substitution**, G>T at insert nt 54, 30/30 reads, QC pass | no consensus |
+| `dTF079_3_..._85_0` | 155 edits, essentially truncated, 681 reads over 9 wells, QC fail | **0 edits** |
+| `dTF090_..._585_4` | 188 edits from 8 reads - low depth, uninterpretable | - |
+
+**Three of them are single point mutations, every one a G in the design read as T
+or C, fixed across all 30 reads, and absent from the same design's B encoding.**
+
+| design | change | protein |
+|---|---|---|
+| `dTF079_1_..._15_6` | `GAAAAG[G]ATGGGG` -> T | D27Y, **non-synonymous** |
+| `dTF090_..._317_0` | `AGCTGC[G]GCGGCG` -> C | A37A, synonymous |
+| `dTF019_...mpnn1` | `GAATCT[G]TGGCCA` -> T | V19L, **non-synonymous** |
+
+All three pass QC - in frame, no internal stop - so they are `screenable` clones
+carrying one substitution, not failures. Two are non-synonymous and so are the
+wrong protein.
+
+The shared signature is G in the reference read as T or C, in two of three cases
+inside a G-rich stretch (`GG`, `GCGGCG`). G>T is the classic oxidative-damage
+signature, but three cases cannot distinguish chemistry from anything else - what
+the data does support is that **the error is specific to the A oligo, not to the
+design**: the B encoding of the same protein is perfect. The fourth case, a
+truncation with 681 reads across 9 independent wells while B is perfect, is the
+same conclusion at larger scale.
+
+Actionable: these are per-oligo defects in the A pool, so re-ordering those A
+oligos - or simply using the B clone - fixes them. Nothing in the pipeline or the
+assembly is at fault.
+
+### 2. The thin reads: rescue, or noise?
+
+Of the 29 designs whose A version appears in reads but never gives a perfect
+clone, what evidence actually supports them:
+
+| best evidence for the design | designs | rescuable? |
+|---|---|---|
+| **only reads that failed the insert gate** | **21** | **no - median insert identity 56.6%** |
+| 6+ clean reads in one well, consensus built but imperfect | 5 | nothing to rescue; the clone carries a real mutation |
+| 1-2 clean reads in one well | 3 | not usefully - see below |
+| 3-5 clean reads in one well | **0** | - |
+
+**The tail is noise, not near-misses.** The 21 are supported only by reads whose
+insert matches the design at **56.6% identity at full coverage** - the read is the
+right length and a different sequence. The k-mer prefilter shortlisted them and
+the amplicon-level alignment passed, because the constant flanks carry it; the
+insert-scoped gate added in v7 is what makes this visible. Before that gate, these
+reads were `assigned_unique` at 90%+ amplicon identity and looked like thin but
+genuine evidence.
+
+For comparison, reads behind designs that *did* give a perfect clone sit at 96.6%
+median insert identity.
+
+**And there is no population to rescue by lowering the depth floor: zero designs
+have 3-5 clean reads in a well.** Dropping `minimum_depth` from 6 to 3 would
+recover nothing. The three designs with 1-2 clean reads would need a floor of 1-2,
+and at 90% per-read identity a one-read "consensus" carries ~30 errors in a 300 nt
+insert - not a clone anyone can screen.
+
+### This refines the ceiling once more
+
+The 2026-08-21 (fifth) entry put A's reachable range at ~92.7% by treating the 29
+present-but-not-recovered designs as mostly reachable. Read-level evidence says
+only 3 of them are: 294 + 3 = **297 designs, 86.8%**, is what the data *confirms*
+A could reach with deeper picking.
+
+That is a lower bound, not the answer. A design could sit in the A pool at an
+abundance so low that not one read appeared in 1,045 wells, and rarefaction
+estimates that unseen population from the frequency structure - hence the ~94%
+statistical estimate. The honest range for A with much deeper picking is
+**86.8% (confirmed present) to ~94% (statistically estimated)**, and the tail
+being mostly noise argues for the lower half.
+
+Either way the comparison holds and strengthens: A+B's measured 96.5% is above
+every estimate of what A alone could reach.
+
+### Lesson
+
+**"Reads assigned to a design" was doing a lot of unexamined work in my own
+analysis.** I counted them without filtering by status, which put 18 designs in the
+"just under the depth threshold" bucket. Filtered to reads that actually match the
+design, the bucket has 3, and 21 of the 29 turn out to be supported by nothing at
+all. A count is only as good as the predicate behind it, and mine had none.
+
+---
+
 ## 2026-08-21 (fifth) — Refining "ceiling", which was not self-explanatory
 
 Refines the 2026-08-21 (fourth) entry. The three numbers, all from the same 1,045

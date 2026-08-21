@@ -15,6 +15,105 @@ Conventions:
 
 ---
 
+## 2026-08-20 (eleventh) — What is actually in RP07 A12, and one real defect
+
+Runs pruned to `260608-full-length-v5c` alone: v4, v5 and v5b deleted, 6.5 GB
+recovered. `20260506-*` and `260608-AI-DBTL-v2/v3` remain and are a separate
+question - see next steps.
+
+### The question
+
+The one non-identical clone in the full-length replicate concordance was RP07
+A12, graded `mixed_variants` in both runs. Was the k-mer assignment wrong, and
+does the well hold two clones that would each make a clean consensus?
+
+### Answer: one molecule, and it is chimeric
+
+Added `scripts/dissect_well.py`, which clusters a well's reads **without
+reference to any design** and then asks what each group matches - deliberately
+the reverse of the question that produced the confusing answer.
+
+```
+python scripts/dissect_well.py --run-dir runs/260608-full-length-v5c \
+    --plate RP07 --well A12
+```
+
+| evidence | value |
+|---|---|
+| reads in the well | 367 (293 with a usable insert region) |
+| assignment status | **294 ambiguous**, 29 assigned_unique, 43 motif_missing, 1 no_match |
+| reference-free clusters | **1**, zero co-varying positions, mean mismatch to centre 0.0 |
+| reads sharing one positional signature | **285 of 293** |
+| that signature | `A_Block_2_dTF079_0_..._50_1` >> `A_Block_2_dTF079_2_..._42_4` |
+| its consensus vs the closest single reference | **77.5%** (56 edits over 249 nt) |
+
+So:
+
+1. **The assignment was not wrong.** It called 294 of 367 reads `ambiguous`,
+   which is the correct answer when no single reference fits - and none does.
+2. **There is one molecule in the well, not two.** The reads agree with each
+   other: zero co-varying positions and a mean mismatch to the cluster centre of
+   0.0. A mixed culture would show co-varying positions.
+3. **That molecule is a chimera of two Block_2 designs.** Same block means the
+   same colony, so it is a real clone, not a PCR artefact - and the chimera stage
+   already found it, with a consensus byte-identical between RP07 and RP05.
+4. **Splitting the reads would not give two clean clones.** Each parent covers
+   only part of the molecule; the correct object is the spliced one, which the
+   pipeline already writes.
+
+### The real defect this exposed
+
+The 19 reads assigned to `A_Block_2_dTF079_2_..._42_4` at **89.7% identity**
+passed the library's `minimum_identity: 0.80` floor and went on to build a
+designed-clone consensus - the `mixed_variants` one, 67 insert edits from its
+supposed design. **That consensus should not exist.** It is the residue of a
+chimeric clone described as a design.
+
+Scale, across v5c's 3,463 designed consensuses:
+
+| | count | share |
+|---|---|---|
+| identity <95% to their design | 189 | 5.5% |
+| of those, in a well that also produced a chimera | 118 | 62% |
+| baseline: clean consensuses in a chimera-bearing well | 1,333 | 40.7% |
+
+A 1.5x enrichment - real but modest, and the pooled RP05 wells make the baseline
+high because almost every well holds many clones. So this is a ~5% tail, not a
+systemic problem, and `mixed_variants` is already flagging most of it (79 of 189).
+
+**The fix worth making:** the chimera stage knows which reads belong to a written
+chimera group, and the consensus stage does not. Passing that set across would let
+a designed-clone consensus either exclude those reads or be flagged as
+chimera-derived. Not done - it changes consensus membership and so needs its own
+run and comparison.
+
+### Two mistakes I made getting here, both caught by checking
+
+1. **I wrote my own window scan and had the alignment backwards** - aligning each
+   whole 249-351 nt reference *into* a 90 nt window, which is meaningless. It
+   reported a five-segment chimera of Block_1 designs, contradicting the chimera
+   stage's two Block_2 parents. The contradiction is what exposed it. Replaced
+   with `chimera.signature_for`, the tested profiler the chimera stage itself
+   runs, which gave the two-segment answer that agrees.
+2. **I assumed the differing clone in that well was the chimera.** It is the
+   opposite: the chimera is byte-identical between the two runs and the *designed*
+   clone is the one that differs. Checked before writing it down.
+
+**Lesson: when a diagnostic disagrees with a pipeline stage that answers the same
+question, suspect the diagnostic.** The stage has tests.
+
+### Next steps
+
+1. **Decide on the chimera-read exclusion above.** It would remove ~118 spurious
+   designed consensuses and cost one run.
+2. **`260608-AI-DBTL-v2` and `v3` (4.2 GB) and the `20260506-*` pilot runs (2.2
+   GB) are still on disk.** v2 and v3 are superseded runs of this dataset; the
+   20260506 set is different data. Say which to drop.
+3. Carried over: RP01-RP04 and RP09-RP11 have no full-length config; the 72
+   PCR-origin chimeras are counted but not localised.
+
+---
+
 ## 2026-08-20 (tenth) — v5c: RP06 and RP07 join the full-length run
 
 `runs/260608-full-length-v5c`, 21.3 min. `configs/runs/260608_full_length.yaml`

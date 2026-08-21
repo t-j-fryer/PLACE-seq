@@ -15,6 +15,123 @@ Conventions:
 
 ---
 
+## 2026-08-21 (third) — v7: insert-scoped acceptance floors, and the artefact is gone
+
+`runs/260608-full-length-v7`, 18.6 min - the same as v6b, so the extra alignment
+per candidate costs nothing measurable.
+
+### What changed
+
+**Identity and coverage floors now apply to the insert region, not the whole
+amplicon.** A full-length reference is ~70% constant flank, so a whole-amplicon
+metric is roughly 3.5x less sensitive to anything wrong with the insert than the
+same floor was when the reference *was* the insert. A read carrying 250 nt of a
+different design scored 0.927 identity and 0.862 coverage over the amplicon,
+clearing floors of 0.80 and 0.70, and then built a designed consensus that
+reported a perfect match.
+
+The library's own floors are re-applied where they discriminate. A read that
+fails gets `assignment_status: insert_mismatch`, is kept out of that design's
+consensus, and carries `insert_identity` and `insert_query_coverage` in
+`assignment_calls.csv.gz` so the decision is auditable. `insert_thresholds:
+false` opts a library out.
+
+Chimeric-read exclusion is also on (`exclude_reads: written`).
+
+### It removes the artefact and leaves everything else alone
+
+| | v5c (neither) | v6b (exclusion) | v7 (both) |
+|---|---|---|---|
+| reads held back at assignment | - | - | **15,635** (2.5%) |
+| chimeric clones written | 90 | 103 | **103, byte-identical to v6b** |
+| designed consensuses | 3,463 | 3,406 | **3,334** |
+| `mixed_variants` | 128 | 108 | **52** |
+| QC failures | - | 366 | **301** |
+| consensuses whose reads leave >2% unexplained | 7 | 1 | **1** |
+
+Against v6b: **72 removed, 0 newly appearing, 98.2% of survivors byte-identical.**
+The 72 had median identity 86.4% to their supposed design and 69 of 72 were below
+95%.
+
+**The chimera stage summary is byte-identical between v6b and v7**, which is the
+check that mattered: the gate operates on assignment, and chimera detection reads
+the demultiplexed reads directly, so it must be unaffected. It is.
+
+`reads_excluded_as_chimeric` fell from 7,849 to 4,806, because the gate now
+catches most of those reads earlier. Exclusion has become belt-and-braces, as
+predicted.
+
+### The three high-identity removals, checked one at a time
+
+Having got this wrong once by not checking, all three were examined:
+
+| well | design | v6b | insert-scoped | verdict |
+|---|---|---|---|---|
+| RP05 D9 | `B_Block_1_dTF085_84_3` | 99.1% from 7 reads | median coverage **0.66** | correctly removed - the reads do not cover this design |
+| RP05 F4 | same design | 99.9% from 7 reads | coverage 1.00, identity 93.7%, 2/7 reads held | **marginal clone lost to the depth floor** |
+| RP05 E7 | same design | 99.4% from 7 reads | coverage 1.00, identity 93.8%, 2/7 reads held | same |
+
+So the cost is **two marginal clones out of 3,406**, each supported by 7 reads,
+which fell to 5 when two of their reads were individually held back - below
+`minimum_depth: 6`. That is a depth effect, not a misjudgement: the reads that
+went were the ones that individually failed the floor. Recoverable by lowering
+`minimum_depth` if those clones matter.
+
+### Independent validation: the replicate concordance holds
+
+Two culture plates sequenced twice, once on their own barcode and once inside the
+pool:
+
+| | RP06 / SUMO_A_P1 | RP07 / SUMO_A_P2 |
+|---|---|---|
+| dedicated wells matched | 82/82 | 93/93 |
+| clones byte-identical over ~1.2 kb | 83/84 | **96/96** |
+
+**179 of 180 clones byte-identical from two independent read sets.** The one
+exception is RP06 F08, 9 edits - a well that also holds a chimeric clone, so the
+gate held back slightly different reads on each barcode. This is the check that
+the gate did not quietly corrupt anything, and it passes.
+
+Design recovery is unchanged - 75.0 / 86.0 / 80.4 / 96.5% perfect, the same as
+v5c and v6b - and so is per-region accuracy: 99.997% / 99.991% / 99.999% with
+96.4% of QC-passing clones base-perfect across the whole amplicon.
+
+### A result that came free
+
+Apparent polyclonality drops, because some of it was the artefact:
+
+| Library 3 (B), distinct sequences per well | v5c | v7 |
+|---|---|---|
+| exactly one | 84.3% | **88.2%** |
+| two | 11.8% | **7.7%** |
+| three or more | 1.1% | **0.6%** |
+
+Wells that looked like they held two clones were in part holding one clone and
+one description of a chimera. The polyclonality estimate is now cleaner.
+
+### Figures
+
+All four regenerated into `runs/260608-full-length-v7/figures/`.
+
+### Lesson
+
+**A threshold is only meaningful relative to the sequence it is measured over.**
+Moving from 350 nt inserts to 1,200 nt amplicons kept every number in the config
+and silently weakened all of them by 3.5x. Nothing failed, nothing warned, and
+the symptom appeared three stages later as a clone that did not exist. When the
+unit of measurement changes, every threshold expressed in it needs re-deriving -
+not just the ones that look related.
+
+### Next steps
+
+1. **Runs: keep `v7`.** `v5c` and `v6b` are superseded - say the word and they go.
+2. The 132 PCR-origin chimeras are counted but not localised.
+3. Scaffold synthesis fits its own clone within 10 edits in only 10 of 103 cases;
+   affects the chimera consensus, not whether a molecule is called chimeric.
+4. RP01-RP04 and RP09-RP11 still have no full-length config.
+
+---
+
 ## 2026-08-21 (second) — CORRECTION: the chimera calls were right, my analysis was not
 
 This corrects the 2026-08-21 entry, which concluded that read exclusion deleted

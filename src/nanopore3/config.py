@@ -193,6 +193,14 @@ class ReferenceSettings:
     flanks_downstream: str | None = None
     flanks_template: Path | None = None
     flanks_anchor_length: int = 20
+    # Apply minimum_identity and minimum_query_coverage to the insert region
+    # rather than the whole amplicon. Only meaningful for a full-length library,
+    # and on by default there, because the constant flanks are ~70% of every
+    # reference: a read carrying 250 nt of foreign insert still scored 0.93
+    # identity and 0.86 query coverage over the amplicon, clearing floors of 0.80
+    # and 0.70 that were set when the reference was the insert. Over the insert
+    # alone the same read covers 0.53 and fails.
+    insert_thresholds: bool = True
 
     @property
     def full_length(self) -> bool:
@@ -801,6 +809,7 @@ def _parse_references(
         "qc_upstream_constant",
         "qc_downstream_constant",
         "flanks",
+        "insert_thresholds",
     }
     _reject_unknown(mapping, allowed, location)
     flanks_value = mapping.get("flanks")
@@ -858,6 +867,9 @@ def _parse_references(
     return ReferenceSettings(
         **flanks_fields,
         **optional_dna,
+        insert_thresholds=_boolean(
+            mapping.get("insert_thresholds", True), f"{location}.insert_thresholds"
+        ),
         motif_max_edits=(
             None
             if mapping.get("motif_max_edits") is None

@@ -7,7 +7,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
 import csv
 import logging
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import gzip
 import hashlib
@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO, TypeVar
 
 from . import __version__
-from .assignment import AssignmentCall, ReferenceIndex, assign_read, extract_insert
+from .assignment import (
+    AssignmentCall,
+    ReferenceIndex,
+    _align_geometry,
+    assign_read,
+    extract_insert,
+)
 from .config import BarcodeSettings, PipelineConfig
 from .consensus import (
     ConsensusRead,
@@ -169,6 +175,102 @@ def flank_transforms(flanks: Mapping[str, Flanks]):
         library_id: (lambda _identifier, sequence, flank=flank: flank.flank(sequence))
         for library_id, flank in flanks.items()
     }
+
+
+@dataclass(frozen=True)
+class InsertGate:
+    """Insert-scoped acceptance floors for one full-length library.
+
+    A full-length reference is ~70% constant flank, so identity and coverage
+    measured over the whole amplicon are roughly 3.5x less sensitive to anything
+    wrong with the insert than the same floors were when the reference *was* the
+    insert.  A read carrying 250 nt of a different design cleared 0.80 identity
+    and 0.70 coverage comfortably, and went on to build a designed consensus that
+    reported a perfect match - because a reference-guided consensus represents
+    only the part of a molecule that aligns.
+
+    This re-applies the library's own floors where they discriminate: to the
+    insert.  Plain data, so it survives pickling to a process worker.
+    """
+
+    left_anchor: str
+    right_anchor: str
+    inner_left_anchor: str
+    inner_right_anchor: str
+    head: int
+    tail: int
+    motif_max_edits: int
+    minimum_identity: float
+    minimum_query_coverage: float
+    inserts: Mapping[str, str]
+
+    def insert_of(self, sequence: str) -> str | None:
+        """The read's insert: by its own boundaries, else by offset."""
+
+        exact = extract_insert(
+            sequence, self.inner_left_anchor, self.inner_right_anchor,
+            max_edits=self.motif_max_edits,
+        )
+        if exact.status == "found" and exact.sequence:
+            return exact.sequence
+        found = extract_insert(
+            sequence, self.left_anchor, self.right_anchor, max_edits=self.motif_max_edits
+        )
+        if found.status != "found" or not found.sequence:
+            return None
+        region = found.sequence
+        if len(region) <= self.head + self.tail:
+            return None
+        return region[self.head : len(region) - self.tail]
+
+    def verdict(self, sequence: str, reference_id: str) -> tuple[float, float, bool] | None:
+        """Insert identity, insert query coverage, and whether it passes."""
+
+        reference = self.inserts.get(reference_id)
+        insert = self.insert_of(sequence)
+        if not reference or not insert:
+            return None
+        geometry = _align_geometry(insert, reference)
+        passed = (
+            geometry.identity >= self.minimum_identity
+            and geometry.query_coverage >= self.minimum_query_coverage
+        )
+        return geometry.identity, geometry.query_coverage, passed
+
+
+def build_insert_gates(
+    config: PipelineConfig,
+    references_by_library: Mapping[str, Mapping[str, str]],
+) -> dict[str, InsertGate]:
+    """One gate per full-length library that asked for insert-scoped floors."""
+
+    gates: dict[str, InsertGate] = {}
+    flanks = resolve_flanks(config)
+    if not flanks:
+        return gates
+    inserts, _motifs = insert_view(references_by_library, flanks)
+    for library_id, flank in flanks.items():
+        settings = config.reference_sets[library_id]
+        if not settings.insert_thresholds:
+            continue
+        inner_left, inner_right = flank.insert_anchors()
+        gates[library_id] = InsertGate(
+            left_anchor=flank.left_anchor,
+            right_anchor=flank.right_anchor,
+            inner_left_anchor=inner_left,
+            inner_right_anchor=inner_right,
+            head=len(flank.inner_upstream),
+            tail=len(flank.inner_downstream),
+            motif_max_edits=(
+                config.library.motif_max_edits
+                if settings.motif_max_edits is None
+                else settings.motif_max_edits
+            ),
+            minimum_identity=settings.minimum_identity,
+            minimum_query_coverage=settings.minimum_query_coverage,
+            inserts=inserts.get(library_id, {}),
+        )
+    return gates
 
 
 def insert_extractors(
@@ -666,6 +768,7 @@ def _assign_one(
     config: PipelineConfig,
     plan: CompressedPcrPlan | None = None,
     blocks_by_library: Mapping[str, Mapping[str, str]] | None = None,
+    gates: Mapping[str, InsertGate] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     try:
         library_id = config.reference_library_id_for_plate(str(read["plate_id"]))
@@ -696,6 +799,8 @@ def _assign_one(
                 "assembly_block": "",
                 "culture_plate": "",
                 "culture_plate_status": "not_configured",
+                "insert_identity": "",
+                "insert_query_coverage": "",
             },
             None,
         )
@@ -724,6 +829,29 @@ def _assign_one(
         read, final.reference_ids, library_id, plan, blocks_by_library or {}
     )
     row = _assignment_row(read, final, used_k, library_id, deconvolution)
+    row.setdefault("insert_identity", "")
+    row.setdefault("insert_query_coverage", "")
+    # Insert-scoped floors. The amplicon-wide numbers can pass while the insert
+    # is largely foreign, so a read that does not cover the design it was matched
+    # to is held back from that design's consensus rather than diluting it.
+    gate = (gates or {}).get(library_id)
+    row["insert_identity"] = ""
+    row["insert_query_coverage"] = ""
+    if gate is not None and final.status in {"assigned_unique", "assigned_alias_set"}:
+        verdict = gate.verdict(str(read["sequence"]), final.reference_ids[0])
+        if verdict is not None:
+            identity, coverage, passed = verdict
+            row["insert_identity"] = f"{identity:.6f}"
+            row["insert_query_coverage"] = f"{coverage:.6f}"
+            if not passed:
+                row["assignment_status"] = "insert_mismatch"
+                row["reason_code"] = (
+                    f"insert identity {identity:.3f} / coverage {coverage:.3f} "
+                    f"below the library floor "
+                    f"({gate.minimum_identity:.2f} / {gate.minimum_query_coverage:.2f}); "
+                    "the read carries insert sequence this design does not explain"
+                )
+                return row, None
     eligible = None
     if final.status in {"assigned_unique", "assigned_alias_set"} and final.query_sequence:
         quality: str | None = str(read["quality"])
@@ -854,6 +982,7 @@ def _init_assignment_worker(
 
     _ASSIGNMENT_WORKER["config"] = config
     _ASSIGNMENT_WORKER["indexes"] = _build_reference_indexes(config, references_by_library)
+    _ASSIGNMENT_WORKER["gates"] = build_insert_gates(config, references_by_library)
     _ASSIGNMENT_WORKER["blocks"] = _build_block_map(config, references_by_library)
     _ASSIGNMENT_WORKER["plan"] = (
         CompressedPcrPlan(
@@ -875,7 +1004,10 @@ def _assign_batch_worker(
     indexes = _ASSIGNMENT_WORKER["indexes"]
     plan = _ASSIGNMENT_WORKER["plan"]
     blocks = _ASSIGNMENT_WORKER["blocks"]
-    return tuple(_assign_one(read, indexes, config, plan, blocks) for read in batch)
+    gates = _ASSIGNMENT_WORKER["gates"]
+    return tuple(
+        _assign_one(read, indexes, config, plan, blocks, gates) for read in batch
+    )
 
 
 def _detect_chimeras(
@@ -1252,6 +1384,12 @@ def run_pipeline(
         for library_id, bundle in reference_collection.libraries
     }
     indexes_by_library = _build_reference_indexes(config, references_by_library)
+    insert_gates = build_insert_gates(config, references_by_library)
+    if insert_gates:
+        LOGGER.info(
+            "insert-scoped acceptance floors active for: %s",
+            ", ".join(sorted(insert_gates)),
+        )
     block_map = _build_block_map(config, references_by_library)
     compressed_plan = (
         CompressedPcrPlan(
@@ -1271,6 +1409,7 @@ def run_pipeline(
         "references": reference_collection.digest,
     }
     assignment_parameters = {
+        "insert_thresholds": sorted(insert_gates),
         "reference_libraries": reference_parameters,
         "plate_reference_map": dict(config.plate_reference_map),
         "compressed_pcr": asdict(config.compressed_pcr),
@@ -1304,7 +1443,8 @@ def run_pipeline(
                 ) -> tuple[tuple[dict[str, Any], dict[str, Any] | None], ...]:
                     return tuple(
                         _assign_one(
-                            read, indexes_by_library, config, compressed_plan, block_map
+                            read, indexes_by_library, config, compressed_plan,
+                            block_map, insert_gates,
                         )
                         for read in batch
                     )

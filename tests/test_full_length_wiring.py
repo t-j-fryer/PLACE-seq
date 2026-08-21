@@ -227,3 +227,102 @@ class InsertViewTests(unittest.TestCase):
         references, motifs = pipeline.insert_view({"plain": INSERTS}, {})
         self.assertEqual(references["plain"], INSERTS)
         self.assertEqual(motifs, {})
+
+
+class InsertGateTests(unittest.TestCase):
+    """Acceptance floors belong where the references differ: the insert."""
+
+    def setUp(self) -> None:
+        self.flanks = from_sequences(UPSTREAM, DOWNSTREAM)
+        inner_left, inner_right = self.flanks.insert_anchors()
+        self.gate = pipeline.InsertGate(
+            left_anchor=self.flanks.left_anchor,
+            right_anchor=self.flanks.right_anchor,
+            inner_left_anchor=inner_left,
+            inner_right_anchor=inner_right,
+            head=len(self.flanks.inner_upstream),
+            tail=len(self.flanks.inner_downstream),
+            motif_max_edits=3,
+            minimum_identity=0.80,
+            minimum_query_coverage=0.70,
+            inserts=dict(INSERTS),
+        )
+
+    def read_of(self, insert: str) -> str:
+        return "ACGT" + UPSTREAM + insert + DOWNSTREAM + "TGCA"
+
+    def test_a_matching_clone_passes(self) -> None:
+        identity, coverage, passed = self.gate.verdict(self.read_of(INSERTS["d1"]), "d1")
+        self.assertTrue(passed)
+        self.assertEqual(identity, 1.0)
+        self.assertEqual(coverage, 1.0)
+
+    def test_a_read_carrying_a_foreign_insert_segment_is_held_back(self) -> None:
+        """The case that produced a spurious 100%-identity designed clone.
+
+        The read is the assigned design preceded by a similar length of another
+        design, so the amplicon still looks fine but the insert is half foreign.
+        """
+
+        foreign = "TTTGGGCCCAAATTTGGGCCCAAATTTGGGCCCAAATTTGGG"
+        identity, coverage, passed = self.gate.verdict(
+            self.read_of(foreign + INSERTS["d1"]), "d1"
+        )
+        self.assertFalse(passed)
+        self.assertLess(coverage, 0.70)
+
+    def test_the_insert_is_found_by_offset_when_its_boundary_is_damaged(self) -> None:
+        """Assignable but not profilable reads must still be gated."""
+
+        damaged = UPSTREAM[:-6] + "AAAAAA"  # inner anchor destroyed
+        read = "ACGT" + damaged + INSERTS["d1"] + DOWNSTREAM + "TGCA"
+        insert = self.gate.insert_of(read)
+        self.assertIsNotNone(insert)
+        self.assertIn(INSERTS["d1"][10:30], insert)
+
+    def test_an_unusable_read_is_not_judged(self) -> None:
+        self.assertIsNone(self.gate.verdict("ACGT" * 20, "d1"))
+
+    def test_an_unknown_reference_is_not_judged(self) -> None:
+        self.assertIsNone(self.gate.verdict(self.read_of(INSERTS["d1"]), "nope"))
+
+
+@unittest.skipUnless(FULL_LENGTH_CONFIG.is_file(), "shipped config not present")
+class ShippedGateTests(unittest.TestCase):
+    def test_gates_are_built_for_both_full_length_libraries(self) -> None:
+        config = load_config(FULL_LENGTH_CONFIG)
+        flanks = pipeline.resolve_flanks(config)
+        config = pipeline.apply_flanks(config, flanks)
+        collection = read_reference_libraries(
+            {k: s.fasta for k, s in config.reference_sets.items()},
+            transforms=pipeline.flank_transforms(flanks),
+        )
+        references = {
+            library_id: {r.id: r.sequence for r in bundle.records}
+            for library_id, bundle in collection.libraries
+        }
+        gates = pipeline.build_insert_gates(config, references)
+        self.assertEqual(sorted(gates), ["lab", "sumo_ab"])
+        gate = gates["sumo_ab"]
+        self.assertEqual(len(gate.inserts), 684)
+        # the floors are the library's own, applied where they discriminate
+        self.assertEqual(gate.minimum_identity, config.reference_sets["sumo_ab"].minimum_identity)
+
+    def test_a_library_can_opt_out(self) -> None:
+        from dataclasses import replace as dc_replace
+
+        config = load_config(FULL_LENGTH_CONFIG)
+        flanks = pipeline.resolve_flanks(config)
+        libraries = dict(config.reference_libraries)
+        libraries["lab"] = dc_replace(libraries["lab"], insert_thresholds=False)
+        config = dc_replace(config, reference_libraries=libraries)
+        config = pipeline.apply_flanks(config, flanks)
+        collection = read_reference_libraries(
+            {k: s.fasta for k, s in config.reference_sets.items()},
+            transforms=pipeline.flank_transforms(flanks),
+        )
+        references = {
+            library_id: {r.id: r.sequence for r in bundle.records}
+            for library_id, bundle in collection.libraries
+        }
+        self.assertEqual(sorted(pipeline.build_insert_gates(config, references)), ["sumo_ab"])

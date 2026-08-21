@@ -134,6 +134,12 @@ chimera:
   window: 90
   step: 45
   write_pcr_origin: false
+  # Reads belonging to a chimeric clone could stop also feeding a parent design's
+  # consensus, which would remove ~57 spurious clones from this run. Off until
+  # chimera calls are sound enough to rest on: half of them are currently
+  # explained as well by one design as by two, and with exclusion on that cost
+  # four genuine clones. exclude_reads: written turns it on.
+  exclude_reads: none
 
 compressed_pcr:
   enabled: true

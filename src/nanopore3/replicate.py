@@ -133,7 +133,7 @@ def load_calls(
 
     stages = run_dir / "stages"
     sequences = read_fasta(stages / "04_consensus" / "consensus.fasta")
-    sequences.update(read_fasta(stages / "04b_chimera" / "clones" / "scaffolds.fasta"))
+    sequences.update(read_fasta(stages / "03b_chimera" / "clones" / "scaffolds.fasta"))
 
     wells: dict[str, dict[str, Call]] = {}
 
@@ -153,7 +153,7 @@ def load_calls(
                 sequence=sequences.get(row["consensus_id"], ""),
             )
 
-    clones_csv = stages / "04b_chimera" / "clones" / "clones.csv"
+    clones_csv = stages / "03b_chimera" / "clones" / "clones.csv"
     if include_chimeras and clones_csv.exists():
         with clones_csv.open("r", encoding="utf-8") as handle:
             for row in csv.DictReader(handle):

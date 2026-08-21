@@ -171,6 +171,71 @@ def flank_transforms(flanks: Mapping[str, Flanks]):
     }
 
 
+def insert_extractors(
+    config: PipelineConfig,
+    flanks: Mapping[str, Flanks],
+) -> dict[str, Callable[[str], str | None]]:
+    """Per-library "give me the insert of this read" functions.
+
+    A full-length library looks for the insert boundaries first, and only if that
+    search fails slices the insert positionally out of the primer-anchored region
+    the assignment stage already matched.  The order matters and was measured:
+    slicing positionally for *every* read gives fuzzier insert ends, which
+    fragments signatures and cost 11 of 90 chimeric clones to the depth
+    threshold.  Falling back only when needed is strictly additive - it recovers
+    reads that were assignable but not profilable, like the six in RP07 A12 that
+    escaped chimera detection and went on to build a spurious designed consensus,
+    without moving any read that already worked.
+    """
+
+    extractors: dict[str, Callable[[str], str | None]] = {}
+    for library_id, settings in config.reference_sets.items():
+        max_edits = (
+            config.library.motif_max_edits
+            if settings.motif_max_edits is None
+            else settings.motif_max_edits
+        )
+        flank = flanks.get(library_id)
+        if flank is None:
+            left = settings.forward_motif or config.library.forward_motif
+            right = settings.reverse_motif or config.library.reverse_motif
+
+            def extract(sequence: str, left=left, right=right, edits=max_edits):
+                found = extract_insert(sequence, left, right, max_edits=edits)
+                return found.sequence if found.status == "found" else None
+
+        else:
+            inner_left, inner_right = flank.insert_anchors()
+            outer_left, outer_right = flank.left_anchor, flank.right_anchor
+            head, tail = len(flank.inner_upstream), len(flank.inner_downstream)
+
+            def extract(
+                sequence: str,
+                inner_left=inner_left,
+                inner_right=inner_right,
+                outer_left=outer_left,
+                outer_right=outer_right,
+                edits=max_edits,
+                head=head,
+                tail=tail,
+            ):
+                exact = extract_insert(sequence, inner_left, inner_right, max_edits=edits)
+                if exact.status == "found" and exact.sequence:
+                    return exact.sequence
+                # Fallback: the read reached both primer sites even though its
+                # insert boundary did not match, so take the insert by offset.
+                found = extract_insert(sequence, outer_left, outer_right, max_edits=edits)
+                if found.status != "found" or not found.sequence:
+                    return None
+                region = found.sequence
+                if len(region) <= head + tail:
+                    return None
+                return region[head : len(region) - tail]
+
+        extractors[library_id] = extract
+    return extractors
+
+
 def insert_view(
     references_by_library: Mapping[str, Mapping[str, str]],
     flanks: Mapping[str, Flanks],
@@ -820,6 +885,7 @@ def _detect_chimeras(
     root: Path,
     plan: CompressedPcrPlan | None = None,
     region_motifs: Mapping[str, tuple[str, str]] | None = None,
+    extractors: Mapping[str, Callable[[str], str | None]] | None = None,
 ) -> dict[str, Any]:
     """Group reads by positional signature and write a consensus per clone.
 
@@ -858,32 +924,38 @@ def _detect_chimeras(
     totals: Counter[str] = Counter()
     rows: list[dict[str, Any]] = []
     scaffolds: list[str] = []
+    # read_uid -> the chimeric clone that accounts for it, so the consensus stage
+    # can stop the same molecule appearing a second time under a design's name.
+    claimed: list[tuple[str, str]] = []
     for (plate, well, library), reads in sorted(wells.items()):
         reference_settings = config.reference_sets[library]
         index = indexes[library]
         signatures = []
         inserts: dict[str, str] = {}
         scoped = (region_motifs or {}).get(library)
-        left_motif, right_motif = scoped or (
-            reference_settings.forward_motif or config.library.forward_motif,
-            reference_settings.reverse_motif or config.library.reverse_motif,
-        )
-        for read_id, sequence in reads:
-            extraction = extract_insert(
-                sequence,
-                left_motif,
-                right_motif,
-                max_edits=(
-                    config.library.motif_max_edits
-                    if reference_settings.motif_max_edits is None
-                    else reference_settings.motif_max_edits
-                ),
+        extract = (extractors or {}).get(library)
+        if extract is None:
+            left_motif, right_motif = scoped or (
+                reference_settings.forward_motif or config.library.forward_motif,
+                reference_settings.reverse_motif or config.library.reverse_motif,
             )
-            if extraction.status != "found" or not extraction.sequence:
+            max_edits = (
+                config.library.motif_max_edits
+                if reference_settings.motif_max_edits is None
+                else reference_settings.motif_max_edits
+            )
+
+            def extract(sequence: str, left=left_motif, right=right_motif, edits=max_edits):
+                found = extract_insert(sequence, left, right, max_edits=edits)
+                return found.sequence if found.status == "found" else None
+
+        for read_id, sequence in reads:
+            insert = extract(sequence)
+            if not insert:
                 continue
-            inserts[read_id] = extraction.sequence
+            inserts[read_id] = insert
             signatures.append(
-                signature_for(read_id, extraction.sequence, index,
+                signature_for(read_id, insert, index,
                               window=settings.window, step=settings.step)
             )
         if not signatures:
@@ -894,6 +966,11 @@ def _detect_chimeras(
         totals.update(outcome)
         for group in groups:
             keep = group.origin == ASSEMBLY_ORIGIN or settings.write_pcr_origin
+            if not keep and settings.exclude_reads == "all":
+                # Not a clone, so nothing is written; but its reads are not
+                # evidence for any design either.
+                for read_id in group.read_ids:
+                    claimed.append((read_id, f"pcr:{group.label}"))
             if not keep:
                 # Counted above, but not written: a PCR template-switch product
                 # is not a clone, and a FASTA beside real ones invites misreading.
@@ -948,6 +1025,8 @@ def _detect_chimeras(
                     culture_plate = resolved.culture_plate or ""
             chimera_id = f"chim-{canonical_digest({'g': group.label, 'p': plate, 'w': well})[:16]}"
             scaffolds.append(f">{chimera_id}\n{scaffold}\n")
+            if settings.exclude_reads in ("written", "all"):
+                claimed.extend((read_id, chimera_id) for read_id in group.read_ids)
             rows.append({
                 "chimera_id": chimera_id, "culture_plate": culture_plate,
                 "plate_id": plate, "well_id": well, "reference_library_id": library,
@@ -971,6 +1050,11 @@ def _detect_chimeras(
     # The spliced scaffold is what QC must grade a chimera against; storing it
     # here keeps QC from having to re-derive a junction it did not compute.
     (root / "scaffolds.fasta").write_text("".join(scaffolds), encoding="ascii")
+    with (root / "claimed_reads.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, lineterminator="\n")
+        writer.writerow(["read_uid", "chimera_id"])
+        writer.writerows(sorted(claimed))
+    totals["reads_claimed"] = len(claimed)
     return dict(sorted(totals.items()))
 
 
@@ -1248,12 +1332,67 @@ def run_pipeline(
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(counts.items())))
 
     assignment_dir = run_dir / "stages" / "03_assignment"
+    # A chimeric molecule is a real clone in a real well, and assignment cannot
+    # describe it: an even split falls below the identity floor, a lopsided one
+    # is attributed to whichever parent dominates. This stage asks a positional
+    # question instead and gives those reads a consensus of their own. It sits
+    # beside consensus rather than inside it so that changing a chimera setting
+    # does not invalidate the reference-guided consensuses.
+    if config.chimera.enabled:
+        chimera_parameters = {**asdict(config.chimera), "seed": config.random_seed}
+        chimera_inputs = {
+            "demuxed_reads": sha256_file(demux_reads),
+            "references": reference_collection.digest,
+        }
+        chimera_fp = _stage_fingerprint(
+            "03b_chimera", chimera_parameters, chimera_inputs,
+            backend_versions=edlib_backend_versions,
+        )
+        with StageDirectory(
+            run_dir, "03b_chimera", chimera_fp,
+            pipeline_version=__version__, parameters=chimera_parameters,
+            input_digests=chimera_inputs, backend_versions=edlib_backend_versions,
+            resume=resume,
+        ) as stage:
+            if not stage.reused:
+                chimera_references, chimera_motifs = insert_view(
+                    references_by_library, flanks
+                )
+                summary = _detect_chimeras(
+                    config, demux_reads, chimera_references,
+                    stage.output_path("clones"), compressed_plan,
+                    region_motifs=chimera_motifs,
+                    extractors=insert_extractors(config, flanks),
+                )
+                atomic_write_json(stage.output_path("summary.json"), summary)
+
     eligible_path = assignment_dir / "consensus_eligible.jsonl.gz"
+    # A read that belongs to a chimeric clone is already building that clone's
+    # consensus. Letting it also vote for one of the parent designs makes one
+    # molecule appear twice, the second time under a name it does not have.
+    claimed_path = run_dir / "stages" / "03b_chimera" / "clones" / "claimed_reads.csv"
+    claimed_reads: set[str] = set()
+    if config.chimera.enabled and config.chimera.exclude_reads != "none":
+        if claimed_path.is_file():
+            with claimed_path.open("r", encoding="utf-8", newline="") as handle:
+                claimed_reads = {row["read_uid"] for row in csv.DictReader(handle)}
+        LOGGER.info(
+            "excluding %d read(s) already accounted for by a chimeric clone",
+            len(claimed_reads),
+        )
     consensus_inputs = {
         "eligible": sha256_file(eligible_path),
         "references": reference_collection.digest,
     }
-    consensus_parameters = {**asdict(config.consensus), "seed": config.random_seed}
+    if claimed_path.is_file():
+        consensus_inputs["chimera_claimed_reads"] = sha256_file(claimed_path)
+    consensus_parameters = {
+        **asdict(config.consensus),
+        "seed": config.random_seed,
+        "exclude_chimeric_reads": config.chimera.exclude_reads
+        if config.chimera.enabled
+        else "none",
+    }
     consensus_fp = _stage_fingerprint(
         "04_consensus",
         consensus_parameters,
@@ -1283,7 +1422,13 @@ def run_pipeline(
             culture_plates: dict[
                 tuple[str, str, str, str, tuple[str, ...]], set[str]
             ] = defaultdict(set)
+            excluded = 0
             for row in _iter_gzip_json(eligible_path):
+                if row["read_uid"] in claimed_reads:
+                    # Counted here rather than silently skipped: a stage that
+                    # drops input must say how much.
+                    excluded += 1
+                    continue
                 aliases = tuple(row["reference_ids"])
                 key = (
                     row["sample_id"],
@@ -1353,41 +1498,11 @@ def run_pipeline(
             _write_csv(stage.output_path("consensus.csv.gz"), consensus_rows, fields)
             _write_csv(stage.output_path("contributors.csv.gz"), contributor_rows, ["consensus_id", "read_uid", "selection_rank"])
             stage.output_path("consensus.fasta").write_text("".join(fasta_parts), encoding="ascii")
-            atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["status"] for row in consensus_rows).items())))
+            consensus_summary = dict(sorted(Counter(row["status"] for row in consensus_rows).items()))
+            if claimed_reads:
+                consensus_summary["reads_excluded_as_chimeric"] = excluded
+            atomic_write_json(stage.output_path("summary.json"), consensus_summary)
 
-
-    # A chimeric molecule is a real clone in a real well, and assignment cannot
-    # describe it: an even split falls below the identity floor, a lopsided one
-    # is attributed to whichever parent dominates. This stage asks a positional
-    # question instead and gives those reads a consensus of their own. It sits
-    # beside consensus rather than inside it so that changing a chimera setting
-    # does not invalidate the reference-guided consensuses.
-    if config.chimera.enabled:
-        chimera_parameters = {**asdict(config.chimera), "seed": config.random_seed}
-        chimera_inputs = {
-            "demuxed_reads": sha256_file(demux_reads),
-            "references": reference_collection.digest,
-        }
-        chimera_fp = _stage_fingerprint(
-            "04b_chimera", chimera_parameters, chimera_inputs,
-            backend_versions=edlib_backend_versions,
-        )
-        with StageDirectory(
-            run_dir, "04b_chimera", chimera_fp,
-            pipeline_version=__version__, parameters=chimera_parameters,
-            input_digests=chimera_inputs, backend_versions=edlib_backend_versions,
-            resume=resume,
-        ) as stage:
-            if not stage.reused:
-                chimera_references, chimera_motifs = insert_view(
-                    references_by_library, flanks
-                )
-                summary = _detect_chimeras(
-                    config, demux_reads, chimera_references,
-                    stage.output_path("clones"), compressed_plan,
-                    region_motifs=chimera_motifs,
-                )
-                atomic_write_json(stage.output_path("summary.json"), summary)
 
     consensus_dir = run_dir / "stages" / "04_consensus"
     qc_inputs = {
@@ -1517,7 +1632,7 @@ def run_pipeline(
             # they are graded and exported like any other consensus. They are
             # scored against the spliced parent scaffold, which is the thing a
             # correct chimeric clone should equal.
-            chimera_dir = run_dir / "stages" / "04b_chimera" / "clones"
+            chimera_dir = run_dir / "stages" / "03b_chimera" / "clones"
             chimera_rows: list[dict[str, Any]] = []
             if (chimera_dir / "clones.csv").exists():
                 scaffolds: dict[str, str] = {}
@@ -1632,7 +1747,7 @@ def run_pipeline(
                     "QC": run_dir / "stages" / "05_qc" / "summary.json",
                 }.items()
             }
-            chimera_summary = run_dir / "stages" / "04b_chimera" / "summary.json"
+            chimera_summary = run_dir / "stages" / "03b_chimera" / "summary.json"
             if chimera_summary.exists():
                 sections["Chimeric clones"] = json.loads(
                     chimera_summary.read_text(encoding="utf-8")

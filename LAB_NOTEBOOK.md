@@ -15,6 +15,110 @@ Conventions:
 
 ---
 
+## 2026-08-21 — The chimeric-read exclusion works, and must not be switched on yet
+
+Implemented as agreed, measured, and then **defaulted off**, because measuring it
+exposed that the chimera calls it rests on are not sound enough to rest on.
+
+### What was built
+
+1. **Chimera detection moved ahead of consensus** (`04b_chimera` -> `03b_chimera`).
+   It only ever needed the demultiplexed reads and the reference list, so nothing
+   is lost by running it first.
+2. **It records the reads it claims** (`clones/claimed_reads.csv`: read_uid,
+   chimera_id).
+3. **`chimera.exclude_reads`** = `written` | `all` | `none`. With `written`, a read
+   belonging to a written chimeric clone stops also voting for a parent design -
+   it is not discarded, it is already building its own clone's consensus.
+4. **The consensus stage reports what it skipped** (`reads_excluded_as_chimeric`)
+   rather than skipping silently, and its fingerprint includes both the setting
+   and the digest of the claimed-read list.
+5. **Profiling recruits more reads.** The insert boundaries are searched first and
+   only if that fails is the insert sliced positionally out of the primer-anchored
+   region the assignment already matched. That recovers reads that were assignable
+   but not profilable - the six in RP07 A12 that escaped detection and built a
+   spurious consensus.
+
+### The exclusion does what it was meant to
+
+`runs/260608-full-length-v6b` against `runs/260608-full-length-v5c`:
+
+| | v5c | v6b |
+|---|---|---|
+| chimeric clones written | 90 | **103** (0 lost, 13 new) |
+| designed consensuses | 3,463 | 3,406 (**57 removed, 0 appearing**) |
+| of the shared, byte-identical | - | **3,394 / 3,406 (99.65%)** |
+| reads excluded as chimeric | - | 7,849 |
+
+The 57 removed had median identity 92.9% to their supposed design, 47 of them
+below 95%, 26 already graded `mixed_variants`. Exactly the population it was
+aimed at.
+
+### But it also deleted four genuine clones
+
+Four of the 57 were at 98-100% identity, and not marginal: RP05 A10 held **146
+reads giving a 100%-identity consensus** of `B_Block_2_dTF085_DENOISE_263_4`, and
+it disappeared, because a 160-read "chimeric clone" in the same well listed that
+design as its second parent and claimed the reads.
+
+146 reads agreeing perfectly with one design **are** that design. So that chimera
+call is a false positive.
+
+### Which led to measuring the calls themselves
+
+For each of the 103 written chimeric clones, how well does its spliced pair of
+references explain its consensus, against the best *single* reference - both by
+global alignment, so neither model is excused for unmatched ends:
+
+| | |
+|---|---|
+| median edits saved by two references instead of one | **4** |
+| clones a single design explains as well or better | **50 of 103** |
+| clones fitting their own scaffold within 10 edits | **10 of 103** |
+| median clone-to-scaffold distance | **87 edits** |
+
+The good calls are unmistakable - scaffold fit of 1-20 edits, beating the best
+single reference by 71-97. The bad ones are equally unmistakable: scaffold fit of
+200-300 edits while a single design sits 90-100 away. Roughly half the calls are
+in the second group.
+
+**This is pre-existing** - the same 90 clones are in v5c - but it was harmless
+there: a spurious chimera FASTA sat beside the true clone. Exclusion makes it
+consequential, because a false chimera now deletes a real clone.
+
+So `exclude_reads` ships as **`none`**, and the config says why. The plumbing is
+in place and one word turns it on.
+
+**I nearly reported the wrong number here.** My first measurement compared the
+scaffold by global alignment against the single reference by infix alignment,
+which lets the single reference ignore unmatched ends. It said 57 of 103. The
+fair comparison says 50 - the conclusion held, but the number would have been
+wrong and the method indefensible. *Comparing two models means aligning them the
+same way.*
+
+### The fix that unlocks this
+
+A chimera should have to earn its call: its spliced scaffold must explain the
+clone better than the best single reference, by a margin. That is one extra
+alignment per candidate group in a stage that already aligns every window, so the
+cost is negligible. It would drop ~50 of 103 calls, and make exclusion safe -
+the four genuine clones were deleted by exactly the calls this test rejects.
+
+Not implemented, because it changes what the pipeline calls a chimera, which is a
+scientific definition and wants sign-off rather than my judgement.
+
+### Next steps
+
+1. **Decide the acceptance test above**, then turn `exclude_reads` on.
+2. Runs kept: `260608-full-length-v5c` (the published figures) and
+   `260608-full-length-v6b` (evidence for this entry). `v6` was deleted - it
+   carried a worse extractor that lost 11 chimeric clones, found by the same
+   comparison and fixed before v6b.
+3. Carried over: RP01-RP04 and RP09-RP11 have no full-length config; PCR-origin
+   chimeras are counted but not localised.
+
+---
+
 ## 2026-08-20 (eleventh) — What is actually in RP07 A12, and one real defect
 
 Runs pruned to `260608-full-length-v5c` alone: v4, v5 and v5b deleted, 6.5 GB

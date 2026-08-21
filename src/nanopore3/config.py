@@ -429,8 +429,28 @@ class ChimeraSettings:
     step: int = 45
     minimum_depth: int | None = None
     write_pcr_origin: bool = False
+    # Which chimeric reads stop feeding the reference-guided consensuses.
+    # "written" excludes only reads belonging to a chimeric clone that was
+    # written, so every excluded read still contributes to a consensus - itself.
+    # "all" also excludes PCR-origin reads, which are artefacts and are not
+    # written, so those reads then contribute to nothing. "none" lets one molecule
+    # appear twice: once as itself and once as a mutated version of one parent.
+    #
+    # The default is "none" despite that, because exclusion is only as sound as
+    # the chimera calls it rests on, and measurement says they are not sound
+    # enough yet: of 103 chimeric clones written for the 260608 run, 50 are
+    # explained as well or better by a single design than by their spliced pair,
+    # and only 10 fit their own scaffold within 10 edits. With exclusion on,
+    # those false positives deleted four genuine clones - one with 146 reads at
+    # 100% identity. Turn this on once a chimera has to earn its call by beating
+    # the best single reference. See the 2026-08-21 notebook entry.
+    exclude_reads: str = "none"
 
     def __post_init__(self) -> None:
+        if self.exclude_reads not in ("written", "all", "none"):
+            raise ConfigError(
+                "chimera.exclude_reads must be 'written', 'all', or 'none'"
+            )
         if self.window < 1 or self.step < 1:
             raise ConfigError("chimera.window and chimera.step must be >= 1")
         if self.step > self.window:
@@ -1071,7 +1091,14 @@ def _parse_chimera(value: Any) -> ChimeraSettings:
     mapping = _mapping(value, location)
     _reject_unknown(
         mapping,
-        {"enabled", "window", "step", "minimum_depth", "write_pcr_origin"},
+        {
+            "enabled",
+            "window",
+            "step",
+            "minimum_depth",
+            "write_pcr_origin",
+            "exclude_reads",
+        },
         location,
     )
     return ChimeraSettings(
@@ -1085,6 +1112,9 @@ def _parse_chimera(value: Any) -> ChimeraSettings:
         ),
         write_pcr_origin=_boolean(
             mapping.get("write_pcr_origin", False), f"{location}.write_pcr_origin"
+        ),
+        exclude_reads=_nonempty_string(
+            mapping.get("exclude_reads", "written"), f"{location}.exclude_reads"
         ),
     )
 

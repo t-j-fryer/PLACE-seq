@@ -15,6 +15,40 @@ Conventions:
 
 ---
 
+## 2026-08-21 (ninth) — Stacked bars for the outcome figures
+
+Presentation only; no number moved. `--style stacked` (now the default) or
+`--style panels` for the previous two-panel version.
+
+`platform_reference_recovery` and `platform_sequence_populations` are now one bar
+per library and platform, split into Perfect / Screenable / Other, at 82 mm rather
+than 114 mm. Eight bars instead of twenty-four, and the composition of an outcome
+reads in one shape rather than across two panels.
+
+The two figures mean different things and the drawing says so:
+
+- **Recovery** bars do not fill: the three outcomes sum to the fraction of the
+  designed library recovered at all, so the gap to 100% is the part never seen. A
+  faint dotted outline marks the full height so that gap reads as data missing
+  rather than as a short bar.
+- **Population** bars fill: every sequence recovered lands in exactly one of the
+  three, so the bar is the whole population by construction and needs no outline.
+
+Colour now carries the outcome, because the x position carries the library -
+reusing the three tones already validated for the replicate figure (worst
+normal-vision dE 17.8, worst CVD dE 9.5). Hatching still separates the platforms.
+
+Two things this exposed:
+
+- **Matplotlib fills a legend column-major.** Five keys at `ncol=3` interleaved
+  the outcomes with the platforms and read as five unrelated entries. Two separate
+  legends, stacked, keeps the two vocabularies apart.
+- The previous panel version magnified Screenable and Other onto their own axis,
+  which the stacked version cannot do - at 3-4% they are thin bands. The panel
+  style is kept for when those categories are the point.
+
+---
+
 ## 2026-08-21 (eighth) — Consensus base calling rebuilt, after a literature check
 
 **Scientific change.** `runs/260608-full-length-v8c`, 21.1 min against v7's 18.6.

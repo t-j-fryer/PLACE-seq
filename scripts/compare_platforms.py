@@ -45,6 +45,9 @@ from nanopore3.figures import MM, save_figure, use_journal_style  # noqa: E402
 # 6 pt, with no blank margin to spare.
 NARROW = 68 * MM
 COMPACT = 114 * MM
+# Stacked bars need less width than grouped ones: eight bars rather than
+# twenty-four.
+STACKED = 82 * MM
 
 # Which barcode and culture plates hold which library.  This is knowledge about
 # the experiment, not about the data: RP08 carried the stuffer library, RP05
@@ -104,6 +107,15 @@ COLOURS = {
     "sumo_ab": "#009E73",
 }
 ILLUMINA_HATCH = "///"
+
+# In a stacked bar the colour has to carry the outcome, because the x position
+# carries the library. Same three tones as the replicate figure, already checked:
+# worst normal-vision dE 17.8, worst CVD dE 9.5.
+OUTCOME_COLOURS = {
+    platforms.PERFECT: "#2E6F6A",
+    platforms.SCREENABLE: "#6FA9A0",
+    platforms.OTHER: "#A8442E",
+}
 
 
 def grouped_bars(
@@ -301,6 +313,110 @@ def _outcome_legend(figure, *, rows_at: tuple[float, float]) -> None:
     )
 
 
+def stacked_figure(
+    values_for,
+    path: Path,
+    *,
+    ylabel: str,
+    complete_to_100: bool,
+):
+    """One bar per library and platform, stacked by outcome.
+
+    ``complete_to_100`` outlines the full height, for the recovery figure where
+    the three outcomes do not sum to 100 and the gap is the part of the library
+    never recovered.  The population figure needs no outline: every sequence lands
+    in one of the three, so its bars fill.
+    """
+
+    use_journal_style()
+    sets = [*LIBRARIES, UNION]
+    figure, axes = plt.subplots(figsize=(STACKED, 2.3))
+    width = 0.36
+    positions: list[float] = []
+    labels: list[str] = []
+    for index, library in enumerate(sets):
+        for offset, (platform, hatch) in enumerate(
+            (("nanopore", None), ("illumina", ILLUMINA_HATCH))
+        ):
+            centre = index + (offset - 0.5) * width * 1.06
+            positions.append(centre)
+            bottom = 0.0
+            if complete_to_100:
+                # The remainder up to 100% is the part of the library never
+                # recovered; drawn faintly so it reads as context, not as data.
+                axes.bar(
+                    centre, 100.0, width=width, facecolor="none",
+                    edgecolor="#9AA4AC", linewidth=0.4, linestyle=(0, (1, 2.2)),
+                    zorder=1,
+                )
+            for outcome in platforms.CLASS_ORDER:
+                value = values_for(library, platform, outcome)
+                if value <= 0:
+                    continue
+                style = {"facecolor": OUTCOME_COLOURS[outcome]}
+                if hatch:
+                    style = {
+                        "facecolor": "white",
+                        "hatch": hatch,
+                        "edgecolor": OUTCOME_COLOURS[outcome],
+                    }
+                axes.bar(
+                    centre, value, width=width, bottom=bottom,
+                    linewidth=0.5, zorder=2, **style,
+                )
+                if not hatch:
+                    axes.bar(
+                        centre, value, width=width, bottom=bottom,
+                        facecolor="none", edgecolor="black", linewidth=0.5, zorder=3,
+                    )
+                bottom += value
+            if hatch:
+                axes.bar(
+                    centre, bottom, width=width, facecolor="none",
+                    edgecolor="black", linewidth=0.5, zorder=3,
+                )
+        labels.append(library.label.replace("Library ", "Lib "))
+
+    axes.set_xticks(range(len(sets)))
+    axes.set_xticklabels(labels, fontsize=5.8)
+    axes.tick_params(axis="x", length=0)
+    axes.tick_params(axis="y", direction="in", length=3, width=0.6)
+    axes.set_ylim(0, 100)
+    axes.set_yticks([0, 25, 50, 75, 100])
+    axes.set_ylabel(ylabel)
+    axes.set_xlim(-0.55, len(sets) - 0.45)
+    for side in ("top", "right"):
+        axes.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        axes.spines[side].set_linewidth(0.6)
+
+    # Two legends rather than one: matplotlib fills a legend column-major, which
+    # interleaved the outcomes with the platforms and read as five unrelated keys.
+    outcomes = figure.legend(
+        [
+            Patch(facecolor=OUTCOME_COLOURS[o], edgecolor="black", linewidth=0.5)
+            for o in platforms.CLASS_ORDER
+        ],
+        list(platforms.CLASS_ORDER),
+        loc="lower center", bbox_to_anchor=(0.5, 0.105), ncol=3, frameon=False,
+        fontsize=5.8, handlelength=1.0, handleheight=0.85, handletextpad=0.4,
+        columnspacing=1.1,
+    )
+    figure.add_artist(outcomes)
+    figure.legend(
+        [
+            Patch(facecolor="#8C8C8C", edgecolor="black", linewidth=0.5),
+            Patch(facecolor="white", edgecolor="black", hatch=ILLUMINA_HATCH, linewidth=0.5),
+        ],
+        ["Nanopore, picked clones", "Illumina, block-matched depth"],
+        loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False,
+        fontsize=5.8, handlelength=1.0, handleheight=0.85, handletextpad=0.4,
+        columnspacing=1.1,
+    )
+    figure.subplots_adjust(left=0.155, right=0.99, top=0.97, bottom=0.33)
+    return save_figure(figure, path)
+
+
 def reference_recovery_figure(recovery: dict[str, dict[str, dict[str, float]]], path: Path):
     """Percentage of each designed library recovered, by platform."""
 
@@ -346,6 +462,17 @@ def main() -> int:
     )
     parser.add_argument("--culture-plates", type=int, default=11, help="per library set")
     parser.add_argument("--seed", type=int, default=141142, help="Illumina subsampling seed")
+    parser.add_argument(
+        "--style",
+        choices=("stacked", "panels"),
+        default="stacked",
+        help=(
+            "stacked: one bar per library and platform, split by outcome, so the "
+            "composition of what was recovered is visible in one shape. panels: "
+            "grouped bars with Perfect on its own axis and the small categories "
+            "magnified."
+        ),
+    )
     parser.add_argument(
         "--scope",
         choices=("insert", "amplicon"),
@@ -529,10 +656,28 @@ def main() -> int:
     )
 
     paths = [
-        sequences_per_well_figure(histograms, allocated, out_dir / "platform_sequences_per_well"),
-        reference_recovery_figure(recovery, out_dir / "platform_reference_recovery"),
-        population_figure(population, out_dir / "platform_sequence_populations"),
+        sequences_per_well_figure(histograms, allocated, out_dir / "platform_sequences_per_well")
     ]
+    if args.style == "stacked":
+        paths.append(
+            stacked_figure(
+                lambda library, platform, name: recovery[library.key][platform][name],
+                out_dir / "platform_reference_recovery",
+                ylabel="Designed library recovered (%)",
+                complete_to_100=True,
+            )
+        )
+        paths.append(
+            stacked_figure(
+                lambda library, platform, name: population[library.key][platform][name],
+                out_dir / "platform_sequence_populations",
+                ylabel="Sequences recovered (%)",
+                complete_to_100=False,
+            )
+        )
+    else:
+        paths.append(reference_recovery_figure(recovery, out_dir / "platform_reference_recovery"))
+        paths.append(population_figure(population, out_dir / "platform_sequence_populations"))
     print("\nwrote:")
     for path in paths:
         print(f"  {path.with_suffix('')}.{{pdf,png,svg}}")

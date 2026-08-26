@@ -15,6 +15,96 @@ Conventions:
 
 ---
 
+## 2026-08-21 (fifteenth) — CORRECTION: the damage is real and heritable, and it happened before the clone existed
+
+Corrects the 2026-08-21 (fourteenth) entry on one point that changes what the
+result means. That entry identified the G:C -> T:A signature correctly and
+attributed it to oxidative damage **during sample preparation**, following
+Costello et al. Confirmed from the bench: the pooled and dedicated barcodes may
+have been grown as **separate cultures**. That makes them a test, and the test
+says the attribution was wrong about *when*.
+
+### The test
+
+Two independent cultures cannot invent the same base at the same position. So a
+minority allele present in both was in whatever was picked; one present in a
+single route was made afterwards. `scripts/replicate_heterogeneity.py` runs this
+over every position of the 175 clones both routes recovered, across 188 wells.
+
+| | shared between the two cultures | one route only |
+|---|---|---|
+| **G:C -> T:A** | **7** | 4 |
+| transition | 2 | 55 |
+| other transversion | 1 | 14 |
+
+And the two populations do not overlap at all:
+
+| | n | peak fraction |
+|---|---|---|
+| one route only | 73 | median **0.06**, and **none exceeds 0.10** |
+| shared | 10 | median **0.99**, range 0.46-1.00 |
+
+So the unshared class is sequencing noise - transition-dominated, exactly the
+background spectrum measured in the previous entry, and never above 10%. The
+shared class is real, heritable sequence, and **7 of its 10 members are
+G:C -> T:A** against 7.1% for that class in the background.
+
+### What that changes
+
+The oxidative signature is in the **heritable** variation, not in the artefacts.
+The damage therefore happened to DNA that went on to become the clone - oligo
+synthesis, amplification, or assembly - and not to the sample after it was
+grown. Sample-prep damage cannot be shared by two cultures.
+
+**Which also answers the question that started this.** A single colony does not
+need two plasmids to show two alleles. One molecule is enough, by either of two
+documented routes:
+
+1. **A pre-mutagenic lesion.** 8-oxoG is not a mutation; it is a base that pairs
+   with C or with A depending on the replication event. A single transformed
+   molecule carrying one 8-oxoG produces both sequences in the daughter plasmids,
+   inside one cell, in the first rounds of replication.
+2. **A heteroduplex.** An assembled or ligated molecule whose two strands differ
+   at a position - which is what an early PCR error or an 8-oxoG bypass produces -
+   segregates into two different plasmids on replication.
+
+Either way the mixture is established in the founding cell, which is why it is
+present in both cultures grown from it, and why the ratio then differs between
+them: after the mixture exists, a high-copy plasmid drifts.
+
+### One thing this does not explain
+
+**The pooled route reports a lower non-reference fraction in 10 of 10 shared
+alleles**, mean deficit 12.6 points (B09 1.00 vs 0.58, A06 0.97 vs 0.61). Ten out
+of ten is not drift, which has no preferred direction. Two candidates:
+cross-well leakage inside the pooled barcode, where many more wells carry the same
+design and would contribute reference-allele reads; or a genuine difference in
+culture history. Ten alleles cannot separate them.
+
+Note also that 63 of the 73 unshared alleles are pooled-only, but that is
+confounded: pooled median depth is **58** against the dedicated **238**, and a 5%
+floor is far easier to cross by chance at depth 58. Restricted to positions with
+100+ reads in both routes the sample falls to 8 alleles - too few to settle,
+though the class pattern survives it (oxo shared 2/2, transitions unshared 3/3).
+
+### And it reframes the replicate figure
+
+If the two routes are separate cultures, `replicate_concordance` (176/180
+byte-identical over ~1.2 kb) is not measuring the pipeline against itself. It is
+measuring **pipeline plus culture plus colony**, end to end. That is a stronger
+statement about the workflow than the one the figure has been captioned with, and
+the caption should say so.
+
+### Lesson
+
+**An experimental detail you never asked about can be the control you needed.**
+"Same well, sequenced twice" and "same well, grown twice" are different
+experiments, and only the second can date a mutation. The analysis was already
+sitting on 188 paired wells and could not use them until someone at the bench said
+what the pairing actually was.
+
+---
+
 ## 2026-08-21 (fourteenth) — The two-allele wells are mostly oxidative damage, not two clones
 
 Corrects the 2026-08-21 (eleventh) entry, which concluded that a mixed plasmid

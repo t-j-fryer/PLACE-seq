@@ -65,8 +65,10 @@ from .provenance import (
 from .fragments import FragmentLibrary
 from .qc import (
     classify_mixed_positions,
+    designed_allele_fraction,
     evaluate_consensus,
     mixed_signature,
+    worst_protein_effect,
 )
 from .qc import _locate as _locate_motif
 from .flanks import Flanks, from_sequences, from_template
@@ -387,15 +389,27 @@ def qc_regions(flank: Flanks, reference_length: int) -> dict[str, tuple[int, int
     return spans
 
 
-def parse_mixed_alleles(value: str) -> tuple[tuple[int, str, str], ...]:
-    """Read back the consensus stage's ``12:G>GT|880:C>AC`` column."""
+def parse_mixed_alleles(
+    value: str,
+) -> tuple[tuple[int, str, str, tuple[float, ...]], ...]:
+    """Read back the consensus stage's ``12:G>GT:0.61,0.39`` column.
 
-    out: list[tuple[int, str, str]] = []
+    The fractions are optional, so a run written before they existed still parses.
+    """
+
+    out: list[tuple[int, str, str, tuple[float, ...]]] = []
     for item in filter(None, (value or "").split("|")):
         index, _, rest = item.partition(":")
-        base, _, alleles = rest.partition(">")
-        if index.isdigit() and base and alleles:
-            out.append((int(index), base, alleles))
+        spec, _, shares = rest.partition(":")
+        base, _, alleles = spec.partition(">")
+        if not (index.isdigit() and base and alleles):
+            continue
+        fractions: tuple[float, ...] = ()
+        try:
+            fractions = tuple(float(f) for f in shares.split(",") if f)
+        except ValueError:
+            fractions = ()
+        out.append((int(index), base, alleles, fractions))
     return tuple(out)
 
 
@@ -1664,7 +1678,9 @@ def run_pipeline(
                     # Which alleles disagreed, not just how many places. An "N"
                     # cannot say whether the position carries a damage signature.
                     "mixed_alleles": "|".join(
-                        f"{index}:{base}>{alleles}" for index, base, alleles in result.mixed_alleles
+                        f"{index}:{base}>{alleles}:"
+                        + ",".join(f"{f:.4f}" for f in fractions)
+                        for index, base, alleles, fractions in result.mixed_alleles
                     ),
                     "background_error_rate": f"{result.background_error_rate:.5f}",
                     "weakest_support": f"{result.weakest_support:.4f}",
@@ -1808,6 +1824,14 @@ def run_pipeline(
                             "mixed_signature": mixed_signature(mixed),
                             "mixed_detail": " ".join(p.describe() for p in mixed),
                             "mixed_in_reading_frame": sum(1 for p in mixed if p.protein_effect),
+                            # A mixed clone still containing the designed base is
+                            # a different screening decision from one that does
+                            # not: the intended sequence is in the well.
+                            "designed_allele_fraction": (
+                                "" if designed_allele_fraction(mixed) is None
+                                else f"{designed_allele_fraction(mixed):.4f}"
+                            ),
+                            "mixed_worst_effect": worst_protein_effect(mixed),
                         }
                     )
             fields = [
@@ -1832,6 +1856,8 @@ def run_pipeline(
                 "mixed_signature",
                 "mixed_detail",
                 "mixed_in_reading_frame",
+                "mixed_worst_effect",
+                "designed_allele_fraction",
             ]
             # Full-length references report accuracy per region as well as over
             # the whole amplicon; the columns exist only when a library declares

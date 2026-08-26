@@ -15,6 +15,56 @@ Conventions:
 
 ---
 
+## 2026-08-21 (seventeenth) — Annotating a mixed clone for screening, not just grading it
+
+Extends the 2026-08-21 (sixteenth) entry. Raised from the bench: a missense or
+nonsense variant is not disqualifying **if the designed sequence is also present**
+in the well - a plate picked from it can still yield the intended protein. What
+downstream screening needs is therefore not a verdict but an annotation.
+
+### The question a grade cannot answer
+
+"Is this clone clean" and "is the thing I designed in this well at all" are
+different questions, and only the second decides whether a well is worth
+screening. A well that is 62% a nonsense variant and 38% the design still
+contains the design.
+
+So the consensus stage now records the **read fraction of every competing
+allele**, not just which alleles they were, and two derived columns say what
+follows from it:
+
+| column | example | what it answers |
+|---|---|---|
+| `designed_allele_fraction` | `0.3800` | how much of the well still carries the designed base, at its **weakest** mixed position |
+| `mixed_worst_effect` | `nonsense` | the most damaging thing any mixed position does to the protein |
+
+`mixed_detail` gained the shares too: `412:G>GT:insert/missense:G0.62,T0.38`.
+
+Weakest rather than mean, because a clone is only as recoverable as its worst
+position: if the designed base is absent at any one of them, no cell in the well
+carries the intended sequence end to end.
+
+`designed_allele_fraction` is empty - not zero - for a clone with no mixed
+position, so "not applicable" and "the design is gone" stay distinguishable.
+
+### Deliberately not done
+
+The grade still does not depend on the protein effect. A `mixed_damage` clone with
+a nonsense variant grades the same as one with a silent variant, and the columns
+say which. Folding the effect into the grade would force one threshold on every
+downstream use, and screening, sequence-recovery statistics and clone picking do
+not want the same one.
+
+### Tests
+
+`tests/test_mixed_damage.py` grew to 18: that the designed share is read per
+position; that a clone takes its weakest; that the designed base can be absent
+entirely; that no mixed position reports `None` rather than `0.0`; that the worst
+effect is taken across positions; and that a run written before the fractions
+existed still parses. 291 pass.
+
+---
+
 ## 2026-08-21 (sixteenth) — `mixed_damage`: a mixture with a known cause is a usable clone
 
 **Scientific change** - it moves clones between outcome classes. Requested from the

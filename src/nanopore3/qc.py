@@ -191,14 +191,41 @@ class MixedPosition:
     # Empty when the position lies outside the reading frame, which is the case
     # that matters least: the clone's protein is unaffected either way.
     protein_effect: str
+    # Read share per allele, in the order the alleles are listed.
+    fractions: tuple[float, ...] = ()
+
+    @property
+    def designed_fraction(self) -> float:
+        """Share of reads still carrying the designed base at this position.
+
+        The question screening asks is not "is this clone clean" but "is the
+        thing I designed in this well at all".  A well that is 60% a nonsense
+        variant and 40% the design still contains the design, and a plate picked
+        from it can still yield the intended protein - which is a different
+        decision from a well where the design is absent.
+        """
+
+        for allele, fraction in zip(self.alleles, self.fractions, strict=False):
+            if allele == self.reference_base:
+                return fraction
+        return 0.0
+
+    @property
+    def variant_alleles(self) -> str:
+        return "".join(a for a in self.alleles if a != self.reference_base)
 
     def describe(self) -> str:
         where = self.region if not self.protein_effect else f"{self.region}/{self.protein_effect}"
-        return f"{self.position}:{self.reference_base}>{self.alleles}:{where}"
+        shares = ",".join(f"{a}{f:.2f}" for a, f in
+                          zip(self.alleles, self.fractions, strict=False))
+        return (
+            f"{self.position}:{self.reference_base}>{self.alleles}:{where}"
+            + (f":{shares}" if shares else "")
+        )
 
 
 def classify_mixed_positions(
-    mixed: Sequence[tuple[int, str, str]],
+    mixed: Sequence[tuple[int, str, str] | tuple[int, str, str, Sequence[float]]],
     reference: str,
     *,
     spans: dict[str, tuple[int, int]] | None = None,
@@ -220,7 +247,9 @@ def classify_mixed_positions(
     """
 
     out: list[MixedPosition] = []
-    for position, reference_base, alleles in mixed:
+    for entry in mixed:
+        position, reference_base, alleles = entry[0], entry[1], entry[2]
+        fractions = tuple(entry[3]) if len(entry) > 3 else ()
         region = ""
         for name, (start, end) in (spans or {}).items():
             if start <= position < end:
@@ -237,9 +266,34 @@ def classify_mixed_positions(
                 region=region or "unplaced",
                 oxidative=(reference_base, alleles) in OXIDATIVE_ALLELES,
                 protein_effect=effect,
+                fractions=fractions,
             )
         )
     return tuple(out)
+
+
+def designed_allele_fraction(positions: Sequence[MixedPosition]) -> float | None:
+    """The worst share of the designed base across a clone's mixed positions.
+
+    ``None`` when the clone has no mixed position.  A clone is only as recoverable
+    as its weakest position: if the design is absent at any one of them, no cell in
+    the well carries the intended sequence end to end.
+    """
+
+    if not positions:
+        return None
+    return min(p.designed_fraction for p in positions)
+
+
+def worst_protein_effect(positions: Sequence[MixedPosition]) -> str:
+    """The most damaging effect any mixed position has on the protein."""
+
+    order = {"": 0, "silent": 1, "missense": 2, "frameshifted": 3, "nonsense": 4}
+    worst = ""
+    for position in positions:
+        if order.get(position.protein_effect, 0) > order.get(worst, 0):
+            worst = position.protein_effect
+    return worst
 
 
 def _protein_effect(

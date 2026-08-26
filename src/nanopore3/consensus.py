@@ -60,9 +60,12 @@ class ConsensusResult:
     # quality. All zero for backends that do not compute them.
     mixed_positions: int = 0
     # One entry per mixed position: (reference index, reference base, the
-    # competing alleles sorted). Which alleles disagreed is what distinguishes a
-    # damage signature from a genuine two-clone well, and an "N" cannot say it.
-    mixed_alleles: tuple[tuple[int, str, str], ...] = ()
+    # competing alleles sorted, their read fractions in the same order). Which
+    # alleles disagreed distinguishes a damage signature from a genuine two-clone
+    # well, and the fractions answer the question screening actually asks - is the
+    # designed sequence still present in this well, and at what share. An "N" says
+    # neither.
+    mixed_alleles: tuple[tuple[int, str, str, tuple[float, ...]], ...] = ()
     background_error_rate: float = 0.0
     deletion_error_rate: float = 0.0
     weakest_support: float = 0.0
@@ -200,11 +203,11 @@ def _call_position(
     significance: float,
     minor_fraction: float,
     deletion_support: float,
-) -> tuple[str, bool, float, str]:
+) -> tuple[str, bool, float, tuple[str, tuple[float, ...]]]:
     """Decide one position: the base, whether it is mixed, its support, and alleles.
 
-    The fourth value is the competing alleles when the position is mixed, sorted
-    and joined, and empty otherwise.
+    The fourth value is the competing alleles when the position is mixed - sorted
+    and joined, with their read fractions in the same order - and empty otherwise.
 
     An allele has to clear two independent bars: a one-sided binomial test against
     the group's own background error rate, and a minimum share of the reads.
@@ -229,7 +232,7 @@ def _call_position(
     """
 
     if not counts or depth <= 0:
-        return "N", False, 0.0, ""
+        return "N", False, 0.0, ("", ())
 
     # A deletion is a majority decision at the same threshold the majority caller
     # uses, never a mixture call. Taking one at >50% instead silently shortened 76
@@ -240,9 +243,9 @@ def _call_position(
     # survived the quality filter.
     reads_here = spanning or depth
     if deletions and deletions / reads_here >= deletion_support:
-        return "-", False, deletions / reads_here, ""
+        return "-", False, deletions / reads_here, ("", ())
     if not bases:
-        return "N", False, deletions / depth, ""
+        return "N", False, deletions / depth, ("", ())
 
     winner, winning_count = sorted(bases.items(), key=lambda item: (-item[1], item[0]))[0]
     support = winning_count / depth
@@ -258,14 +261,20 @@ def _call_position(
         < significance
     ]
     if len(significant) > 1:
-        return "N", True, support, "".join(sorted(significant))
+        ordered = sorted(significant)
+        return (
+            "N",
+            True,
+            support,
+            ("".join(ordered), tuple(bases[allele] / depth for allele in ordered)),
+        )
     if winner == reference_base:
-        return winner, False, support, ""
+        return winner, False, support, ("", ())
     # A non-reference winner has to be significant in its own right; otherwise the
     # position is noise and saying nothing is more honest than picking a side.
     if winner in significant:
-        return winner, False, support, ""
-    return "N", False, support, ""
+        return winner, False, support, ("", ())
+    return "N", False, support, ("", ())
 
 
 def _median(values: Sequence[float]) -> float:
@@ -396,7 +405,7 @@ def _build_portable_consensus(
     sequence_parts: list[str] = []
     depths: list[int] = []
     ambiguous = 0
-    mixed: list[tuple[int, str, str]] = []
+    mixed: list[tuple[int, str, str, tuple[float, ...]]] = []
     weakest = 1.0
     for ri, ref_base in enumerate(ref):
         if ri in insert_votes:
@@ -434,7 +443,7 @@ def _build_portable_consensus(
             base, is_mixed, support = _majority_call(
                 alleles, depth=position_depth, min_support=min_support
             )
-            competing = ""
+            competing = ("", ())
         else:
             base, is_mixed, support, competing = _call_position(
                 alleles,
@@ -449,7 +458,7 @@ def _build_portable_consensus(
                 deletion_support=min_support,
             )
         if is_mixed:
-            mixed.append((ri, ref_base, competing))
+            mixed.append((ri, ref_base, competing[0], competing[1]))
         if base == "N":
             ambiguous += 1
         weakest = min(weakest, support)

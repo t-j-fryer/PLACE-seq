@@ -245,6 +245,8 @@ def write_consensus_tree(
                     f" mixed_signature={qc.get('mixed_signature', '')}"
                     f" mixed_at={qc['mixed_detail']}"
                     f" mixed_in_reading_frame={qc.get('mixed_in_reading_frame', '')}"
+                    f" mixed_worst_effect={qc.get('mixed_worst_effect', '')}"
+                    f" designed_allele_fraction={qc.get('designed_allele_fraction', '')}"
                 )
             # 60-column wrapping keeps the files readable in any viewer.
             wrapped = "\n".join(sequence[i : i + 60] for i in range(0, len(sequence), 60))
@@ -267,6 +269,8 @@ def write_consensus_tree(
                 "mixed_signature": qc.get("mixed_signature", ""),
                 "mixed_detail": qc.get("mixed_detail", ""),
                 "mixed_in_reading_frame": qc.get("mixed_in_reading_frame", ""),
+                "mixed_worst_effect": qc.get("mixed_worst_effect", ""),
+                "designed_allele_fraction": qc.get("designed_allele_fraction", ""),
                 "identity": qc.get("alignment_identity", ""),
                 "edit_distance": qc.get("alignment_edit_distance", ""),
                 "protein_length": qc.get("protein_length", ""),

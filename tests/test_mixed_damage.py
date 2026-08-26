@@ -12,7 +12,12 @@ import unittest
 from nanopore3 import platforms
 from nanopore3.export import GRADES, grade_consensus
 from nanopore3.pipeline import parse_mixed_alleles, reading_frame_span
-from nanopore3.qc import classify_mixed_positions, mixed_signature
+from nanopore3.qc import (
+    classify_mixed_positions,
+    designed_allele_fraction,
+    mixed_signature,
+    worst_protein_effect,
+)
 
 # ATG, seven codons, TAA: MKPGFWHD*. The TGG codon spans positions 15-17.
 REFERENCE = "ATG" + "AAACCCGGGTTTTGGCATGAC" + "TAA"
@@ -78,17 +83,59 @@ class LocationTests(unittest.TestCase):
         self.assertEqual(silent[0].protein_effect, "silent")
 
     def test_the_column_round_trips(self) -> None:
-        written = "12:G>GT|880:C>AC"
+        written = "12:G>GT:0.6100,0.3900|880:C>AC:0.5000,0.5000"
         self.assertEqual(
-            parse_mixed_alleles(written), ((12, "G", "GT"), (880, "C", "AC"))
+            parse_mixed_alleles(written),
+            ((12, "G", "GT", (0.61, 0.39)), (880, "C", "AC", (0.5, 0.5))),
         )
         self.assertEqual(parse_mixed_alleles(""), ())
         self.assertEqual(parse_mixed_alleles("nonsense"), ())
+
+    def test_a_run_written_before_the_fractions_existed_still_parses(self) -> None:
+        self.assertEqual(parse_mixed_alleles("12:G>GT"), ((12, "G", "GT", ()),))
 
     def test_the_reading_frame_is_located_not_assumed(self) -> None:
         reference = "TTTT" + REFERENCE + "GGGG"
         span = reading_frame_span(reference, REFERENCE[:6], REFERENCE[-6:])
         self.assertEqual(span, (4, 4 + len(REFERENCE)))
+
+
+class DesignedAlleleTests(unittest.TestCase):
+    """Whether the designed sequence is still in the well, which screening asks."""
+
+    def test_the_designed_share_is_reported_per_position(self) -> None:
+        mixed = classify_mixed_positions(
+            ((9, "G", "GT", (0.62, 0.38)),), REFERENCE,
+            reading_frame=(0, len(REFERENCE)),
+        )
+        self.assertAlmostEqual(mixed[0].designed_fraction, 0.62)
+        self.assertEqual(mixed[0].variant_alleles, "T")
+        self.assertAlmostEqual(designed_allele_fraction(mixed), 0.62)
+
+    def test_a_clone_is_only_as_recoverable_as_its_weakest_position(self) -> None:
+        mixed = classify_mixed_positions(
+            # Fractions pair with the alleles in the order they are listed, so
+            # "CT" with (0.79, 0.21) is C at 79% and the designed T at 21%.
+            ((9, "G", "GT", (0.62, 0.38)), (12, "T", "CT", (0.79, 0.21))),
+            REFERENCE,
+        )
+        # 0.21 for T at position 12, not the 0.62 at position 9.
+        self.assertAlmostEqual(designed_allele_fraction(mixed), 0.21)
+
+    def test_the_designed_base_can_be_absent_entirely(self) -> None:
+        mixed = classify_mixed_positions(((9, "G", "AT", (0.55, 0.45)),), REFERENCE)
+        self.assertEqual(mixed[0].designed_fraction, 0.0)
+
+    def test_no_mixed_positions_means_no_answer_rather_than_zero(self) -> None:
+        self.assertIsNone(designed_allele_fraction(()))
+
+    def test_the_worst_effect_across_positions_is_reported(self) -> None:
+        mixed = classify_mixed_positions(
+            ((8, "C", "AC"), (17, "G", "AG")), REFERENCE,
+            reading_frame=(0, len(REFERENCE)),
+        )
+        self.assertEqual({p.protein_effect for p in mixed}, {"silent", "nonsense"})
+        self.assertEqual(worst_protein_effect(mixed), "nonsense")
 
 
 class GradeTests(unittest.TestCase):

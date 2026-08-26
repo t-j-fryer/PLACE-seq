@@ -58,6 +58,11 @@ the pre-alpha label is removed.
 
 ## Compressed PCR: gene identity as an extra demultiplexing key
 
+> The layout can be supplied as a spreadsheet rather than nested YAML, and is
+> cross-checked against the references at preflight. See
+> **[Pooling layout](pooling-layout.md)** for the table format, the monoclonal
+> case (which needs no configuration at all), and the migration command.
+
 When colonies from several culture plates are pooled into one colony-PCR plate,
 the forward and reverse barcodes only identify a *PCR* well. That well may hold
 colonies drawn from several culture plates at the same position. The assigned

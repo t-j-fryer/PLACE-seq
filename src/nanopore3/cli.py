@@ -39,6 +39,18 @@ def _parser() -> argparse.ArgumentParser:
 
     init = subparsers.add_parser("init", help="copy the documented synthetic example")
     init.add_argument("directory", type=Path, nargs="?", default=Path("nanopore3-example"))
+
+    layout = subparsers.add_parser(
+        "layout",
+        help="write a config's pooling layout out as a CSV, or check one",
+    )
+    layout.add_argument("--config", type=Path, required=True)
+    layout.add_argument(
+        "--export",
+        type=Path,
+        help="write the layout to this CSV so it can be maintained in a spreadsheet "
+        "and referenced with compressed_pcr.layout_csv",
+    )
     return parser
 
 
@@ -73,6 +85,61 @@ def _init_example(destination: Path) -> None:
     print(f"Created example at {destination.resolve()}")
 
 
+def _layout(config_path: Path, export: Path | None) -> None:
+    """Show or export the pooling layout, and report it against the references."""
+
+    config = load_config(config_path)
+    settings = config.compressed_pcr
+    if not settings.enabled:
+        print("compressed_pcr is not enabled: every well is its own culture plate.")
+        return
+    plates = sorted({p for ps in settings.pcr_plates.values() for p in ps})
+    blocks = sum(len(by_block) for by_block in settings.blocks.values())
+    print(
+        f"{len(settings.pcr_plates)} colony-PCR barcode(s), {len(plates)} culture "
+        f"plate(s), {blocks} block(s) across {len(settings.blocks)} library/libraries"
+    )
+    for barcode, sources in sorted(settings.pcr_plates.items()):
+        mode = settings.clonality.get(barcode, "unspecified")
+        print(f"  {barcode}: {len(sources)} culture plate(s), clonality={mode}")
+
+    from .pipeline import check_pooling_layout
+    from .references import read_reference_libraries
+
+    problems: list[str] = []
+    try:
+        from . import pipeline as _pipeline
+
+        flanks = _pipeline.resolve_flanks(config)
+        resolved = _pipeline.apply_flanks(config, flanks)
+        collection = read_reference_libraries(
+            {k: s.fasta for k, s in resolved.reference_sets.items()},
+            transforms=_pipeline.flank_transforms(flanks),
+        )
+        problems = check_pooling_layout(resolved, collection)
+    except (OSError, ValueError) as exc:
+        print(f"  (references not checked: {exc})")
+    if problems:
+        print("\nproblems:")
+        for problem in problems:
+            print(f"  - {problem}")
+    else:
+        print("\nlayout agrees with the references.")
+
+    if export:
+        from .layout import write_layout_csv
+
+        write_layout_csv(
+            export,
+            dict(settings.pcr_plates),
+            {k: dict(v) for k, v in settings.blocks.items()},
+            dict(settings.clonality),
+        )
+        print(f"\nwrote {export}")
+        print("Reference it with:\n  compressed_pcr:\n    enabled: true\n"
+              f"    layout_csv: {export.name}")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI and return a process exit code."""
 
@@ -97,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Report: {path / 'stages' / '06_report' / 'report.html'}")
         elif args.command == "init":
             _init_example(args.directory)
+        elif args.command == "layout":
+            _layout(args.config, args.export)
         else:  # pragma: no cover - argparse enforces subcommands
             raise AssertionError(args.command)
         return 0

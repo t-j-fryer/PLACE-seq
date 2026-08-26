@@ -389,6 +389,77 @@ def qc_regions(flank: Flanks, reference_length: int) -> dict[str, tuple[int, int
     return spans
 
 
+def check_pooling_layout(config: PipelineConfig, reference_collection) -> list[str]:
+    """Cross-check the supplied pooling layout against the references and barcodes.
+
+    The layout is experimental design and is never inferred from the reads - but it
+    is transcribed by hand, and a block missing from it produces reads that simply
+    cannot be attributed to a culture plate, three stages later and without saying
+    why.  Every mismatch that can be named now is named now.
+    """
+
+    settings = config.compressed_pcr
+    if not settings.enabled:
+        return []
+    pattern = re.compile(settings.block_pattern)
+    problems: list[str] = []
+
+    for library_id in sorted(config.reference_sets):
+        try:
+            records = reference_collection.get(library_id).records
+        except Exception:  # a library the collection could not load reports elsewhere
+            continue
+        seen = set()
+        for record in records:
+            match = pattern.search(record.id)
+            if match:
+                seen.add(match.group(1) if match.groups() else match.group(0))
+        if not seen:
+            continue
+        mapped = set(settings.blocks.get(library_id, {}))
+        missing = sorted(seen - mapped)
+        if missing:
+            problems.append(
+                f"library {library_id!r}: {len(missing)} block(s) in the references have "
+                f"no culture plate: {', '.join(missing[:8])}"
+                + (" ..." if len(missing) > 8 else "")
+            )
+        unused = sorted(mapped - seen)
+        if unused:
+            problems.append(
+                f"library {library_id!r}: {len(unused)} block(s) in the layout match no "
+                f"reference: {', '.join(unused[:8])}"
+                + (" ..." if len(unused) > 8 else "")
+            )
+
+    pooled = {plate for plates in settings.pcr_plates.values() for plate in plates}
+    placed = {
+        plate
+        for by_block in settings.blocks.values()
+        for plates in by_block.values()
+        for plate in plates
+    }
+    orphan = sorted(placed - pooled)
+    if orphan:
+        problems.append(
+            f"{len(orphan)} culture plate(s) hold blocks but were not pooled into any "
+            f"barcode: {', '.join(orphan[:8])}" + (" ..." if len(orphan) > 8 else "")
+        )
+    empty = sorted(pooled - placed)
+    if empty:
+        problems.append(
+            f"{len(empty)} culture plate(s) were pooled but hold no block: "
+            f"{', '.join(empty[:8])}" + (" ..." if len(empty) > 8 else "")
+        )
+    unknown = sorted(set(settings.pcr_plates) - set(config.plate_reference_map))
+    if unknown:
+        problems.append(
+            f"{len(unknown)} barcode(s) in the layout are not in plate_reference_map: "
+            f"{', '.join(unknown[:8])}"
+        )
+    return problems
+
+
 def parse_mixed_alleles(
     value: str,
 ) -> tuple[tuple[int, str, str, tuple[float, ...]], ...]:
@@ -453,6 +524,12 @@ def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[
     )
     if config.consensus.backend == "mafft_spoa":
         require_mafft_spoa()
+    layout_problems = check_pooling_layout(config, reference_collection)
+    if layout_problems:
+        raise PipelineError(
+            "compressed_pcr layout does not match the references:\n  "
+            + "\n  ".join(layout_problems)
+        )
     for label, settings in (
         ("plate", config.plate_barcodes),
         ("well", config.well_barcodes),

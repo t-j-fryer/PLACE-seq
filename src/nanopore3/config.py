@@ -1205,17 +1205,29 @@ def _plate_lists(value: Any, location: str) -> dict[str, tuple[str, ...]]:
     return result
 
 
-def _parse_compressed_pcr(value: Any) -> CompressedPcrSettings:
+def _parse_compressed_pcr(value: Any, base_dir: Path) -> CompressedPcrSettings:
     if value is None:
         return CompressedPcrSettings()
     location = "compressed_pcr"
     mapping = _mapping(value, location)
     _reject_unknown(
         mapping,
-        {"enabled", "pcr_plates", "blocks", "block_pattern", "clonality"},
+        {"enabled", "pcr_plates", "blocks", "block_pattern", "clonality", "layout_csv"},
         location,
     )
     enabled = _boolean(mapping.get("enabled", True), f"{location}.enabled")
+    # A layout table and inline YAML are two sources of truth for the same design.
+    # Refuse both rather than pick one: silently preferring either would make a
+    # stale block map invisible.
+    if "layout_csv" in mapping:
+        clashing = sorted(
+            key for key in ("pcr_plates", "blocks", "clonality") if key in mapping
+        )
+        if clashing:
+            raise ConfigError(
+                f"{location}: layout_csv replaces {', '.join(clashing)}; "
+                "give one or the other, not both"
+            )
     blocks_value = _mapping(mapping.get("blocks", {}), f"{location}.blocks")
     blocks = {
         _nonempty_string(library, f"{location}.blocks library key"): _plate_lists(
@@ -1230,9 +1242,22 @@ def _parse_compressed_pcr(value: Any) -> CompressedPcrSettings:
         )
         for plate, mode in clonality_value.items()
     }
+    pcr_plates = _plate_lists(mapping.get("pcr_plates", {}), f"{location}.pcr_plates")
+    layout_csv = mapping.get("layout_csv")
+    if layout_csv is not None:
+        from .layout import LayoutError, read_layout_csv
+
+        path = _path(layout_csv, base_dir, f"{location}.layout_csv")
+        try:
+            layout = read_layout_csv(path)
+        except LayoutError as exc:
+            raise ConfigError(str(exc)) from exc
+        pcr_plates = layout["pcr_plates"]
+        blocks = layout["blocks"]
+        clonality = layout["clonality"]
     return CompressedPcrSettings(
         enabled=enabled,
-        pcr_plates=_plate_lists(mapping.get("pcr_plates", {}), f"{location}.pcr_plates"),
+        pcr_plates=pcr_plates,
         blocks=blocks,
         clonality=clonality,
         block_pattern=_nonempty_string(
@@ -1333,7 +1358,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         parallel=_parse_parallel(root.get("parallel")),
         consensus=_parse_consensus(root.get("consensus")),
         qc=_parse_qc(root.get("qc")),
-        compressed_pcr=_parse_compressed_pcr(root.get("compressed_pcr")),
+        compressed_pcr=_parse_compressed_pcr(root.get("compressed_pcr"), base_dir),
         chimera=_parse_chimera(root.get("chimera")),
         random_seed=random_seed,
         source_path=source_path,

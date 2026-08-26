@@ -15,6 +15,105 @@ Conventions:
 
 ---
 
+## 2026-08-26 — v9b: the annotation lands, and the science does not move
+
+`runs/260608-full-length-v9b`, the first run carrying `mixed_damage` and the
+screening annotation. **Every stage summary is byte-identical to v8c** - assignment,
+chimera, consensus (3,217 pass / 117 mixed) and QC (3,165 pass / 272 fail). That is
+the intended result: the 2026-08-21 (sixteenth) and (seventeenth) entries added
+columns and split a grade, and touched no decision.
+
+### What the new columns say about this run
+
+| | |
+|---|---|
+| clones with a contested position | 93 |
+| **`mixed_damage`** (every contested position G:C -> T:A) | **58** |
+| `mixed_variants` (at least one unexplained) | 35 |
+
+Close to the 57/30 projected before the run, from the reads alone.
+
+Where the 58 sit, and what they do to the protein:
+
+| worst effect | clones |
+|---|---|
+| missense | 25 |
+| **outside the reading frame** | **15** |
+| nonsense | 10 |
+| silent | 8 |
+
+And the number the bench asked for - is the designed sequence still in the well:
+
+| designed_allele_fraction, across all 58 | |
+|---|---|
+| median | **0.50** |
+| range | **0.23 - 0.79** |
+| clones where the design is absent | **0** |
+
+**Not one of the 58 has lost the designed sequence.** Every one of them is a well
+that still contains what was ordered, alongside a damage-derived allele. Including
+the ten nonsense ones: the worst case in the run is a well 58% nonsense and 40%
+design, and a pick from it can still give the intended protein.
+
+A file from the graded tree now says all of that without being opened past its
+header:
+
+```
+>cons-ac851583a01bfb2a grade=mixed_damage design=A_Block_1_dTF085_88_0 plate=RP06
+ well=H4 reads_used=283 identity=0.99908 mixed_signature=oxidative
+ mixed_at=276:G>GT:insert/missense:G0.52,T0.45 mixed_in_reading_frame=1
+ mixed_worst_effect=missense designed_allele_fraction=0.5194
+```
+
+That is RP06 H04 - the same well the 2026-08-21 (fifteenth) entry found carrying
+this allele in **both** independently grown cultures (0.46 and 0.33). The pipeline
+now reports from one run what took a bespoke cross-run analysis to establish.
+
+### Grade distribution
+
+    perfect 2,976 | screenable 87 | mixed_damage 58 | mixed_variants 59
+    frameshift 110 | premature_stop 25 | truncated 19 | low_depth 8,365
+
+`mixed_variants` reads 59 here against 35 in the QC table because the tree also
+grades chimeric clones, which carry no `mixed_signature`.
+
+### How it was run, and a mistake worth recording
+
+The first attempt died mid-assignment with `BrokenProcessPool`. Cause: **the
+pipeline source was edited while the run was executing it.** Worker processes import
+the package fresh, so they picked up inconsistent source. The tell was a traceback
+whose line numbers did not match the source text printed beside them.
+
+Demux had completed, so the rerun path introduced the same day recovered it:
+
+```
+nanopore3 rerun --config configs/runs/260608_full_length.yaml \
+    --from-run runs/260608-full-length-v9 --from 03_assignment \
+    --run-id 260608-full-length-v9b
+```
+
+which inherited `01_ingest` and `02_demux` by hard link and recomputed the rest,
+without re-reading the 8 GB FASTQ. That was the feature's first use on real data.
+
+**This exposes a real gap.** A stage fingerprint covers its parameters, its input
+digests and `pipeline_version` - **but not the source revision.** Editing code
+without bumping the version means resume and rerun can inherit a stage built by
+different code, undetected. `run.json` records `git_provenance`, so it is
+detectable but not enforced. Here it was harmless (every edit was config parsing,
+preflight, or a stage downstream of consensus, so demux behaviour was unchanged),
+but that was luck. Adding the source digest to the fingerprint when running from a
+checkout is the fix; it changes the reproducibility contract, so it is recorded as
+a decision rather than made.
+
+### Lesson
+
+**Do not edit the code a long run is executing.** Obvious in hindsight, and the
+failure mode is not a clean error: it is a broken worker pool three stages in, with
+a traceback that misreports where it happened. Start the run, then leave the source
+alone - or work on a copy.
+
+---
+
 ## 2026-08-21 (seventeenth) — Annotating a mixed clone for screening, not just grading it
 
 Extends the 2026-08-21 (sixteenth) entry. Raised from the bench: a missense or

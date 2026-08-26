@@ -266,6 +266,14 @@ def write_consensus_tree(
                 "reads_used": row["n_reads_used"],
                 "mean_depth": row["mean_depth"],
                 "ambiguous_bases": row["ambiguous_bases"],
+                # Per-region accuracy, where a full-length library reports it.
+                # "Is the error in the part I designed, or in the vector?" is the
+                # first question a screener asks, and a whole-amplicon identity
+                # cannot answer it.
+                "insert_identity": qc.get("insert_identity", ""),
+                "insert_edit_distance": qc.get("insert_edit_distance", ""),
+                "flank_5p_edit_distance": qc.get("flank_5p_edit_distance", ""),
+                "flank_3p_edit_distance": qc.get("flank_3p_edit_distance", ""),
                 "mixed_signature": qc.get("mixed_signature", ""),
                 "mixed_detail": qc.get("mixed_detail", ""),
                 "mixed_in_reading_frame": qc.get("mixed_in_reading_frame", ""),

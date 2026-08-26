@@ -593,6 +593,12 @@ class PipelineConfig:
     compressed_pcr: CompressedPcrSettings = field(default_factory=CompressedPcrSettings)
     chimera: ChimeraSettings = field(default_factory=ChimeraSettings)
     random_seed: int = 0
+    # The graded per-plate tree is the output most runs are actually read from -
+    # one FASTA per clone, named with its design and a single-word grade, so a
+    # screening decision can be made from the file listing alone. It used to
+    # require knowing about a separate script, which meant most runs never
+    # produced it. Set false for a very large run where the file count matters.
+    consensus_tree: bool = True
     source_path: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
@@ -1321,6 +1327,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         "compressed_pcr",
         "chimera",
         "random_seed",
+        "consensus_tree",
     }
     _reject_unknown(root, allowed, "configuration")
     base_dir = source_path.parent
@@ -1381,6 +1388,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         consensus=_parse_consensus(root.get("consensus")),
         qc=_parse_qc(root.get("qc")),
         compressed_pcr=_parse_compressed_pcr(root.get("compressed_pcr"), base_dir),
+        consensus_tree=_boolean(root.get("consensus_tree", True), "consensus_tree"),
         chimera=_parse_chimera(root.get("chimera")),
         random_seed=random_seed,
         source_path=source_path,

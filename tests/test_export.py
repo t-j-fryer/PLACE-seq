@@ -243,3 +243,58 @@ class TreeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConsensusTreeDefaultTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    """The graded tree is the output a run is read from, so a run must produce it.
+
+    It used to require knowing about a separate script, which meant most runs
+    never produced their most useful artifact at all.
+    """
+
+    def test_the_tree_is_on_by_default(self) -> None:
+        from nanopore3.config import PipelineConfig
+
+        self.assertTrue(PipelineConfig.__dataclass_fields__["consensus_tree"].default)
+
+    def test_it_can_be_turned_off_for_a_very_large_run(self) -> None:
+        from nanopore3.config import ConfigError, _boolean
+
+        self.assertFalse(_boolean(False, "consensus_tree"))
+        with self.assertRaises(ConfigError):
+            _boolean("yes", "consensus_tree")
+
+    def test_the_index_carries_per_region_accuracy(self) -> None:
+        # "Is the error in the part I designed, or in the vector?" is the first
+        # question a screener asks, and a whole-amplicon identity cannot answer it.
+        rows = write_consensus_tree(
+            [
+                {
+                    "consensus_id": "c1", "plate_id": "P", "well_id": "A1",
+                    "reference_ids": "d1", "reference_library_id": "lib",
+                    "culture_plate": "", "n_reads_used": "10", "mean_depth": "10",
+                    "ambiguous_bases": "0", "status": "consensus_pass",
+                }
+            ],
+            {
+                "c1": {
+                    "overall": "pass", "alignment_edit_distance": "1",
+                    "insert_identity": "1.000000", "insert_edit_distance": "0",
+                    "flank_3p_edit_distance": "1", "flank_5p_edit_distance": "0",
+                }
+            },
+            {"c1": "ACGT"},
+            Path(self.tmp.name) / "tree_regions",
+        )
+        self.assertEqual(rows["files_written"], 1)
+        index = list(
+            csv.DictReader(
+                (Path(self.tmp.name) / "tree_regions" / "index.csv").open(encoding="utf-8")
+            )
+        )
+        self.assertEqual(index[0]["insert_edit_distance"], "0")
+        self.assertEqual(index[0]["flank_3p_edit_distance"], "1")

@@ -56,6 +56,18 @@ The test suite verifies that serial and threaded runs produce identical normaliz
 artifacts. Throughput and memory still need benchmarking on representative full-sized data before
 the pre-alpha label is removed.
 
+## Graded clone output
+
+`consensus_tree: true` (the default) writes `<run>/consensus_by_plate/`: one FASTA
+per clone, filed under `<barcode>/<culture plate>/<well>/` and named with its design
+and a single-word grade, plus `index.csv` — every clone, one row each, with grade,
+identity, per-region accuracy and the mixed-allele annotation. That table is what
+most downstream screening analysis should read.
+
+Set it to `false` only for a very large run where writing one small file per clone
+is itself a cost; the same tree can then be built afterwards with
+`python scripts/export_consensus_tree.py --run <run>`.
+
 ## Compressed PCR: gene identity as an extra demultiplexing key
 
 > The layout can be supplied as a spreadsheet rather than nested YAML, and is

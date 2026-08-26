@@ -118,6 +118,17 @@ def _init_example(destination: Path) -> None:
     print(f"Created example at {destination.resolve()}")
 
 
+def _report_outputs(path: Path) -> None:
+    """Name the three things a person actually opens after a run."""
+
+    print(f"Completed run: {path}")
+    print(f"  report:  {path / 'stages' / '06_report' / 'report.html'}")
+    tree = path / "consensus_by_plate"
+    if tree.is_dir():
+        print(f"  clones:  {tree}  (one graded FASTA per clone)")
+        print(f"  table:   {tree / 'index.csv'}  (every clone, one row each)")
+
+
 def _rerun(
     config,
     *,
@@ -259,8 +270,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 resume=args.resume,
             )
-            print(f"Completed run: {path}")
-            print(f"Report: {path / 'stages' / '06_report' / 'report.html'}")
+            _report_outputs(path)
         elif args.command == "init":
             _init_example(args.directory)
         elif args.command == "rerun":
@@ -273,8 +283,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 verify=args.verify,
             )
-            print(f"Completed run: {path}")
-            print(f"Report: {path / 'stages' / '06_report' / 'report.html'}")
+            _report_outputs(path)
         elif args.command == "layout":
             _layout(args.config, args.export)
         else:  # pragma: no cover - argparse enforces subcommands

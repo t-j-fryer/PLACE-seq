@@ -2192,6 +2192,23 @@ def run_pipeline(
                     stage.output_path("figures.json"),
                     {"written": sorted(p.name for p in written), "skipped": None},
                 )
+
+    if config.consensus_tree:
+        # Built after the stages rather than inside one: it is derived entirely
+        # from stage outputs, and a screening decision is made from it, so it
+        # belongs where a person will find it rather than nested in 05_qc.
+        from .export import write_tree_from_stages
+
+        summary = write_tree_from_stages(
+            run_dir / "stages" / "04_consensus",
+            run_dir / "stages" / "05_qc" / "qc.csv.gz",
+            run_dir / "consensus_by_plate",
+        )
+        LOGGER.info(
+            "graded consensus tree: %d clone(s) in %s",
+            summary["files_written"],
+            run_dir / "consensus_by_plate",
+        )
     return run_dir
 
 

@@ -71,7 +71,7 @@ from .qc import (
     worst_protein_effect,
 )
 from .qc import _locate as _locate_motif
-from .flanks import Flanks, from_sequences, from_template
+from .flanks import Flanks, from_assembled, from_sequences, from_template
 from .references import read_fasta, read_reference_libraries
 from .report import write_html_report
 from .runtime import doctor_report, plan_resources
@@ -121,6 +121,21 @@ def resolve_flanks(config: PipelineConfig) -> dict[str, Flanks]:
     resolved: dict[str, Flanks] = {}
     for library_id, settings in config.reference_sets.items():
         if not settings.full_length:
+            continue
+        if settings.flanks_derive:
+            records = read_fasta(settings.fasta).records
+            flanks = from_assembled(
+                [record.sequence for record in records],
+                anchor_length=settings.flanks_anchor_length,
+            )
+            LOGGER.info(
+                "library %s: flanks derived from %d assembled reference(s), "
+                "%d constant bases per reference",
+                library_id,
+                len(records),
+                flanks.constant_bases,
+            )
+            resolved[library_id] = flanks
             continue
         if settings.flanks_template is not None:
             inserts = [record.sequence for record in read_fasta(settings.fasta).records]

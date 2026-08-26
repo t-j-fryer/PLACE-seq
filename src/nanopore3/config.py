@@ -192,6 +192,12 @@ class ReferenceSettings:
     flanks_upstream: str | None = None
     flanks_downstream: str | None = None
     flanks_template: Path | None = None
+    # Third route: the FASTA already holds assembled constructs, and the shared
+    # backbone is found as their longest common prefix and suffix. Costs the user
+    # nothing to declare and unlocks per-region accuracy, insert-scoped thresholds
+    # and insert-scoped chimera detection for a library that was never expressed
+    # as inserts-plus-backbone.
+    flanks_derive: bool = False
     flanks_anchor_length: int = 20
     # Apply minimum_identity and minimum_query_coverage to the insert region
     # rather than the whole amplicon. Only meaningful for a full-length library,
@@ -207,7 +213,9 @@ class ReferenceSettings:
         """Whether references are flanked into whole amplicons."""
 
         return bool(
-            (self.flanks_upstream and self.flanks_downstream) or self.flanks_template
+            (self.flanks_upstream and self.flanks_downstream)
+            or self.flanks_template
+            or self.flanks_derive
         )
 
     def __post_init__(self) -> None:
@@ -265,10 +273,20 @@ class ReferenceSettings:
                 "references.flanks.upstream and references.flanks.downstream must be "
                 "supplied together, or use references.flanks.template instead"
             )
-        if all(explicit) and self.flanks_template is not None:
+        routes = [
+            name
+            for name, chosen in (
+                ("upstream/downstream", all(explicit)),
+                ("template", self.flanks_template is not None),
+                ("derive", self.flanks_derive),
+            )
+            if chosen
+        ]
+        if len(routes) > 1:
             raise ConfigError(
-                "references.flanks accepts either upstream/downstream or template, "
-                "not both; two definitions of the same constant regions can disagree"
+                "references.flanks accepts exactly one of upstream/downstream, "
+                f"template or derive; got {', '.join(routes)}. Two definitions of "
+                "the same constant regions can disagree"
             )
         if self.flanks_anchor_length < 8:
             raise ConfigError("references.flanks.anchor_length must be >= 8")
@@ -847,13 +865,17 @@ def _parse_references(
         flanks_mapping = _mapping(flanks_value, f"{location}.flanks")
         _reject_unknown(
             flanks_mapping,
-            {"upstream", "downstream", "template", "anchor_length"},
+            {"upstream", "downstream", "template", "derive", "anchor_length"},
             f"{location}.flanks",
         )
         for key in ("upstream", "downstream"):
             raw = flanks_mapping.get(key)
             flanks_fields[f"flanks_{key}"] = (
                 None if raw is None else _dna(raw, f"{location}.flanks.{key}")
+            )
+        if flanks_mapping.get("derive") is not None:
+            flanks_fields["flanks_derive"] = _boolean(
+                flanks_mapping["derive"], f"{location}.flanks.derive"
             )
         template = flanks_mapping.get("template")
         flanks_fields["flanks_template"] = (

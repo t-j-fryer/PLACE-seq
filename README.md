@@ -20,7 +20,8 @@ evidence.
 - Notebooks are clients of the package, not the implementation or source of hidden state.
 
 See [Architecture](docs/architecture.md) for the stage model and reproducibility contract,
-[Configuration](docs/configuration.md) for the option reference, and
+[Configuration](docs/configuration.md) for the option reference,
+[References](docs/references.md) for the four ways to describe your constructs, and
 [Pooling layout](docs/pooling-layout.md) if several culture plates were combined into one
 colony-PCR plate.
 

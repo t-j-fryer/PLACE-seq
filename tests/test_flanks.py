@@ -130,3 +130,65 @@ class ExtractionRoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FromAssembledTests(unittest.TestCase):
+    """Deriving the backbone from constructs that are already full length.
+
+    The third way to describe a whole-vector library: no flanks named, no
+    template, just the assembled references, with the shared backbone found as
+    their longest common prefix and suffix.
+    """
+
+    # Non-repeating, because a repeated motif makes the primer anchor ambiguous
+    # and from_sequences rejects it - correctly, and for a different reason than
+    # anything these tests are about.
+    UP = "TAAGCCCATACAACAACATTCATTAGACGAGACGGTTGCGCTCCTTGTTATACGTCTATTGACACTTCGATGAGACACGATCTGCTAGAGAGAGTT"
+    DOWN = "GAACTCCACGGCTGATGATCCCCATGCTCTCGTCAAACGAACATAGTCGAGGCCCATCAGTCTTACAGTCACCGTAATATAATCAAGAACCCCACG"
+
+    def assembled(self, inserts):
+        return [self.UP + insert + self.DOWN for insert in inserts]
+
+    def test_the_backbone_is_recovered_exactly(self) -> None:
+        result = flanks.from_assembled(
+            self.assembled(["ACGTACGTAC", "TTTTGGGGCC", "GGCCTTAAGG"]),
+            anchor_length=10,
+            minimum_constant=30,
+        )
+        self.assertEqual(result.upstream, self.UP)
+        self.assertEqual(result.downstream, self.DOWN)
+
+    def test_inserts_of_different_lengths_are_fine(self) -> None:
+        result = flanks.from_assembled(
+            self.assembled(["ACGTACGTAC", "TTTTGGGGCCAAAATTTT", "GG"]),
+            anchor_length=10,
+            minimum_constant=30,
+        )
+        self.assertEqual(result.upstream, self.UP)
+        self.assertEqual(result.downstream, self.DOWN)
+
+    def test_insert_only_references_are_refused_not_split_by_chance(self) -> None:
+        with self.assertRaises(flanks.FlankError) as caught:
+            flanks.from_assembled(["ACGTACGTACGT", "ACGTTTTTACGT"], minimum_constant=30)
+        self.assertIn("backbone", str(caught.exception))
+
+    def test_one_reference_cannot_define_a_constant_region(self) -> None:
+        with self.assertRaises(flanks.FlankError) as caught:
+            flanks.from_assembled([self.UP + "ACGT" + self.DOWN])
+        self.assertIn("at least two", str(caught.exception))
+
+    def test_identical_references_have_no_variable_region(self) -> None:
+        same = self.UP + "ACGTACGTAC" + self.DOWN
+        with self.assertRaises(flanks.FlankError) as caught:
+            flanks.from_assembled([same, same], anchor_length=10, minimum_constant=30)
+        self.assertIn("no variable region", str(caught.exception))
+
+    def test_an_insert_sharing_its_first_base_does_not_steal_it(self) -> None:
+        # Every insert starting with "A" extends the common prefix by one, which
+        # is correct: that base really is constant across the set.
+        result = flanks.from_assembled(
+            self.assembled(["AACCTTGG", "AAGGTTCC"]), anchor_length=10,
+            minimum_constant=30,
+        )
+        self.assertEqual(result.upstream, self.UP + "AA")
+        self.assertTrue(result.upstream.startswith(self.UP))

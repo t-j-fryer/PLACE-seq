@@ -201,6 +201,70 @@ def from_template(
     return from_sequences(upstream, downstream, anchor_length=anchor_length), insert
 
 
+def from_assembled(
+    references: Sequence[str],
+    *,
+    anchor_length: int = DEFAULT_ANCHOR_LENGTH,
+    minimum_constant: int = 60,
+) -> Flanks:
+    """Derive the constant regions from references that are already full length.
+
+    The third way to describe a whole-vector library, alongside naming the flanks
+    and giving a template: supply the assembled constructs and let the shared
+    backbone declare itself.  Every reference begins with the same 5' constant
+    region and ends with the same 3' one, so the longest common prefix and suffix
+    across the set *are* the flanks, and what remains is the insert.
+
+    This needs no alignment - the constructs share exact sequence at both ends - and
+    it is what makes per-region accuracy, insert-scoped thresholds and
+    insert-scoped chimera detection available to a library that was never
+    expressed as inserts-plus-backbone.
+
+    A set that does not share a backbone produces a tiny prefix and suffix by
+    chance, so ``minimum_constant`` refuses that case rather than reporting an
+    insert span that is mostly vector.
+    """
+
+    sequences = [normalize_sequence(reference) for reference in references]
+    sequences = [sequence for sequence in sequences if sequence]
+    if len(sequences) < 2:
+        raise FlankError(
+            "deriving flanks from assembled references needs at least two of them; "
+            "with one there is nothing to hold constant. Give flanks.upstream and "
+            "flanks.downstream, or flanks.template, instead"
+        )
+
+    shortest = min(len(sequence) for sequence in sequences)
+    first = sequences[0]
+    prefix = 0
+    while prefix < shortest and all(s[prefix] == first[prefix] for s in sequences):
+        prefix += 1
+    suffix = 0
+    while (
+        suffix < shortest - prefix
+        and all(s[len(s) - 1 - suffix] == first[len(first) - 1 - suffix] for s in sequences)
+    ):
+        suffix += 1
+
+    # Order matters: a set of identical references has a huge prefix and a zero
+    # suffix, which would otherwise be reported as a missing backbone.
+    if prefix + suffix >= shortest:
+        raise FlankError(
+            "the references have no variable region between their shared ends: "
+            "they are identical over the whole of the shortest one"
+        )
+    if prefix < minimum_constant or suffix < minimum_constant:
+        raise FlankError(
+            f"the references share only {prefix} nt at the 5' end and {suffix} nt at "
+            f"the 3' end, below the {minimum_constant} nt expected of a common "
+            "backbone. Either they are not all the same construct, or they are "
+            "insert-only - in which case name the flanks explicitly instead"
+        )
+    return from_sequences(
+        first[:prefix], first[len(first) - suffix :], anchor_length=anchor_length
+    )
+
+
 def flank_sequences(
     inserts: Sequence[tuple[str, str]],
     flanks: Flanks,

@@ -50,6 +50,9 @@ _CLASS_RANK = {name: index for index, name in enumerate(CLASS_ORDER)}
 GRADE_CLASS = {
     "perfect": PERFECT,
     "screenable": SCREENABLE,
+    # A damage-signature mixture is a real clone carrying a real, heritable base -
+    # it screens like any other non-exact clone. An unexplained mixture does not.
+    "mixed_damage": SCREENABLE,
     "mixed_variants": OTHER,
     "mismatched": OTHER,
     "truncated": OTHER,

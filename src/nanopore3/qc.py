@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Literal
 
@@ -170,6 +171,111 @@ def region_metrics(
         )
         for name, (start, end) in spans.items()
     )
+
+
+# 8-oxoguanine pairs with adenine as well as cytosine, so a damaged G reads as
+# either G or T, and the same lesion on the other strand reads as C or A.  Those
+# two are the whole signature; nothing else in the spectrum is diagnostic.
+OXIDATIVE_ALLELES = {("G", "GT"), ("C", "AC")}
+
+
+@dataclass(frozen=True, slots=True)
+class MixedPosition:
+    """One position where two alleles both beat the background error rate."""
+
+    position: int
+    reference_base: str
+    alleles: str
+    region: str
+    oxidative: bool
+    # Empty when the position lies outside the reading frame, which is the case
+    # that matters least: the clone's protein is unaffected either way.
+    protein_effect: str
+
+    def describe(self) -> str:
+        where = self.region if not self.protein_effect else f"{self.region}/{self.protein_effect}"
+        return f"{self.position}:{self.reference_base}>{self.alleles}:{where}"
+
+
+def classify_mixed_positions(
+    mixed: Sequence[tuple[int, str, str]],
+    reference: str,
+    *,
+    spans: dict[str, tuple[int, int]] | None = None,
+    reading_frame: tuple[int, int] | None = None,
+) -> tuple[MixedPosition, ...]:
+    """Describe each mixed position: its region, its protein effect, its signature.
+
+    Two alleles at one position do not all mean the same thing.  A G:C -> T:A pair
+    is the 8-oxoguanine signature, and 8-oxoG is a *pre-mutagenic lesion* rather
+    than a mutation - it pairs with C or with A depending on the replication event,
+    so one transformed molecule carrying one lesion yields both sequences inside a
+    single colony.  Measured on this run, that class is the one shared between
+    independently grown cultures, so it is real, heritable sequence rather than an
+    artefact of sequencing.  Anything else is left unlabelled.
+
+    ``reading_frame`` is the half-open ORF span within the reference.  A mixed
+    position outside it cannot change the protein, which is most of what a caller
+    wants to know before deciding whether the clone is still usable.
+    """
+
+    out: list[MixedPosition] = []
+    for position, reference_base, alleles in mixed:
+        region = ""
+        for name, (start, end) in (spans or {}).items():
+            if start <= position < end:
+                region = name
+                break
+        effect = ""
+        if reading_frame is not None and reading_frame[0] <= position < reading_frame[1]:
+            effect = _protein_effect(reference, position, alleles, reading_frame)
+        out.append(
+            MixedPosition(
+                position=position,
+                reference_base=reference_base,
+                alleles=alleles,
+                region=region or "unplaced",
+                oxidative=(reference_base, alleles) in OXIDATIVE_ALLELES,
+                protein_effect=effect,
+            )
+        )
+    return tuple(out)
+
+
+def _protein_effect(
+    reference: str, position: int, alleles: str, reading_frame: tuple[int, int]
+) -> str:
+    """The worst effect any competing allele has on the protein."""
+
+    start, end = reading_frame
+    orf = reference[start:end]
+    if len(orf) % 3:
+        return "frameshifted"
+    baseline = translate(orf)
+    worst = "silent"
+    order = {"silent": 0, "missense": 1, "nonsense": 2}
+    for allele in alleles:
+        if allele == reference[position]:
+            continue
+        altered = reference[:position] + allele + reference[position + 1 :]
+        protein = translate(altered[start:end])
+        if first_internal_stop(protein) is not None:
+            effect = "nonsense"
+        elif protein == baseline:
+            effect = "silent"
+        else:
+            effect = "missense"
+        if order[effect] > order[worst]:
+            worst = effect
+    return worst
+
+
+def mixed_signature(positions: Sequence[MixedPosition]) -> str:
+    """``oxidative`` when every mixed position carries the damage signature."""
+
+    if not positions:
+        return ""
+    return "oxidative" if all(p.oxidative for p in positions) else "mixed"
 
 
 def _locate(motif: str, sequence: str, max_edits: int) -> tuple[int, int] | None:

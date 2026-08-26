@@ -63,7 +63,12 @@ from .provenance import (
     sha256_file,
 )
 from .fragments import FragmentLibrary
-from .qc import evaluate_consensus
+from .qc import (
+    classify_mixed_positions,
+    evaluate_consensus,
+    mixed_signature,
+)
+from .qc import _locate as _locate_motif
 from .flanks import Flanks, from_sequences, from_template
 from .references import read_fasta, read_reference_libraries
 from .report import write_html_report
@@ -85,6 +90,8 @@ _ASSIGNMENT_BATCH_READS = 32
 # full-length consensus. Long enough to be unique, short enough that a couple of
 # consensus errors cannot hide it.
 CODING_STOP_ANCHOR = 24
+# Same tolerance the coding QC allows when locating an anchor.
+CODING_ANCHOR_EDITS = 3
 
 
 class PipelineError(RuntimeError):
@@ -378,6 +385,35 @@ def qc_regions(flank: Flanks, reference_length: int) -> dict[str, tuple[int, int
     if end < reference_length:
         spans["flank_3p"] = (end, reference_length)
     return spans
+
+
+def parse_mixed_alleles(value: str) -> tuple[tuple[int, str, str], ...]:
+    """Read back the consensus stage's ``12:G>GT|880:C>AC`` column."""
+
+    out: list[tuple[int, str, str]] = []
+    for item in filter(None, (value or "").split("|")):
+        index, _, rest = item.partition(":")
+        base, _, alleles = rest.partition(">")
+        if index.isdigit() and base and alleles:
+            out.append((int(index), base, alleles))
+    return tuple(out)
+
+
+def reading_frame_span(
+    reference: str, upstream: str, downstream: str
+) -> tuple[int, int] | None:
+    """Locate the ORF inside a full-length reference, as a half-open span.
+
+    The same anchors the coding QC uses: the upstream constant begins at the start
+    codon and the downstream one ends at the terminal stop, so the frame is
+    measured rather than assumed.
+    """
+
+    start = _locate_motif(upstream, reference, CODING_ANCHOR_EDITS)
+    stop = _locate_motif(downstream[-CODING_STOP_ANCHOR:], reference, CODING_ANCHOR_EDITS)
+    if start is None or stop is None:
+        return None
+    return start[0], stop[1]
 
 
 def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[str, Any]:
@@ -1625,6 +1661,11 @@ def run_pipeline(
                     # support looked identical to one decided on 100%. These make
                     # the evidence behind a consensus auditable.
                     "mixed_positions": result.mixed_positions,
+                    # Which alleles disagreed, not just how many places. An "N"
+                    # cannot say whether the position carries a damage signature.
+                    "mixed_alleles": "|".join(
+                        f"{index}:{base}>{alleles}" for index, base, alleles in result.mixed_alleles
+                    ),
                     "background_error_rate": f"{result.background_error_rate:.5f}",
                     "weakest_support": f"{result.weakest_support:.4f}",
                     "low_quality_bases": result.low_quality_bases,
@@ -1744,12 +1785,29 @@ def run_pipeline(
                             qc_regions(flank, len(reference_sequence)) if flank else None
                         ),
                     )
+                    # Where each contested position sits, and whether it carries
+                    # the G:C -> T:A signature of a pre-transformation lesion. Two
+                    # alleles in the vector backbone and two in the reading frame
+                    # mean very different things for whether the clone is usable.
+                    mixed = classify_mixed_positions(
+                        parse_mixed_alleles(row.get("mixed_alleles", "")),
+                        reference_sequence,
+                        spans=qc_regions(flank, len(reference_sequence)) if flank else None,
+                        reading_frame=(
+                            reading_frame_span(reference_sequence, upstream, downstream)
+                            if flank and upstream and downstream
+                            else None
+                        ),
+                    )
                     qc_rows.append(
                         {
                             "consensus_id": row["consensus_id"],
                             "reference_library_id": library_id,
                             "reference_ids": row["reference_ids"],
                             **result.to_dict(),
+                            "mixed_signature": mixed_signature(mixed),
+                            "mixed_detail": " ".join(p.describe() for p in mixed),
+                            "mixed_in_reading_frame": sum(1 for p in mixed if p.protein_effect),
                         }
                     )
             fields = [
@@ -1768,6 +1826,12 @@ def run_pipeline(
                 "reason",
                 "protein_length",
                 "internal_stop_codon",
+                # Empty for every clone with one allele everywhere, which is most
+                # of them; present so a mixed clone can be judged without going
+                # back to the reads.
+                "mixed_signature",
+                "mixed_detail",
+                "mixed_in_reading_frame",
             ]
             # Full-length references report accuracy per region as well as over
             # the whole amplicon; the columns exist only when a library declares

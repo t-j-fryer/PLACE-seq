@@ -15,6 +15,104 @@ Conventions:
 
 ---
 
+## 2026-08-21 (sixteenth) — `mixed_damage`: a mixture with a known cause is a usable clone
+
+**Scientific change** - it moves clones between outcome classes. Requested from the
+bench after the 2026-08-21 (fifteenth) entry: a mixture carrying the damage
+signature should be labelled as such, counted as usable with a caveat, and say
+*where* the contested position is, because one outside the reading frame matters
+much less.
+
+### The grade
+
+`mixed_damage` sits between `screenable` and `mixed_variants`:
+
+    low_depth -> mixed_variants -> frameshift -> premature_stop -> truncated
+    -> mismatched -> perfect / screenable / mixed_damage
+
+A clone earns it when **every** contested position is G:C -> T:A. One unexplained
+position anywhere and it stays `mixed_variants`; the claim is about the whole
+clone, not its best position. `platforms.GRADE_CLASS` maps it to **Screenable**
+rather than Other, which is what "usable, with a caveat" means for every figure and
+every recovery number.
+
+### Saying where
+
+Three new QC columns, and the same three in the FASTA header and `index.csv`:
+
+| column | example | what it answers |
+|---|---|---|
+| `mixed_signature` | `oxidative` | is there a known cause |
+| `mixed_detail` | `412:G>GT:insert/missense` | where, which alleles, what it does to the protein |
+| `mixed_in_reading_frame` | `1` | does it touch the ORF at all |
+
+The reading frame is **located** rather than assumed, with the same anchors the
+coding QC uses, so a position outside the ORF reports no protein effect at all
+rather than a misleading one.
+
+This needed the consensus stage to record *which* alleles disagreed, not only how
+many positions did: a new `mixed_alleles` column, `12:G>GT|880:C>AC`. An `N` cannot
+carry a signature. `_call_position` returns the competing alleles as a fourth
+value; `_majority_call` keeps its three-value contract, since polishing a draft
+has no use for them.
+
+### Projected effect on the current run
+
+Applying the classifier to v8c's contested positions (the run itself is not
+re-analysed - see below):
+
+| | clones |
+|---|---|
+| **`mixed_damage`** | **57 of 87 (66%)** |
+| `mixed_variants` | 30 (34%) |
+
+57 clones move Other -> Screenable, **1.7% of all consensuses**. Where those
+positions sit, which is the point of the request:
+
+| region | n | | protein effect | n |
+|---|---|---|---|---|
+| 3' flank (vector) | 31 | | missense | 24 |
+| insert (designed) | 22 | | **outside the reading frame** | **15** |
+| 5' flank (vector) | 5 | | nonsense | 10 |
+| | | | silent | 9 |
+
+So **15 of the 57 cannot affect the protein at all**, and another 9 are silent -
+24 of 57 are usable without qualification beyond the label. The 10 nonsense ones
+are the opposite case and now say so in the file name's neighbourhood rather than
+being pooled with the rest.
+
+### Not re-analysed yet
+
+The source FASTQ lives on an external volume that was not mounted, so the run
+still carries the old grades. The code is wired and verified end to end on the
+synthetic example (`nanopore3 init`, then `run`): both new column sets appear.
+When the volume is back:
+
+```
+python -m nanopore3 run --config configs/runs/260608_full_length.yaml
+```
+
+then regenerate the figures as in the 2026-08-21 (thirteenth) entry.
+
+### Tests
+
+`tests/test_mixed_damage.py`, 12 tests, each naming the failure it prevents: that
+only G:C -> T:A counts; that one unexplained position disqualifies the clone; that
+a run whose QC predates the column does not silently become `damage`; that
+`low_depth` still outranks it; that a position outside the ORF reports no protein
+effect; and that the allele column round-trips. 285 pass.
+
+### Lesson
+
+**A grade should carry its own caveat, not defer it to whoever reads the number.**
+`mixed_variants` was one bucket holding two different things - a clone with a known,
+harmless cause and a clone nobody can explain - and every downstream count treated
+them alike. Splitting the bucket was cheap; the reason it was possible at all is
+that the previous entry established *why* the two differ, which no amount of
+looking at the grade distribution would have revealed.
+
+---
+
 ## 2026-08-21 (fifteenth) — CORRECTION: the damage is real and heritable, and it happened before the clone existed
 
 Corrects the 2026-08-21 (fourteenth) entry on one point that changes what the

@@ -20,12 +20,24 @@ fine", so the reported grade is always the most actionable problem rather than
 the first one encountered:
 
 ``low_depth`` → ``mixed_variants`` → ``frameshift`` → ``premature_stop`` →
-``truncated`` → ``mismatched`` → ``perfect`` / ``screenable``
+``truncated`` → ``mismatched`` → ``perfect`` / ``screenable`` / ``mixed_damage``
 
 ``mixed_variants`` is *not* "the well is polyclonal".  A well holding several
 designs is the normal case here and simply yields several files.  This grade is
 per design: the reads assigned to one design disagree with each other beyond the
 support threshold, so that design is not a single clean clone.
+
+``mixed_damage`` is the subset of those whose contested positions all carry the
+G:C → T:A signature of 8-oxoguanine.  That lesion is *pre-mutagenic* rather than a
+mutation - it pairs with C or with A depending on the replication event - so a
+single transformed molecule carrying one produces both sequences inside one
+colony, without two plasmids ever meeting.  Measured on this data, that class is
+the one shared between independently grown cultures, so it is real heritable
+sequence rather than a sequencing artefact, and the damage happened before the
+clone existed: during synthesis, amplification or assembly.  Such a clone is
+**usable, with a caveat**, which is why it grades above ``mixed_variants`` - and
+the file name and header say where the contested position sits, because one in the
+vector backbone matters far less than one in the reading frame.
 """
 
 from __future__ import annotations
@@ -43,6 +55,7 @@ from pathlib import Path
 GRADES = (
     "perfect",
     "screenable",
+    "mixed_damage",
     "mixed_variants",
     "mismatched",
     "truncated",
@@ -54,6 +67,12 @@ GRADES = (
 GRADE_DESCRIPTIONS = {
     "perfect": "exact match to the designed reference, in frame, no internal stop",
     "screenable": "full length and in frame with no internal stop, but carries substitutions",
+    "mixed_damage": (
+        "two alleles at one or more positions, all of them G:C>T:A - the "
+        "8-oxoguanine signature of DNA damage that occurred before transformation, "
+        "so one molecule carrying the lesion produced both sequences in one colony; "
+        "a usable clone, with the caveat named in the file header"
+    ),
     "mixed_variants": (
         "reads for this one design disagree beyond the support threshold, so it is "
         "not a single clean clone; a well holding several designs is normal and "
@@ -79,7 +98,11 @@ def grade_consensus(consensus: Mapping[str, str], qc: Mapping[str, str]) -> str:
         return "low_depth"
     if int(consensus.get("ambiguous_bases") or 0) > 0:
         # A sample problem rather than a sequence one, and it explains any
-        # identity or frame failure that follows from it.
+        # identity or frame failure that follows from it. Damage-signature
+        # mixtures are separated out because they are real, usable clones: see
+        # the module docstring.
+        if qc.get("mixed_signature") == "oxidative":
+            return "mixed_damage"
         return "mixed_variants"
     if qc.get("reading_frame") == "fail":
         return "frameshift"
@@ -214,6 +237,15 @@ def write_consensus_tree(
             )
             if qc.get("alignment_identity"):
                 header += f" identity={qc['alignment_identity']}"
+            if qc.get("mixed_detail"):
+                # Where the contested position is, and what it does to the
+                # protein: a mixture in the vector backbone matters far less than
+                # one in the reading frame, and the grade alone cannot say which.
+                header += (
+                    f" mixed_signature={qc.get('mixed_signature', '')}"
+                    f" mixed_at={qc['mixed_detail']}"
+                    f" mixed_in_reading_frame={qc.get('mixed_in_reading_frame', '')}"
+                )
             # 60-column wrapping keeps the files readable in any viewer.
             wrapped = "\n".join(sequence[i : i + 60] for i in range(0, len(sequence), 60))
             path.write_text(f"{header}\n{wrapped}\n", encoding="ascii")
@@ -232,6 +264,9 @@ def write_consensus_tree(
                 "reads_used": row["n_reads_used"],
                 "mean_depth": row["mean_depth"],
                 "ambiguous_bases": row["ambiguous_bases"],
+                "mixed_signature": qc.get("mixed_signature", ""),
+                "mixed_detail": qc.get("mixed_detail", ""),
+                "mixed_in_reading_frame": qc.get("mixed_in_reading_frame", ""),
                 "identity": qc.get("alignment_identity", ""),
                 "edit_distance": qc.get("alignment_edit_distance", ""),
                 "protein_length": qc.get("protein_length", ""),

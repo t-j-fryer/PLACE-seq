@@ -179,3 +179,48 @@ reads with known substitutions/indels/truncations/chimeras and held-out experime
 The gate includes assignment precision/recall, false-chimera rate, consensus accuracy by depth,
 runtime/memory measurements, and equivalent serial/parallel output.
 
+
+## Reruns: recomputing the analysis without the FASTQ
+
+Demultiplexing dominates a run's wall clock and depends only on the barcodes.
+Changing a consensus threshold and repeating the whole thing wastes it, and
+requires the original FASTQ to still be attached — which, for data on removable
+media, it often is not.
+
+```
+nanopore3 rerun --config tuned.yaml --from-run runs/my-run --from 04_consensus
+```
+
+Stages before `--from` are carried into a **new** run directory and everything from
+`--from` onward is recomputed. Two properties are preserved:
+
+- **Runs stay immutable.** A rerun never edits its source. Inherited artifacts are
+  hard linked where the filesystem allows, so carrying 600 MB of intermediates
+  forward costs no disk and still cannot be modified in place.
+- **Reuse is decided by the stage fingerprint, not by trust.** Every stage records
+  a fingerprint over its parameters, input digests and pipeline version. A stage is
+  inherited only if the current configuration reproduces that fingerprint. Change a
+  barcode setting and try to rerun from `04_consensus`, and it is refused:
+
+  ```
+  error: the configuration differs from the one that produced an inherited stage.
+  Inherited: 01_ingest, 02_demux, 03_assignment. Re-run with --from set to the
+  earliest stage your change affects, or run from the FASTQ instead.
+  ```
+
+  The partially built run directory is removed, so a refusal leaves nothing behind.
+
+The FASTQ is not required when both stages that read it (`01_ingest`, `02_demux`)
+are inherited. Provenance still names the input file and its checksum: those are
+carried from the source run's manifests rather than recomputed, and `run.json`
+records `inherited` — the source run id, which stages came from it, and where
+recomputation began.
+
+A stage that did not run in the source (chimera detection, when it was disabled) is
+not an error: it is computed if the new configuration calls for it.
+
+### `--resume` versus `rerun`
+
+`--resume` continues *the same run under the same configuration*, and refuses if
+the configuration digest differs at all. Use it after an interruption. Use `rerun`
+when the configuration has changed and you want the unaffected stages kept.

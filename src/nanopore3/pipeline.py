@@ -516,10 +516,22 @@ def reading_frame_span(
     return start[0], stop[1]
 
 
-def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[str, Any]:
-    """Perform complete preflight without creating a run directory."""
+def validate_inputs(
+    config: PipelineConfig,
+    *,
+    scan_fastq: bool = True,
+    require_inputs: bool = True,
+) -> dict[str, Any]:
+    """Perform complete preflight without creating a run directory.
 
-    missing = [str(item.path) for item in config.inputs if not item.path.is_file()]
+    ``require_inputs`` is False only for a rerun that inherits every stage which
+    reads the sequencing data.  References are still required either way: the
+    stages being recomputed compare against them.
+    """
+
+    missing = [] if not require_inputs else [
+        str(item.path) for item in config.inputs if not item.path.is_file()
+    ]
     missing.extend(
         str(path)
         for settings in config.reference_sets.values()
@@ -561,6 +573,8 @@ def validate_inputs(config: PipelineConfig, *, scan_fastq: bool = True) -> dict[
                 raise PipelineError(f"invalid {label} barcode panel: {exc}") from exc
     inputs: list[dict[str, Any]] = []
     for item in config.inputs:
+        if not require_inputs and not item.path.is_file():
+            continue
         digest = sha256_file(item.path)
         count = None
         if scan_fastq:
@@ -1366,10 +1380,31 @@ def run_pipeline(
     output_root: Path | None = None,
     run_id: str | None = None,
     resume: bool = False,
+    inherit: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Execute the portable workflow into a new immutable run directory."""
+    """Execute the portable workflow into a new immutable run directory.
 
-    preflight = validate_inputs(config, scan_fastq=True)
+    ``inherit`` is the record returned by :func:`nanopore3.rerun.prepare_rerun`:
+    earlier stages already placed in the run directory, carried from a finished
+    run.  When it covers the stages that read the FASTQ, the FASTQ itself is not
+    required - those stages will not run, and their manifests already carry its
+    digest.
+    """
+
+    from .rerun import INPUT_CONSUMING_STAGES
+
+    inherited_stages = set((inherit or {}).get("inherited_stages", ()))
+    skip_inputs = bool(inherit) and all(
+        stage in inherited_stages for stage in INPUT_CONSUMING_STAGES
+    )
+    if skip_inputs:
+        # Provenance still names the input and its checksum: they come from the
+        # inherited run rather than from re-reading a file nobody will open.
+        preflight = validate_inputs(config, scan_fastq=False, require_inputs=False)
+        preflight["inputs"] = list(inherit["source_preflight"].get("inputs", []))
+        preflight["inherited_inputs"] = True
+    else:
+        preflight = validate_inputs(config, scan_fastq=True)
     # The digest covers the configuration as written, which is what a reader
     # declared; the derived anchors and flank digests are recorded in the
     # assignment stage manifest instead.
@@ -1405,11 +1440,17 @@ def run_pipeline(
         "runtime": runtime_report,
         "source_control": git_provenance(Path(__file__).resolve()),
     }
+    if inherit:
+        run_metadata["inherited"] = dict(inherit)
     metadata_path = run_dir / "run.json"
     if metadata_path.exists():
         existing = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if existing.get("config_digest") != config_digest:
-            raise PipelineError("resume refused: run configuration differs")
+        if existing.get("config_digest") != config_digest and not inherit:
+            raise PipelineError(
+                "resume refused: run configuration differs. To reuse this run's "
+                "intermediates under a changed configuration, use `nanopore3 rerun`, "
+                "which writes a new run and re-derives every stage the change reaches"
+            )
     else:
         atomic_write_json(metadata_path, run_metadata)
 

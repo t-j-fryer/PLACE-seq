@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Nanopore3"
+abstract: >-
+  A portable, reproducible pipeline for demultiplexing Oxford Nanopore amplicon
+  reads by plate and well barcode, assigning them to designed references,
+  building per-clone consensus sequences, and reporting quality-control evidence.
+  Supports whole-vector references, and recovery of the source culture plate when
+  several were pooled into one colony-PCR plate.
+type: software
+authors:
+  - family-names: Fryer
+    given-names: Thomas
+    email: tjaf@mit.edu
+    affiliation: Massachusetts Institute of Technology
+license: MIT
+version: 0.3.0
+keywords:
+  - nanopore
+  - amplicon sequencing
+  - consensus
+  - demultiplexing
+  - protein design
+  - plasmid sequencing

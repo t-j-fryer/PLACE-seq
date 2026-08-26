@@ -12,6 +12,7 @@ import sys
 
 from . import __version__
 from .config import ConfigError, load_config
+from .provenance import StageValidationError
 from .pipeline import PipelineError, run_pipeline, validate_inputs
 from .runtime import doctor_report
 
@@ -39,6 +40,38 @@ def _parser() -> argparse.ArgumentParser:
 
     init = subparsers.add_parser("init", help="copy the documented synthetic example")
     init.add_argument("directory", type=Path, nargs="?", default=Path("nanopore3-example"))
+
+    rerun = subparsers.add_parser(
+        "rerun",
+        help="recompute the analysis stages from a finished run's intermediates",
+        description=(
+            "Start from a finished run instead of the FASTQ. Stages before --from "
+            "are carried over (hard linked, so they cost no disk and stay "
+            "immutable) and everything from --from onward is recomputed into a new "
+            "run directory. A stage is inherited only if the current configuration "
+            "produces the fingerprint that stage recorded, so a configuration "
+            "change that reaches back into an inherited stage is refused by name "
+            "rather than silently built upon. The original FASTQ need not be "
+            "attached when both stages that read it are inherited."
+        ),
+    )
+    rerun.add_argument("--config", type=Path, required=True)
+    rerun.add_argument(
+        "--from-run", type=Path, required=True, help="the finished run to build on"
+    )
+    rerun.add_argument(
+        "--from",
+        dest="from_stage",
+        default="04_consensus",
+        help="first stage to recompute (default: 04_consensus)",
+    )
+    rerun.add_argument("--output", type=Path, help="override the configured run root")
+    rerun.add_argument("--run-id", help="portable directory name for the new run")
+    rerun.add_argument(
+        "--verify",
+        action="store_true",
+        help="re-checksum every inherited artifact instead of trusting its manifest",
+    )
 
     layout = subparsers.add_parser(
         "layout",
@@ -83,6 +116,72 @@ def _init_example(destination: Path) -> None:
         with as_file(assets.joinpath(name)) as source:
             shutil.copy2(source, target)
     print(f"Created example at {destination.resolve()}")
+
+
+def _rerun(
+    config,
+    *,
+    source: Path,
+    from_stage: str,
+    output_root: Path | None,
+    run_id: str | None,
+    verify: bool,
+) -> Path:
+    """Carry a finished run's earlier stages forward and recompute the rest."""
+
+    from datetime import datetime, timezone
+
+    from .provenance import canonical_digest
+    from .rerun import RerunError, completed_stages, prepare_rerun, stages_before
+
+    source = source.expanduser().resolve()
+    inherited = stages_before(from_stage)
+    done = completed_stages(source)
+    print(f"{source.name}: completed {', '.join(done) or 'nothing'}")
+    print(f"inheriting {', '.join(inherited)}; recomputing from {from_stage}")
+
+    if run_id is None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        run_id = f"{stamp}-rerun-{canonical_digest(config.as_dict())[:8]}"
+    root = (output_root or config.output_root).expanduser().resolve(strict=False)
+    destination = root / run_id
+    if destination.exists():
+        raise PipelineError(f"run already exists; choose another --run-id: {destination}")
+
+    try:
+        record = prepare_rerun(
+            source, destination, from_stage, verify_checksums=verify
+        )
+    except RerunError as exc:
+        raise PipelineError(str(exc)) from exc
+    print(f"carried {len(record['inherited_stages'])} stage(s) into {destination}")
+    if record.get("not_inherited"):
+        print(
+            f"  ({', '.join(record['not_inherited'])} did not run in the source and "
+            "will be computed if the configuration calls for it)"
+        )
+    try:
+        return run_pipeline(
+            config,
+            output_root=output_root,
+            run_id=run_id,
+            resume=True,
+            inherit=record,
+        )
+    except StageValidationError as exc:
+        # The configuration change reaches back into a stage this rerun meant to
+        # keep, so its intermediates no longer describe the configuration being
+        # run. Refusing is the point; leaving a half-built run behind is not.
+        shutil.rmtree(destination, ignore_errors=True)
+        carried = ", ".join(record["inherited_stages"])
+        raise PipelineError(
+            f"the configuration differs from the one that produced an inherited "
+            f"stage ({exc}). Inherited: {carried}. Re-run with --from set to the "
+            f"earliest stage your change affects, or run from the FASTQ instead"
+        ) from exc
+    except BaseException:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
 
 
 def _layout(config_path: Path, export: Path | None) -> None:
@@ -164,6 +263,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Report: {path / 'stages' / '06_report' / 'report.html'}")
         elif args.command == "init":
             _init_example(args.directory)
+        elif args.command == "rerun":
+            config = load_config(args.config)
+            path = _rerun(
+                config,
+                source=args.from_run,
+                from_stage=args.from_stage,
+                output_root=args.output,
+                run_id=args.run_id,
+                verify=args.verify,
+            )
+            print(f"Completed run: {path}")
+            print(f"Report: {path / 'stages' / '06_report' / 'report.html'}")
         elif args.command == "layout":
             _layout(args.config, args.export)
         else:  # pragma: no cover - argparse enforces subcommands

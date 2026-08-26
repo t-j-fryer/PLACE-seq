@@ -15,6 +15,114 @@ Conventions:
 
 ---
 
+## 2026-08-21 (fourteenth) — The two-allele wells are mostly oxidative damage, not two clones
+
+Corrects the 2026-08-21 (eleventh) entry, which concluded that a mixed plasmid
+population in one colony was the best explanation. It fits three wells; it does
+not fit the 88 flagged clones taken together. Asked properly: 93 of 3,334
+consensuses (2.8%) carry a contested position, and the *spectrum* of those
+positions identifies the mechanism.
+
+Two new scripts, `scripts/dissect_mixed_positions.py` (every contested position
+with its region, alleles, fractions and context) and `scripts/replicate_alleles.py`
+(the same position in the other sequencing of the same well).
+
+### The result: a G:C -> T:A signature, 8x over background
+
+| substitution | contested positions (minor allele >=20%) | background error in the same reads (1-10%) |
+|---|---|---|
+| **G->T + C->A** | **58.4%** | **7.1%** |
+| C->T, T->C, A->G, G->A (transitions) | 24% | 61% |
+
+Uniform expectation for any one of the twelve substitutions is 16.7%. The
+background column is the control that matters: same reads, same flowcell, same
+basecaller, and it looks like published nanopore error - transition-dominated,
+methylation-associated. The contested positions do not. Whatever makes them is
+not the basecaller.
+
+Restricted to the 80 clones with **exactly one** contested position - the class
+the question was actually about - G->T plus C->A is **70%** (56/80).
+
+G:C -> T:A is the canonical **8-oxoguanine** signature: 8-oxoG mispairs with
+adenine, so a polymerase reads the damaged strand as T. Supporting evidence, in
+the direction the literature predicts:
+
+- **Stacked GG context** 56.4% against 43.4% for all G and C positions in the same
+  references, 1.30x, one-sided binomial p = 0.014. 8-oxoG forms preferentially at
+  stacked guanines.
+- **Allele fraction** median 0.378, mass between 0.25 and 0.50 - a lesion on one
+  strand of one template duplex becomes roughly half the amplicons.
+- **Uniform across the amplicon.** In the single-position class: 11.1 contested
+  positions per 10 kb in the insert, 7.0 in the 3' flank, 5.6 in the 5' flank.
+  Damage does not know which part is designed.
+- **Not the in vivo spectrum.** Wild-type E. coli suppresses GC->TA specifically,
+  with MutM and MutY; spontaneous mutation in a mutM+ mutY+ background is
+  transition-dominated. A 70% GC->TA class did not arise inside the cells.
+
+### What was ruled out, and how
+
+| hypothesis | test | result |
+|---|---|---|
+| a second, near-identical design in the well | swap the minor allele into the reference and look it up in the library | 0/80 match; nearest neighbour in the library is **28 edits**, median 64 |
+| systematic basecalling artefact at a fixed position | do flank coordinates recur across wells? (comparable across all designs) | 48 positions at **43 distinct offsets** |
+| methylation-context basecalling error | Dam `GATC` / Dcm `CCWGG` near the position | 2/170 and 1/170 |
+| homopolymer slippage | run length at the contested base | 80/170 are not in a run at all |
+| a wrong reference | recurring flank coordinate, and 3' region identity | none, and 100.000% |
+| barcode leakage between wells sharing a design | sibling wells per clone, flagged vs not | **5.97 vs 6.00** - no difference |
+| selection during outgrowth | silent / missense / stop against a region-matched random control | 28.5 / 64.2 / 7.3% vs 24.7 / 71.4 / 3.8%. Silent enrichment is **not** significant once the control is region-matched; the nonsense excess is 11 events, p ~ 0.03 |
+
+The selection test is worth calling out: on a naive whole-ORF control it looked
+like clear purifying selection, and the effect nearly vanished when the control
+was matched to the region the variant actually fell in.
+
+### What does not fit, and is left open
+
+Four contested positions sit in a well that was sequenced twice, on a dedicated
+barcode and inside the pool. **All four carry the same non-reference allele in
+both** - so those four were in the template, not made during one library prep.
+Three of the four are near-fixed in the dedicated run (97.5%, 99.7%, 83%) and
+contested only in the pooled one:
+
+| well | position | pooled | dedicated |
+|---|---|---|---|
+| A6 | flank_3 +534, C->A | A 61% / C 38% | A 97.5% / C 2.5% |
+| B9 | flank_3 +104, G->T | T 58% / G 42% | T 99.7% / G 0.3% |
+| B3 | insert +5, G->C | C 74% / G 26% | C 83% / G 17% |
+| H4 | insert +161, G->T | T 33% / G 46%* | T 46% / G 53% |
+
+So those are **real mutant clones**, and the open question is the opposite one:
+where the *reference*-allele reads in the pooled run come from. Leakage from
+another well carrying the same design would be invisible to the base-rate test
+above - it only shows when the well's own clone differs from its siblings - but
+38-42% is far too much for index hopping. The alternative is that the dedicated
+and pooled barcodes did not sample the same culture. **That is an experimental
+design question, recorded rather than answered.** Four positions is also too few
+to generalise from.
+
+Note the sampling here is not neutral: a variant at 97% is not "contested", it is
+called, so the replicate set is biased toward exactly the wells where the two runs
+disagree.
+
+### Consequence for the pipeline
+
+If most of these are damage, then flagging the clone `mixed_variants` and writing
+an `N` degrades a good clone on the strength of an artefact. A G->T or C->A minor
+allele between 20 and 50%, in a well whose other positions are clean, is more
+likely damage than biology, and could be reported as such rather than as a
+mixture. **Not built** - it is a scientific filter and it changes what the output
+tree claims, so it is a decision.
+
+### Lesson
+
+**A spectrum identifies a mechanism where a single case cannot.** Three wells
+supported "mixed plasmid population" and nothing about them ruled it out. The
+same question asked over 170 positions answered itself in one table, because
+mechanisms have signatures and single observations do not. The background-error
+control is what made it an argument rather than an observation: the interesting
+number was never 58%, it was 58% against 7% in the same reads.
+
+---
+
 ## 2026-08-21 (thirteenth) — No hatching: the platform is a word, not a texture
 
 Presentation only; no number moved. Corrects the *encoding* chosen in the

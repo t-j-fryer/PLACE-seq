@@ -145,7 +145,33 @@ INSERT_CONFIG = (
 )
 
 
-@unittest.skipUnless(FULL_LENGTH_CONFIG.is_file(), "shipped config not present")
+def shipped_data_available(config_path: Path) -> bool:
+    """Whether a shipped config *and the references it points at* are present.
+
+    The configs are tracked; the reference FASTAs they name are not - they live
+    under ``runs/``, which is ignored, because they are experiment data rather
+    than source.  Checking only the config passed locally and failed in CI, where
+    the config exists and the FASTAs do not.
+    """
+
+    if not config_path.is_file():
+        return False
+    try:
+        config = load_config(config_path)
+    except Exception:  # an unloadable config is reported by ConfigValidationTests
+        return False
+    return all(
+        path.is_file()
+        for settings in config.reference_sets.values()
+        for path in settings.fasta
+    )
+
+
+FULL_LENGTH_DATA = shipped_data_available(FULL_LENGTH_CONFIG)
+INSERT_DATA = shipped_data_available(INSERT_CONFIG)
+
+
+@unittest.skipUnless(FULL_LENGTH_DATA, "shipped references not present")
 class ShippedConfigTests(unittest.TestCase):
     """The wiring is exercised through the configs the repository ships."""
 
@@ -185,7 +211,7 @@ class ShippedConfigTests(unittest.TestCase):
         spine = len(config.qc.upstream_constant) + len(config.qc.downstream_constant)
         self.assertEqual(spine % 3, 0)
 
-    @unittest.skipUnless(INSERT_CONFIG.is_file(), "shipped config not present")
+    @unittest.skipUnless(INSERT_DATA, "shipped references not present")
     def test_an_insert_mode_config_resolves_no_flanks_and_is_unchanged(self) -> None:
         config = load_config(INSERT_CONFIG)
         self.assertEqual(pipeline.resolve_flanks(config), {})
@@ -287,7 +313,7 @@ class InsertGateTests(unittest.TestCase):
         self.assertIsNone(self.gate.verdict(self.read_of(INSERTS["d1"]), "nope"))
 
 
-@unittest.skipUnless(FULL_LENGTH_CONFIG.is_file(), "shipped config not present")
+@unittest.skipUnless(FULL_LENGTH_DATA, "shipped references not present")
 class ShippedGateTests(unittest.TestCase):
     def test_gates_are_built_for_both_full_length_libraries(self) -> None:
         config = load_config(FULL_LENGTH_CONFIG)

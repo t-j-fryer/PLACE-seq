@@ -1,0 +1,106 @@
+# The same run as 260608_full_length.yaml, written the short way.
+#
+# Three things move out of the file and nothing else changes; `nanopore3 validate`
+# resolves the two configurations to byte-identical settings.
+#
+#   preset          the 22 tuning values nobody can set from first principles
+#   flanks.template one example construct, instead of 889 nt pasted twice
+#   layout_csv      the pooling design, as the spreadsheet a lab already keeps
+#
+# ${NANOPORE_RAW} is where this machine keeps the sequencing data:
+#   export NANOPORE_RAW=/path/to/sequencing/data
+
+schema_version: 1
+preset: ont-r10-amplicon
+run_name: 260608-full-length
+output_root: ../../runs
+
+inputs:
+  - path: ${NANOPORE_RAW}/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
+    sample_id: AI_DBTL
+
+# One example construct per library - a binder already in the vector. The constant
+# regions are found by locating that library's insert inside it, which is also the
+# check that the example really is from this library.
+reference_libraries:
+  sumo_ab:
+    fasta: ../../runs/refs_260608/sumo_ab.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+    flanks:
+      template: 260608_template_sumo_ab.fasta
+      anchor_length: 20
+  lab:
+    fasta: ../../runs/refs_260608/lab.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+    flanks:
+      template: 260608_template_lab.fasta
+      anchor_length: 20
+
+plate_reference_map:
+  RP05: sumo_ab
+  RP06: sumo_ab
+  RP07: sumo_ab
+  RP08: lab
+
+library:
+  name: rp-amplicon-full-length
+  # Unused for these libraries - the per-library primer anchors derived from the
+  # flanks take precedence - but kept so the config is valid on its own.
+  forward_motif: CATAATCCGCACGCATCTGG
+  reverse_motif: CGGATTGGCGAATGGGACGC
+  minimum_read_length: 500
+  maximum_read_length: 3000
+
+barcodes:
+  plate:
+    registry_csv: ../barcodes/reverse_primer_families.csv
+    family_id: rp_amplicon
+    trim_bases: 12
+    max_edits: 6
+    search_window: 400
+    search_ends: [head, tail]
+    allow_reverse_complement: true
+    minimum_margin: 0
+    decision_policy: legacy_unique_threshold
+  well:
+    registry_csv: ../barcodes/well_forward_primers_a1_h12.csv
+    family_id: well_forward_full
+    trim_bases: 12
+    max_edits: 7
+    search_window: 400
+    search_ends: [head]
+    allow_reverse_complement: false
+    minimum_margin: 0
+    decision_policy: legacy_unique_best
+
+# Machine-specific, so the preset deliberately does not set it.
+parallel:
+  jobs: 8
+
+random_seed: 141142
+
+qc:
+  # In full-length mode these locate the ORF inside the consensus rather than
+  # being assembled around it: upstream_constant must begin at the start codon,
+  # and the tail of downstream_constant ends at the terminal stop.
+  upstream_constant: ATGCAGCTT
+  downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA
+
+compressed_pcr:
+  enabled: true
+  block_pattern: "^((?:[AB]_)?Block_\\d+)_"
+  layout_csv: 260608_full_length_layout.csv

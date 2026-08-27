@@ -16,7 +16,7 @@ output_root: ../../runs
 # remaining barcodes carry constructs whose constant regions differ.
 
 inputs:
-  - path: /Volumes/TJAF/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
+  - path: ${NANOPORE_RAW}/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
     sample_id: AI_DBTL
 
 # flanks.upstream/downstream turn the insert-only FASTA into whole amplicons. The

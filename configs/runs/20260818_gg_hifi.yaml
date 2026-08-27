@@ -9,35 +9,35 @@ output_root: ../../runs
 # 15 pass FASTQs from one flow cell, kept as separate inputs so each keeps its
 # own checksum and record count in provenance.
 inputs:
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_0.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_0.fastq.gz
     sample_id: FBG62182_00
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_1.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_1.fastq.gz
     sample_id: FBG62182_01
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_2.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_2.fastq.gz
     sample_id: FBG62182_02
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_3.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_3.fastq.gz
     sample_id: FBG62182_03
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_4.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_4.fastq.gz
     sample_id: FBG62182_04
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_5.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_5.fastq.gz
     sample_id: FBG62182_05
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_6.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_6.fastq.gz
     sample_id: FBG62182_06
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_7.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_7.fastq.gz
     sample_id: FBG62182_07
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_8.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_8.fastq.gz
     sample_id: FBG62182_08
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_9.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_9.fastq.gz
     sample_id: FBG62182_09
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_10.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_10.fastq.gz
     sample_id: FBG62182_10
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_11.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_11.fastq.gz
     sample_id: FBG62182_11
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_12.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_12.fastq.gz
     sample_id: FBG62182_12
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_13.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_13.fastq.gz
     sample_id: FBG62182_13
-  - path: /Users/thomasfryer/Downloads/FBG62182_pass_cf9f949f_72284ae7_14.fastq.gz
+  - path: ${NANOPORE_RAW}/FBG62182_pass_cf9f949f_72284ae7_14.fastq.gz
     sample_id: FBG62182_14
 
 # Whole plasmids were supplied as GenBank; the references here are the region

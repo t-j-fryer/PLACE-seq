@@ -3,7 +3,7 @@ run_name: 260608-SUMO-LAB-BS-FS-Ph
 output_root: ../../runs
 
 inputs:
-  - path: /Volumes/TJAF/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
+  - path: ${NANOPORE_RAW}/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
     sample_id: AI_DBTL
 
 # Six designed libraries on two constructs. The 5' motif is shared, but sensors

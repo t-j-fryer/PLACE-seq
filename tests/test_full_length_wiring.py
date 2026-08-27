@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import re
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -145,6 +149,24 @@ INSERT_CONFIG = (
 )
 
 
+@contextmanager
+def placeholder_variables(config_path: Path):
+    """Supply any ``${VAR}`` the config names, pointing nowhere in particular.
+
+    These tests are about how references are wired, not about reading sequencing
+    data, so where the FASTQ would live is irrelevant to them.  Supplying
+    placeholders keeps them running on a machine that has the references but has
+    not set up the data paths - which, since the paths became variables, is every
+    machine that has not exported them.
+    """
+
+    names = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", config_path.read_text()))
+    with mock.patch.dict(
+        os.environ, {name: "/nonexistent/placeholder" for name in names}
+    ):
+        yield
+
+
 def shipped_data_available(config_path: Path) -> bool:
     """Whether a shipped config *and the references it points at* are present.
 
@@ -157,7 +179,8 @@ def shipped_data_available(config_path: Path) -> bool:
     if not config_path.is_file():
         return False
     try:
-        config = load_config(config_path)
+        with placeholder_variables(config_path):
+            config = load_config(config_path)
     except Exception:  # an unloadable config is reported by ConfigValidationTests
         return False
     return all(
@@ -176,7 +199,8 @@ class ShippedConfigTests(unittest.TestCase):
     """The wiring is exercised through the configs the repository ships."""
 
     def test_flanks_resolve_for_every_declared_library(self) -> None:
-        config = load_config(FULL_LENGTH_CONFIG)
+        with placeholder_variables(FULL_LENGTH_CONFIG):
+            config = load_config(FULL_LENGTH_CONFIG)
         flanks = pipeline.resolve_flanks(config)
         self.assertEqual(sorted(flanks), ["lab", "sumo_ab"])
         for flank in flanks.values():
@@ -184,7 +208,8 @@ class ShippedConfigTests(unittest.TestCase):
             self.assertGreater(flank.constant_bases, 800)
 
     def test_the_derived_anchors_become_the_region_motifs(self) -> None:
-        config = load_config(FULL_LENGTH_CONFIG)
+        with placeholder_variables(FULL_LENGTH_CONFIG):
+            config = load_config(FULL_LENGTH_CONFIG)
         flanks = pipeline.resolve_flanks(config)
         applied = pipeline.apply_flanks(config, flanks)
         for library_id, flank in flanks.items():
@@ -193,7 +218,8 @@ class ShippedConfigTests(unittest.TestCase):
             self.assertEqual(settings.reverse_motif, flank.right_anchor)
 
     def test_references_load_at_full_length_through_the_pipeline_path(self) -> None:
-        config = load_config(FULL_LENGTH_CONFIG)
+        with placeholder_variables(FULL_LENGTH_CONFIG):
+            config = load_config(FULL_LENGTH_CONFIG)
         flanks = pipeline.resolve_flanks(config)
         collection = read_reference_libraries(
             {k: s.fasta for k, s in config.reference_sets.items()},
@@ -207,13 +233,15 @@ class ShippedConfigTests(unittest.TestCase):
     def test_the_orf_spine_is_a_whole_number_of_codons(self) -> None:
         """A start-to-stop distance off a codon boundary would fail every clone."""
 
-        config = load_config(FULL_LENGTH_CONFIG)
+        with placeholder_variables(FULL_LENGTH_CONFIG):
+            config = load_config(FULL_LENGTH_CONFIG)
         spine = len(config.qc.upstream_constant) + len(config.qc.downstream_constant)
         self.assertEqual(spine % 3, 0)
 
     @unittest.skipUnless(INSERT_DATA, "shipped references not present")
     def test_an_insert_mode_config_resolves_no_flanks_and_is_unchanged(self) -> None:
-        config = load_config(INSERT_CONFIG)
+        with placeholder_variables(INSERT_CONFIG):
+            config = load_config(INSERT_CONFIG)
         self.assertEqual(pipeline.resolve_flanks(config), {})
         self.assertIs(pipeline.apply_flanks(config, {}), config)
 
@@ -316,7 +344,8 @@ class InsertGateTests(unittest.TestCase):
 @unittest.skipUnless(FULL_LENGTH_DATA, "shipped references not present")
 class ShippedGateTests(unittest.TestCase):
     def test_gates_are_built_for_both_full_length_libraries(self) -> None:
-        config = load_config(FULL_LENGTH_CONFIG)
+        with placeholder_variables(FULL_LENGTH_CONFIG):
+            config = load_config(FULL_LENGTH_CONFIG)
         flanks = pipeline.resolve_flanks(config)
         config = pipeline.apply_flanks(config, flanks)
         collection = read_reference_libraries(
@@ -337,7 +366,8 @@ class ShippedGateTests(unittest.TestCase):
     def test_a_library_can_opt_out(self) -> None:
         from dataclasses import replace as dc_replace
 
-        config = load_config(FULL_LENGTH_CONFIG)
+        with placeholder_variables(FULL_LENGTH_CONFIG):
+            config = load_config(FULL_LENGTH_CONFIG)
         flanks = pipeline.resolve_flanks(config)
         libraries = dict(config.reference_libraries)
         libraries["lab"] = dc_replace(libraries["lab"], insert_thresholds=False)

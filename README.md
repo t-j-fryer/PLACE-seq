@@ -19,6 +19,9 @@ evidence.
 - Optional native tools are detected during preflight and recorded in provenance.
 - Notebooks are clients of the package, not the implementation or source of hidden state.
 
+**New here? Start with [Worked examples](docs/workflows.md)** — three complete scenarios,
+from what is on the bench to what you read afterwards.
+
 See [Architecture](docs/architecture.md) for the stage model and reproducibility contract,
 [Configuration](docs/configuration.md) for the option reference,
 [References](docs/references.md) for the four ways to describe your constructs, and

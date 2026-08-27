@@ -15,6 +15,87 @@ Conventions:
 
 ---
 
+## 2026-08-26 (second) — Making the repository shareable
+
+No scientific change. Prompted by pushing to GitHub and finding absolute paths in
+tracked configuration.
+
+### The actual defect
+
+The repository conflated two things: **the pipeline**, which is reusable, and **an
+experiment**, which is not. Five tracked configs hard-coded where the data happened
+to sit on one machine - `/Volumes/TJAF`, a OneDrive path, a home directory. That
+makes a config unrunnable anywhere else, and in a public repository it publishes
+somebody's filesystem.
+
+Fixed at the one place paths are parsed. `${NAME}` expands from the environment:
+
+```yaml
+inputs:
+  - path: ${NANOPORE_RAW}/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
+```
+
+The config says *which* dataset; the environment says *where*. An unset variable is
+an error naming it and showing the `export` line, never an empty string - expanding
+to `""` gives `/AI_DBTL.fastq` and a file-not-found three lines later that says
+nothing about the cause.
+
+`configs/local/` is git-ignored, for configurations that should not be shared at
+all. A test asserts no tracked config contains `/Users/`, `/home/`, `/Volumes/` or
+`CloudStorage` - it caught one of my own comments immediately.
+
+### Presets
+
+About a quarter of a real configuration is platform tuning nobody can set from
+first principles. `preset: ont-r10-amplicon` supplies 22 such values; the
+configuration overrides any of them, per key, at any depth.
+
+A preset is a way of *writing* a configuration, not a layer under one: the merged
+result is what is validated, digested and recorded, so two runs naming a preset are
+as reproducible as two spelling it out.
+
+`configs/runs/260608_full_length_short.yaml` is the 260608 run written the short
+way - **222 lines to 105** - by moving three things out:
+
+| | |
+|---|---|
+| `preset` | the 22 tuning values |
+| `flanks.template` | one example construct per library, instead of 889 nt pasted twice |
+| `layout_csv` | the pooling design, as a spreadsheet |
+
+Both forms resolve to identical settings, and to byte-identical flanks (849
+constant bases per library). A test asserts it.
+
+Writing it surfaced a real check doing its job: a single shared template failed,
+because `from_template` requires an insert *from that library* to align to it, and
+one construct cannot contain an insert from both. Each library now has its own
+example construct - which is the honest description anyway.
+
+### Worked examples
+
+`docs/workflows.md`: three complete scenarios end to end - monoclonal insert-only,
+monoclonal whole-vector, pooled colony PCR whole-vector - plus what to read
+afterwards and how to change a threshold without repeating the demultiplexing.
+
+### Also
+
+- **MIT licence, CITATION.cff**, author metadata.
+- Pushed to `t-j-fryer/nanopore3`, **private**. CI ran for the first time and failed
+  immediately: `test_full_length_wiring` guarded on the shipped *config* existing,
+  but the references it names live under git-ignored `runs/`. Config tracked,
+  references not, so the guard passed and the tests died on a missing file. Now
+  green on ubuntu 3.10/3.13, macOS 3.12, Windows 3.12.
+
+### Lesson
+
+**A repository that has never been cloned elsewhere has never been tested.** Every
+defect here - absolute paths, a guard checking the wrong file, references only
+present on one machine - is invisible while the only checkout is the one it was
+written on. Pushing it somewhere with a clean filesystem found all three in ten
+minutes.
+
+---
+
 ## 2026-08-26 — v9b: the annotation lands, and the science does not move
 
 `runs/260608-full-length-v9b`, the first run carrying `mixed_damage` and the

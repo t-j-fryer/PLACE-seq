@@ -53,7 +53,7 @@ nanopore3 = "nanopore3.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-nanopore3 = ["example_data/*"]
+nanopore3 = ["example_data/*", "presets/*.yaml"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

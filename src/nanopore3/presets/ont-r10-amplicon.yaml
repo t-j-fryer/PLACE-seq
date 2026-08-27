@@ -1,0 +1,53 @@
+# Tuning for Oxford Nanopore R10.4.1 amplicon reads, plate + well barcoded.
+#
+# These are the values the 260608 run arrived at over several iterations, and none
+# of them is guessable from first principles. A configuration that names this
+# preset inherits them and states only what describes its own experiment; any key
+# it does set wins.
+#
+# Every value here is recorded in the run's provenance exactly as if it had been
+# written out longhand, so naming a preset costs nothing in reproducibility.
+
+library:
+  motif_max_edits: 3
+  minimum_mean_quality: 10
+  allow_empty_reads: true
+
+parallel:
+  backend: process
+  threads_per_job: 1
+  chunk_reads: 1000
+
+consensus:
+  backend: portable
+  minimum_depth: 6
+  # Was 30, which discarded 84% of eligible reads: the median clone had 164
+  # available. 300 sits above the 90th percentile.
+  maximum_reads: 300
+  # Only the majority caller that polishes clustering drafts uses this; the
+  # statistical caller below decides bases.
+  minimum_support: 0.60
+  # A base observation below Q10 is not counted. Quality gates admission, it does
+  # not scale a vote.
+  minimum_base_quality: 10
+  # An allele is called only if it beats this group's own background error rate at
+  # this adjusted p.
+  significance: 0.05
+  # And needs this share of the reads. Significance alone flagged systematic
+  # homopolymer error as a second allele and passed 15 clones out of 2,031.
+  minimum_minor_fraction: 0.20
+
+qc:
+  minimum_identity: 0.98
+  minimum_query_coverage: 0.95
+  minimum_reference_coverage: 0.95
+  length_tolerance: 10
+
+chimera:
+  enabled: true
+  window: 90
+  step: 45
+  write_pcr_origin: false
+  # A read belonging to a chimeric clone stops also feeding a parent design's
+  # consensus: the molecule is counted once, as itself. Reads are never discarded.
+  exclude_reads: written

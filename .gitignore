@@ -53,3 +53,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Experiment configurations that should not be shared. A config describes an
+# experiment; anything genuinely private (unpublished designs, collaborator data)
+# belongs here rather than in configs/runs/, which is tracked.
+configs/local/

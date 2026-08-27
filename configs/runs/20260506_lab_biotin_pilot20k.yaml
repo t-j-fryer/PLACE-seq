@@ -10,7 +10,7 @@ inputs:
 # routing is mandatory because conserved coding k-mers occur between libraries.
 reference_libraries:
   aaseq_biotin:
-    fasta: /Users/thomasfryer/Library/CloudStorage/GoogleDrive-tjaf@mit.edu/My Drive/Database/oPool_database/opTF003/01_AAseq_Biotin/01_AAseq_Biotin_references.fasta
+    fasta: ${OPOOL_DB}/opTF003/01_AAseq_Biotin/01_AAseq_Biotin_references.fasta
     kmer_sizes: [15, 11, 9]
     max_kmer_owners: 10
     candidate_count: 5
@@ -20,7 +20,7 @@ reference_libraries:
     minimum_reference_coverage: 0.70
     minimum_identity_margin: 0.02
   dtf141_dtf142:
-    fasta: /Users/thomasfryer/Library/CloudStorage/GoogleDrive-tjaf@mit.edu/My Drive/Database/oPool_database/opTF003/dTF141_dTF142/dTF141_dTF142_references.fasta
+    fasta: ${OPOOL_DB}/opTF003/dTF141_dTF142/dTF141_dTF142_references.fasta
     kmer_sizes: [15, 11, 9]
     max_kmer_owners: 10
     candidate_count: 5
@@ -30,7 +30,7 @@ reference_libraries:
     minimum_reference_coverage: 0.70
     minimum_identity_margin: 0.02
   sumo_lab:
-    fasta: /Users/thomasfryer/Coding/AI_DBTL_NGS/References/SUMO_LAB/dTF017_dTF018_dTF020_dTF083_dTF084_dTF086_dTF082_dTF023_dTF024_references.fasta
+    fasta: ${NGS_REFS}/SUMO_LAB/dTF017_dTF018_dTF020_dTF083_dTF084_dTF086_dTF082_dTF023_dTF024_references.fasta
     kmer_sizes: [15, 11, 9]
     max_kmer_owners: 10
     candidate_count: 5

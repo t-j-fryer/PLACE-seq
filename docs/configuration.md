@@ -4,6 +4,70 @@ Nanopore3 resolves every path relative to the YAML configuration file and reject
 This makes configurations portable while preventing a misspelled threshold from silently using a
 default. Start with `nanopore3 init` and edit the generated example.
 
+## Paths that travel
+
+A configuration describes an experiment. *Where* that experiment's data sits is a
+property of the machine reading it, and writing the second into the first is what
+makes a config unshareable — and, once committed, what puts a home directory in a
+public repository.
+
+Use `${NAME}` for anything machine-specific:
+
+```yaml
+inputs:
+  - path: ${SEQ_DATA}/260608/AI_DBTL.fastq
+```
+
+```bash
+export SEQ_DATA=/Volumes/MyDrive
+```
+
+Values come from the environment. An unset variable is an error naming it, never an
+empty string — expanding to `""` would give `/AI_DBTL.fastq` and a file-not-found
+that says nothing about the cause:
+
+```
+error: inputs[0].path refers to unset environment variable(s): SEQ_DATA.
+Set them for this machine, for example:
+  export SEQ_DATA=/path/to/data
+```
+
+Relative paths resolve against the **configuration file**, not the working
+directory, so a config next to its references needs no variables at all.
+
+Anything genuinely private — unpublished designs, collaborator data — belongs in
+`configs/local/`, which is git-ignored.
+
+## Presets: the tuning you cannot set from first principles
+
+Roughly a quarter of a real configuration is platform tuning: k-mer sizes,
+significance, minor-allele floors, chimera windows. A new user has no basis for any
+of it. `preset:` supplies a named, versioned bundle:
+
+```yaml
+preset: ont-r10-amplicon
+```
+
+Available: `ont-r10-amplicon` (whole-vector or insert, thresholds measured over the
+insert) and `ont-r10-amplicon-insert` (references *are* the designed region).
+
+The preset supplies tuning; your configuration supplies the experiment and **wins
+wherever both mention a key** — including one key inside a section, leaving the rest
+of that section inherited:
+
+```yaml
+preset: ont-r10-amplicon
+consensus:
+  maximum_reads: 50      # this wins; minimum_depth, significance etc. still inherited
+```
+
+A preset is a way of *writing* a configuration, never a hidden layer under one. The
+merged result is what is validated, digested and recorded in the run, so two runs
+naming the same preset are exactly as reproducible as two spelling it out.
+
+`configs/runs/260608_full_length_short.yaml` is the shipped 260608 run written this
+way: **222 lines to 105**, resolving to identical settings.
+
 ## Main sections
 
 - `inputs`: one or more FASTQ/FASTQ.gz paths with stable sample IDs.

@@ -9,6 +9,7 @@ working directory.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
+import os
 import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -76,8 +77,47 @@ def _nonempty_string(value: Any, location: str) -> str:
     return value.strip()
 
 
+_VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_variables(value: str, location: str) -> str:
+    """Substitute ``${NAME}`` from the environment.
+
+    A configuration describes an experiment; where that experiment's data sits is
+    a property of the machine reading it.  Writing the second into the first is
+    what makes a config unshareable - and, once committed, what puts somebody's
+    home directory in a public repository.  A named variable keeps the two apart:
+    the config says *which* dataset, the environment says *where*.
+
+    An unset variable is an error naming it, never an empty string: silently
+    expanding to "" would produce a path like "/AI_DBTL.fastq" and a
+    file-not-found three lines later that says nothing about the cause.
+    """
+
+    missing: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        resolved = os.environ.get(name)
+        if resolved is None:
+            missing.append(name)
+            return ""
+        return resolved
+
+    expanded = _VARIABLE.sub(replace, value)
+    if missing:
+        names = ", ".join(sorted(set(missing)))
+        raise ConfigError(
+            f"{location} refers to unset environment variable(s): {names}. "
+            f"Set them for this machine, for example:\n"
+            + "\n".join(f"  export {name}=/path/to/data" for name in sorted(set(missing)))
+        )
+    return expanded
+
+
 def _path(value: Any, base_dir: Path, location: str) -> Path:
-    raw = Path(_nonempty_string(value, location)).expanduser()
+    text = expand_variables(_nonempty_string(value, location), location)
+    raw = Path(text).expanduser()
     if not raw.is_absolute():
         raw = base_dir / raw
     return raw.resolve(strict=False)
@@ -1294,6 +1334,72 @@ def _parse_compressed_pcr(value: Any, base_dir: Path) -> CompressedPcrSettings:
     )
 
 
+def available_presets() -> list[str]:
+    """Names of the tuning presets shipped with the package."""
+
+    from importlib.resources import files
+
+    directory = files("nanopore3").joinpath("presets")
+    return sorted(
+        item.name[: -len(".yaml")]
+        for item in directory.iterdir()
+        if item.name.endswith(".yaml")
+    )
+
+
+def _deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge ``override`` onto ``base``; a mapping merges, anything else replaces.
+
+    A list replaces rather than extends.  Appending to an inherited list would make
+    a preset's contents depend on the order two files were written in, and there is
+    no way to remove an inherited item.
+    """
+
+    merged = dict(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], Mapping)
+            and isinstance(value, Mapping)
+        ):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _apply_preset(root: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve ``preset:`` into the configuration it stands for.
+
+    The preset supplies tuning; the configuration supplies the experiment, and wins
+    wherever the two mention the same key.  The result is what is validated,
+    digested and recorded, so a preset is a way of writing a configuration, never a
+    hidden layer under one - two runs naming the same preset are as reproducible as
+    two runs spelling it out.
+    """
+
+    name = root.get("preset")
+    if name is None:
+        return dict(root)
+    if not isinstance(name, str) or not name.strip():
+        raise ConfigError("preset must be the name of a shipped preset")
+
+    from importlib.resources import files
+
+    source = files("nanopore3").joinpath("presets").joinpath(f"{name}.yaml")
+    if not source.is_file():
+        raise ConfigError(
+            f"unknown preset {name!r}; available: {', '.join(available_presets())}"
+        )
+    loaded = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+    merged = _deep_merge(_mapping(loaded, f"preset {name}"), root)
+    del merged["preset"]
+    # Kept so a reader of the run's recorded configuration can see where the
+    # values came from without having to diff them against the preset.
+    merged["run_name"] = merged.get("run_name")
+    return merged
+
+
 def load_config(path: str | Path) -> PipelineConfig:
     """Load and validate a Nanopore3 YAML configuration.
 
@@ -1311,8 +1417,10 @@ def load_config(path: str | Path) -> PipelineConfig:
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {source_path}: {exc}") from exc
     root = _mapping(raw, "configuration")
+    root = _apply_preset(root)
     allowed = {
         "schema_version",
+        "preset",
         "run_name",
         "output_root",
         "inputs",

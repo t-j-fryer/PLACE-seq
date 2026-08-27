@@ -15,6 +15,65 @@ Conventions:
 
 ---
 
+## 2026-08-27 (fourth) — End-to-end coverage of every command, and mutation testing it
+
+No scientific change. Closes the gap the previous entry identified rather than
+describing it.
+
+### The gap
+
+Three defects in a row lived in the paths *between* functions - a second call site
+resolving a value differently, a measurement that was absent rather than zero, an
+exception class the entry point did not catch - and each had a passing unit test.
+Unit tests cover functions; nothing covered the surfaces a user actually touches.
+
+### `tests/test_cli_end_to_end.py`, 23 tests
+
+Every command run as a **subprocess**, so the entry point, argument parsing, error
+handling and exit code are all in scope. One shared example and one shared base run,
+so the whole file takes 10 seconds.
+
+The two things asserted of every failure are the two that kept being wrong: a
+non-zero exit, and **a sentence rather than a traceback**. Ten user mistakes are
+checked that way - unknown configuration key, out-of-range value, missing input,
+unset path variable, absent consensus backend, missing config file, unknown rerun
+stage, existing run directory, a non-FASTQ handed to `subsample`, and two reference
+libraries with no plate map.
+
+Then the succeeding paths: `doctor` and its JSON, `validate` loud and `--quiet` and
+`--quick`, a run's three named outputs and its provenance keys, per-stage progress,
+`layout`, `subsample` to gzip, `init` refusing to overwrite. `rerun` from every
+stage that has a predecessor, refusing the first stage, refusing a change that
+reaches an inherited stage **and leaving no half-built run**, and running with the
+input FASTQ renamed away - the reason the command exists.
+
+And determinism as an end-to-end property: four worker/backend configurations,
+including `jobs: 0`, must produce one pair of digests.
+
+### Mutation-tested, because 23 tests that pass immediately prove nothing
+
+Each fix from the previous entries was reintroduced as a bug to confirm a test
+fails:
+
+| bug reintroduced | test that failed |
+|---|---|
+| `RerunError(RuntimeError)` | `test_an_unknown_rerun_stage` |
+| preflight resolving `jobs` from the raw value | `test_worker_count_and_backend_do_not_change_the_science` |
+| `designed_fraction` returning 0.0 for unknown | 2 of `UnknownIsNotZeroTests` |
+| removing the double-flank guard | 2 of `DoubleFlankGuardTests` |
+
+All four caught. 409 tests, lint clean, and the file passes under `unittest
+discover`, which is what CI runs.
+
+### Lesson
+
+**A test suite is not evidence until it has been shown to fail.** These 23 passed
+on first run, which is exactly the state a suite that asserts nothing is also in.
+Reintroducing four known bugs took five minutes and is the only reason the coverage
+claim means anything.
+
+---
+
 ## 2026-08-27 (third) — Third review pass: four defects, and one class of defect closed
 
 No scientific change. Deliberately aimed at areas the previous two passes had not

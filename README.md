@@ -19,6 +19,10 @@ evidence.
 - Optional native tools are detected during preflight and recorded in provenance.
 - Notebooks are clients of the package, not the implementation or source of hidden state.
 
+**Try it without installing anything:**
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/t-j-fryer/nanopore3/blob/main/notebooks/Nanopore3_Colab.ipynb)
+— runs the synthetic example in two cells, then walks through your own data from Drive.
+
 **New here? Start with [Worked examples](docs/workflows.md)** — three complete scenarios,
 from what is on the bench to what you read afterwards.
 

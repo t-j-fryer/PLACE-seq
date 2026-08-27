@@ -4,6 +4,21 @@ Nanopore3 resolves every path relative to the YAML configuration file and reject
 This makes configurations portable while preventing a misspelled threshold from silently using a
 default. Start with `nanopore3 init` and edit the generated example.
 
+## Running on a machine you did not configure for
+
+`parallel.jobs: 0` means *use whatever this machine has*. Any value is bounded by the
+detected CPU budget anyway, so `0` lets one configuration run sensibly on a
+workstation and on a two-core hosted notebook without being edited.
+
+Progress is reported per stage by default — a run that prints nothing for an hour is
+indistinguishable from one that has hung, and on a hosted notebook it also risks
+being disconnected for idleness. `--quiet` suppresses it.
+
+`nanopore3 subsample --input X --output Y --reads 100000` takes the first N reads of a
+FASTQ, for trying a configuration or checking barcode recovery before committing to a
+full run. Reads come in file order, so it is reproducible and costs one pass over the
+head of the file rather than over all of it.
+
 ## Paths that travel
 
 A configuration describes an experiment. *Where* that experiment's data sits is a

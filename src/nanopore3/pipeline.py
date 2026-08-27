@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
+import os
+import time
 import csv
 import logging
 from dataclasses import asdict, dataclass, replace
@@ -473,6 +475,35 @@ def check_pooling_layout(config: PipelineConfig, reference_collection) -> list[s
             f"{', '.join(unknown[:8])}"
         )
     return problems
+
+
+# How often the long stages report progress. A run that prints nothing for an hour
+# is indistinguishable from one that has hung, and on a hosted notebook it also
+# risks being disconnected for idleness.
+PROGRESS_EVERY_READS = 200_000
+
+
+def _duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes, remainder = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m{remainder:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
+@contextmanager
+def _stage(run_dir: Path, name: str, fingerprint: str, **kwargs: Any):
+    """A stage directory that says when it started, finished, or was reused."""
+
+    started = time.monotonic()
+    with StageDirectory(run_dir, name, fingerprint, **kwargs) as stage:
+        LOGGER.info(
+            "stage %s: %s", name, "reusing completed stage" if stage.reused else "running"
+        )
+        yield stage
+    LOGGER.info("stage %s: done in %s", name, _duration(time.monotonic() - started))
 
 
 def parse_mixed_alleles(
@@ -1455,12 +1486,18 @@ def run_pipeline(
         atomic_write_json(metadata_path, run_metadata)
 
     input_digests = {item["sample_id"]: item["sha256"] for item in preflight["inputs"]}
-    requested_jobs = 1 if config.parallel.backend == "serial" else config.parallel.jobs
+    requested_jobs = (
+        1
+        if config.parallel.backend == "serial"
+        # 0 means "whatever this machine has", so one config runs sensibly on a
+        # workstation and on a two-core hosted notebook.
+        else (config.parallel.jobs or (os.cpu_count() or 1))
+    )
     resources = plan_resources(requested_jobs, config.parallel.threads_per_job)
 
     ingest_parameters = {"schema": 1}
     ingest_fp = _stage_fingerprint("01_ingest", ingest_parameters, input_digests)
-    with StageDirectory(
+    with _stage(
         run_dir,
         "01_ingest",
         ingest_fp,
@@ -1483,7 +1520,7 @@ def run_pipeline(
         input_digests,
         backend_versions=edlib_backend_versions,
     )
-    with StageDirectory(
+    with _stage(
         run_dir,
         "02_demux",
         demux_fp,
@@ -1521,6 +1558,9 @@ def run_pipeline(
                         )
                     )
                     batches = _batched(jobs, config.parallel.chunk_reads)
+                    processed = 0
+                    reported = 0
+                    started_reads = time.monotonic()
                     for results in _ordered_map(
                         _demux_batch,
                         batches,
@@ -1531,6 +1571,17 @@ def run_pipeline(
                             else "thread"
                         ),
                     ):
+                        processed += len(results)
+                        if processed - reported >= PROGRESS_EVERY_READS:
+                            reported = processed
+                            elapsed = time.monotonic() - started_reads
+                            LOGGER.info(
+                                "  %s: %s reads demultiplexed (%s, %.0f reads/s)",
+                                item.sample_id,
+                                f"{processed:,}",
+                                _duration(elapsed),
+                                processed / max(elapsed, 1e-9),
+                            )
                         for row, accepted in results:
                             if writer is None:
                                 fields = list(row)
@@ -1603,7 +1654,7 @@ def run_pipeline(
         assignment_inputs,
         backend_versions=edlib_backend_versions,
     )
-    with StageDirectory(
+    with _stage(
         run_dir,
         "03_assignment",
         assign_fp,
@@ -1671,7 +1722,7 @@ def run_pipeline(
             "03b_chimera", chimera_parameters, chimera_inputs,
             backend_versions=edlib_backend_versions,
         )
-        with StageDirectory(
+        with _stage(
             run_dir, "03b_chimera", chimera_fp,
             pipeline_version=__version__, parameters=chimera_parameters,
             input_digests=chimera_inputs, backend_versions=edlib_backend_versions,
@@ -1722,7 +1773,7 @@ def run_pipeline(
         consensus_inputs,
         backend_versions=consensus_backend_versions,
     )
-    with StageDirectory(
+    with _stage(
         run_dir,
         "04_consensus",
         consensus_fp,
@@ -1859,7 +1910,7 @@ def run_pipeline(
         qc_inputs,
         backend_versions=edlib_backend_versions,
     )
-    with StageDirectory(
+    with _stage(
         run_dir,
         "05_qc",
         qc_fp,
@@ -2108,7 +2159,7 @@ def run_pipeline(
     }
     report_parameters = {"format": "html-v1"}
     report_fp = _stage_fingerprint("06_report", report_parameters, report_inputs)
-    with StageDirectory(
+    with _stage(
         run_dir,
         "06_report",
         report_fp,

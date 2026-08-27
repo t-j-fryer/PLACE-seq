@@ -15,6 +15,78 @@ Conventions:
 
 ---
 
+## 2026-08-27 — Colab, and three things that were wrong everywhere
+
+Presentation and infrastructure; no scientific change.
+
+### Viability, measured rather than guessed
+
+Tested in a clean virtual environment with no extras, which is what a hosted
+notebook does:
+
+| | |
+|---|---|
+| dependencies | **two** - `edlib`, `PyYAML`, both pure-pip |
+| clean install, no extras | works |
+| full run in that environment | completes end to end |
+| no matplotlib | figures **skipped with the reason recorded**, run unaffected |
+| self-contained wheel | 139 KB, presets and example data included, runs |
+
+The constraint is never the alignment. It is moving gigabytes through the Drive
+mount on two vCPUs, and the input is read about three times - checksum, record
+scan, ingest. So the notebook copies the input to local disk first, writes outputs
+locally, and copies back only the graded tree, the QC table and the report.
+
+### Three defects this exposed, none Colab-specific
+
+1. **Nothing configured logging.** Every `LOGGER` call in the package went nowhere,
+   so a 21-minute run reported only its own completion. There were also only five
+   `LOGGER.info` calls and **not one reported stage progress**. Added `_stage`, one
+   wrapper around `StageDirectory`, so all seven stages report start, reuse and
+   duration; plus a read counter in demux, the stage that dominates wall clock.
+   Silence for an hour is indistinguishable from a hang, and on a hosted notebook
+   it also risks disconnection for idleness.
+
+2. **`parallel.jobs` had to be a number.** It was already bounded by the detected
+   CPU budget, so `jobs: 8` on two cores quietly became 2 - but there was no way to
+   *say* "use what is here". `jobs: 0` now means that, so one configuration runs on
+   a workstation and on a notebook unedited.
+
+3. **No cheap way to try anything.** `nanopore3 subsample` takes the first N reads
+   of a FASTQ. In file order, so it is reproducible and reads only the head.
+
+Two mistakes of my own worth recording. Scoping the progress logger to the root at
+INFO turned on every dependency, and matplotlib's font machinery buried the progress
+it was meant to reveal - it is set on the `nanopore3` logger instead. And a regex
+that rewrote `StageDirectory(` to `_stage(` rewrote the call **inside `_stage`**,
+giving infinite recursion; two tests caught it immediately. A third: `os.cpu_count()`
+went in without importing `os`, and every test passed, because nothing exercised
+`jobs: 0`. Its test exists now.
+
+### The notebook
+
+`notebooks/Nanopore3_Colab.ipynb`, 24 cells. Setup, then two paths: the synthetic
+example (seconds, no data needed) or Drive data. Covers the local-copy pattern,
+subsampling, `validate` before running, reading `index.csv`, copying back
+selectively, and recovering with `rerun` when the session drops - which is the one
+place Colab genuinely needs a feature this pipeline already has.
+
+Replaces `Nanopore3_Quickstart.ipynb`, which had pointed at `configs/example.yaml`
+since the first commit and had not existed at that path for weeks. Nothing had ever
+run it.
+
+357 tests.
+
+### Lesson
+
+**"Does it work somewhere else" is a different question from "do the tests pass".**
+A clean environment found a broken install path, a silent hour-long run, and a
+config that could not describe an unknown machine - none of which any test could
+have failed on, because they are all properties of the situation rather than the
+code.
+
+---
+
 ## 2026-08-26 (third) — CORRECTION: "insert" and "whole vector" were never two modes
 
 **Scientific change** - `flanks.derive` produced wrong references, and this fixes

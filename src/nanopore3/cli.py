@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import logging
 from importlib.resources import as_file, files
 import json
 from multiprocessing import freeze_support
@@ -37,6 +39,12 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output", type=Path, help="override the configured run root")
     run.add_argument("--run-id", help="portable directory name for this run")
     run.add_argument("--resume", action="store_true", help="resume only checksum-compatible stages")
+    run.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress per-stage progress (progress is reported by default: a long "
+        "run that prints nothing is indistinguishable from one that has hung)",
+    )
 
     init = subparsers.add_parser("init", help="copy the documented synthetic example")
     init.add_argument("directory", type=Path, nargs="?", default=Path("nanopore3-example"))
@@ -67,11 +75,26 @@ def _parser() -> argparse.ArgumentParser:
     )
     rerun.add_argument("--output", type=Path, help="override the configured run root")
     rerun.add_argument("--run-id", help="portable directory name for the new run")
+    rerun.add_argument("--quiet", action="store_true", help="suppress per-stage progress")
     rerun.add_argument(
         "--verify",
         action="store_true",
         help="re-checksum every inherited artifact instead of trusting its manifest",
     )
+
+    subsample = subparsers.add_parser(
+        "subsample",
+        help="write the first N reads of a FASTQ to a new file",
+        description=(
+            "For trying a configuration, or checking barcode recovery on a fresh "
+            "flowcell, before committing to a full run. Reads are taken in file "
+            "order rather than at random, so the result is reproducible and costs "
+            "one pass over the head of the file rather than over all of it."
+        ),
+    )
+    subsample.add_argument("--input", type=Path, required=True)
+    subsample.add_argument("--output", type=Path, required=True)
+    subsample.add_argument("--reads", type=int, default=100_000)
 
     layout = subparsers.add_parser(
         "layout",
@@ -116,6 +139,51 @@ def _init_example(destination: Path) -> None:
         with as_file(assets.joinpath(name)) as source:
             shutil.copy2(source, target)
     print(f"Created example at {destination.resolve()}")
+
+
+def _configure_progress(quiet: bool) -> None:
+    """Send per-stage progress to stderr unless asked not to.
+
+    Nothing configured logging before, so every LOGGER call in the package went
+    nowhere and a run reported only its own completion. On a hosted notebook that
+    also risks being disconnected for idleness partway through.
+    """
+
+    # Configured on this package's logger rather than the root: raising the root
+    # to INFO also turns on every dependency, and matplotlib's font machinery
+    # alone buries the progress it was meant to reveal.
+    logger = logging.getLogger("nanopore3")
+    logger.setLevel(logging.WARNING if quiet else logging.INFO)
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
+        logger.addHandler(handler)
+    logger.propagate = False
+
+
+def _subsample(source: Path, destination: Path, reads: int) -> int:
+    """Copy the first ``reads`` records of a FASTQ, gzipped or not."""
+
+    if reads < 1:
+        raise PipelineError("--reads must be at least 1")
+    opener = gzip.open if source.suffix == ".gz" else open
+    writer = gzip.open if destination.suffix == ".gz" else open
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with opener(source, "rt", encoding="utf-8", errors="replace") as handle, writer(
+        destination, "wt", encoding="utf-8"
+    ) as out:
+        while written < reads:
+            block = [handle.readline() for _ in range(4)]
+            if not block[0]:
+                break
+            if not block[0].startswith("@"):
+                raise PipelineError(
+                    f"{source} is not a FASTQ: record {written + 1} does not begin with '@'"
+                )
+            out.writelines(block)
+            written += 1
+    return written
 
 
 def _report_outputs(path: Path) -> None:
@@ -263,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             result = validate_inputs(config, scan_fastq=not args.quick)
             print(json.dumps(result, indent=2, sort_keys=True))
         elif args.command == "run":
+            _configure_progress(args.quiet)
             config = load_config(args.config)
             path = run_pipeline(
                 config,
@@ -274,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "init":
             _init_example(args.directory)
         elif args.command == "rerun":
+            _configure_progress(args.quiet)
             config = load_config(args.config)
             path = _rerun(
                 config,
@@ -284,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
                 verify=args.verify,
             )
             _report_outputs(path)
+        elif args.command == "subsample":
+            written = _subsample(args.input, args.output, args.reads)
+            print(f"wrote {written:,} read(s) to {args.output}")
         elif args.command == "layout":
             _layout(args.config, args.export)
         else:  # pragma: no cover - argparse enforces subcommands

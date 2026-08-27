@@ -397,7 +397,10 @@ class LibrarySettings:
 class ParallelSettings:
     """Portable worker and nested-thread resource limits.
 
-    ``jobs`` is the maximum number of independent Python workers.
+    ``jobs`` is the maximum number of independent Python workers; **0 means use
+    whatever this machine has**, so one configuration runs sensibly on a workstation
+    and on a two-core hosted notebook without being edited.  Any value is bounded by
+    the detected CPU budget either way.
     ``threads_per_job`` limits native/external-tool threads within each worker so
     callers can prevent nested oversubscription.
     """
@@ -408,7 +411,9 @@ class ParallelSettings:
     backend: str = "auto"
 
     def __post_init__(self) -> None:
-        for name in ("jobs", "threads_per_job", "chunk_reads"):
+        if self.jobs < 0:
+            raise ConfigError("parallel.jobs must be >= 0 (0 means detect)")
+        for name in ("threads_per_job", "chunk_reads"):
             if getattr(self, name) < 1:
                 raise ConfigError(f"parallel.{name} must be >= 1")
         if self.backend not in {"auto", "serial", "thread", "process"}:
@@ -1124,7 +1129,7 @@ def _parse_parallel(value: Any) -> ParallelSettings:
     mapping = _mapping(value, location)
     _reject_unknown(mapping, {"jobs", "threads_per_job", "chunk_reads", "backend"}, location)
     return ParallelSettings(
-        jobs=_positive_int(mapping.get("jobs", 1), "parallel.jobs"),
+        jobs=_positive_int(mapping.get("jobs", 1), "parallel.jobs", minimum=0),
         threads_per_job=_positive_int(
             mapping.get("threads_per_job", 1), "parallel.threads_per_job"
         ),

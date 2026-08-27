@@ -143,8 +143,14 @@ class FromAssembledTests(unittest.TestCase):
     # Non-repeating, because a repeated motif makes the primer anchor ambiguous
     # and from_sequences rejects it - correctly, and for a different reason than
     # anything these tests are about.
-    UP = "TAAGCCCATACAACAACATTCATTAGACGAGACGGTTGCGCTCCTTGTTATACGTCTATTGACACTTCGATGAGACACGATCTGCTAGAGAGAGTT"
-    DOWN = "GAACTCCACGGCTGATGATCCCCATGCTCTCGTCAAACGAACATAGTCGAGGCCCATCAGTCTTACAGTCACCGTAATATAATCAAGAACCCCACG"
+    UP = (
+        "TAAGCCCATACAACAACATTCATTAGACGAGACGGTTGCGCTCCTTGTTATA"
+        "CGTCTATTGACACTTCGATGAGACACGATCTGCTAGAGAGAGTT"
+    )
+    DOWN = (
+        "GAACTCCACGGCTGATGATCCCCATGCTCTCGTCAAACGAACATAGTCGAGG"
+        "CCCATCAGTCTTACAGTCACCGTAATATAATCAAGAACCCCACG"
+    )
 
     def assembled(self, inserts):
         return [self.UP + insert + self.DOWN for insert in inserts]
@@ -192,3 +198,70 @@ class FromAssembledTests(unittest.TestCase):
         )
         self.assertEqual(result.upstream, self.UP + "AA")
         self.assertTrue(result.upstream.startswith(self.UP))
+
+
+class ScaleIndependenceTests(unittest.TestCase):
+    """Cassette-scale and vector-scale constant regions are one case, not two.
+
+    The amount of constant sequence either side of the designed region is a
+    property of where the primers sat, not a mode of operation. A library whose
+    members carry 90 nt of expression cassette and one whose members carry 900 nt
+    of vector are described identically and must behave identically.
+    """
+
+    INSERTS = ("ACGTTGCAAGGTCCATTAGC", "TTGACCAGTTCAGGATCCAA", "GGCATTACCGTAAGGTTCCA")
+
+    @staticmethod
+    def constant(length: int, seed: int) -> str:
+        import random
+
+        generator = random.Random(seed)
+        return "".join(generator.choice("ACGT") for _ in range(length))
+
+    def library(self, flank_length: int) -> tuple[list[str], str, str]:
+        upstream = self.constant(flank_length, seed=1 + flank_length)
+        downstream = self.constant(flank_length, seed=2 + flank_length)
+        return [upstream + i + downstream for i in self.INSERTS], upstream, downstream
+
+    def test_a_short_and_a_long_backbone_are_recovered_the_same_way(self) -> None:
+        for flank_length in (90, 900):
+            assembled, upstream, downstream = self.library(flank_length)
+            result = flanks.from_assembled(
+                assembled, anchor_length=20, minimum_constant=60
+            )
+            self.assertEqual(result.upstream, upstream, f"{flank_length} nt flank")
+            self.assertEqual(result.downstream, downstream, f"{flank_length} nt flank")
+
+    def test_the_designed_region_is_located_identically_at_either_scale(self) -> None:
+        spans = []
+        for flank_length in (90, 900):
+            assembled, _up, _down = self.library(flank_length)
+            result = flanks.from_assembled(
+                assembled, anchor_length=20, minimum_constant=60
+            )
+            # An already-assembled reference is trimmed to the primer anchors, the
+            # same coordinate system a reference built from an insert lands in.
+            reference = result.transform(assembled[0])
+            start, end = result.insert_span(len(reference))
+            spans.append(end - start)
+            self.assertEqual(reference[start:end], self.INSERTS[0])
+        self.assertEqual(spans[0], spans[1])
+
+    def test_an_assembled_library_is_trimmed_rather_than_flanked_again(self) -> None:
+        # The bug this guards: flanks derived *from* the references were then
+        # joined *onto* them, duplicating the backbone at both ends.
+        assembled, _up, _down = self.library(120)
+        result = flanks.from_assembled(assembled, anchor_length=20, minimum_constant=60)
+        self.assertTrue(result.references_include_flanks)
+        transformed = result.transform(assembled[0])
+        self.assertEqual(len(transformed), len(assembled[0]) - 2 * 20)
+        self.assertIn(self.INSERTS[0], transformed)
+
+    def test_an_insert_library_is_still_flanked(self) -> None:
+        result = flanks.from_sequences(
+            self.constant(120, seed=5), self.constant(120, seed=6), anchor_length=20
+        )
+        self.assertFalse(result.references_include_flanks)
+        self.assertEqual(
+            result.transform(self.INSERTS[0]), result.flank(self.INSERTS[0])
+        )

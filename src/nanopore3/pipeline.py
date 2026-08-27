@@ -196,7 +196,7 @@ def flank_transforms(flanks: Mapping[str, Flanks]):
     """Sequence transforms that join the constant regions onto each insert."""
 
     return {
-        library_id: (lambda _identifier, sequence, flank=flank: flank.flank(sequence))
+        library_id: (lambda _identifier, sequence, flank=flank: flank.transform(sequence))
         for library_id, flank in flanks.items()
     }
 

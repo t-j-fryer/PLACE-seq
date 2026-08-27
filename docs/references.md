@@ -1,17 +1,22 @@
 # References: four ways to describe what you expect to find
 
-Nanopore3 compares each consensus to a reference. What you have to supply depends
-on what you already have, and on whether you want accuracy reported separately for
-the designed part and the vector around it.
+Nanopore3 compares each consensus to a reference. The input is always an amplicon;
+what you supply here says **where in it the designed region sits**, so that errors
+in your design are never averaged together with errors in the constant sequence
+around it.
+
+That constant sequence may be a couple of hundred bases of expression cassette or
+several kilobases of vector. It makes no difference to any of this: "cassette" and
+"whole vector" are the same case at different lengths, not two modes.
 
 | you have | use | you get |
 |---|---|---|
-| insert sequences only, and you sequence only the insert | **plain** | one accuracy figure per clone |
-| insert sequences, plus you know the constant regions | **named flanks** | whole-amplicon consensus, per-region accuracy |
-| insert sequences, plus one example construct | **template** | the same, without transcribing 900 nt |
-| assembled constructs, complete | **derive** | the same, with nothing to declare |
+| the designed inserts, and you only want them scored | **plain** | one accuracy figure per clone |
+| the designed inserts, and you know the constant regions | **named flanks** | whole-amplicon consensus, per-region accuracy |
+| the designed inserts, plus one assembled example | **template** | the same, without transcribing the constant regions |
+| the library already assembled — cassettes or whole vectors | **derive** | the same, with nothing to declare |
 
-## Plain: inserts only
+## Plain: the designed inserts alone
 
 ```yaml
 reference_libraries:
@@ -19,8 +24,9 @@ reference_libraries:
     fasta: designs.fasta
 ```
 
-The consensus spans whatever the primers bound. This is the right choice when the
-amplicon *is* the designed region.
+The consensus spans whatever the primers bound, and the reference is the insert, so
+that is what accuracy is measured over. The right choice when you do not care about
+the constant sequence — not only when the amplicon happens to be short.
 
 ## Named flanks
 
@@ -60,8 +66,10 @@ that is not from this library.
 
 ## Derive: the references are already assembled
 
-If your FASTA already holds complete constructs — the usual case when a cloning
-tool emitted them — declare nothing but `derive`:
+If your FASTA already holds complete sequences — assembled expression cassettes, or
+whole vectors, the usual case when a cloning tool emitted them — declare nothing but
+`derive`. **Both are the same case**: the shared backbone is found by comparison, so
+its length is irrelevant.
 
 ```yaml
 reference_libraries:

@@ -250,6 +250,86 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class AssembledLibraryWiringTests(unittest.TestCase):
+    """A library supplied already assembled, end to end through the config.
+
+    This is the case a unit test on ``from_assembled`` alone cannot catch: the
+    function was correct and the *wiring* was not, so references that already
+    carried the backbone had it joined on a second time.
+    """
+
+    INSERTS = ("ACGTTGCAAGGTCCATTAGCAA", "TTGACCAGTTCAGGATCCAACC", "GGCATTACCGTAAGGTTCCATT")
+
+    def setUp(self) -> None:
+        import random
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        generator = random.Random(11)
+        self.upstream = "".join(generator.choice("ACGT") for _ in range(120))
+        self.downstream = "".join(generator.choice("ACGT") for _ in range(120))
+        self.assembled = [self.upstream + i + self.downstream for i in self.INSERTS]
+        self.fasta = self.root / "assembled.fasta"
+        self.fasta.write_text(
+            "".join(f">design_{n}\n{s}\n" for n, s in enumerate(self.assembled)),
+            encoding="utf-8",
+        )
+
+    def config_for(self, body: str) -> Path:
+        path = self.root / "run.yaml"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def load(self) -> tuple:
+        from nanopore3.references import read_reference_libraries
+
+        config = load_config(
+            self.config_for(
+                f"""schema_version: 1
+run_name: assembled
+output_root: {self.root}/runs
+inputs: [{{path: {self.fasta}, sample_id: s}}]
+reference_libraries:
+  designs:
+    fasta: {self.fasta}
+    flanks: {{derive: true, anchor_length: 20}}
+plate_reference_map: {{BC01: designs}}
+library: {{name: x, forward_motif: ACGTACGTACGTACGTACGT, reverse_motif: TGCATGCATGCATGCATGCA}}
+"""
+            )
+        )
+        flanks = pipeline.resolve_flanks(config)
+        collection = read_reference_libraries(
+            {"designs": [self.fasta]},
+            transforms=pipeline.flank_transforms(flanks),
+        )
+        return config, flanks, collection
+
+    def test_the_backbone_is_not_added_to_a_reference_that_has_it(self) -> None:
+        _config, _flanks, collection = self.load()
+        for record, original in zip(
+            collection.get("designs").records, self.assembled, strict=True
+        ):
+            # Trimmed to the primer anchors, not grown by 240 nt.
+            self.assertEqual(len(record.sequence), len(original) - 40)
+
+    def test_the_insert_span_still_locates_the_designed_region(self) -> None:
+        _config, flanks, collection = self.load()
+        record = collection.get("designs").records[0]
+        start, end = flanks["designs"].insert_span(len(record.sequence))
+        self.assertEqual(record.sequence[start:end], self.INSERTS[0])
+
+    def test_qc_regions_split_the_reference_into_insert_and_flanks(self) -> None:
+        _config, flanks, collection = self.load()
+        record = collection.get("designs").records[0]
+        spans = pipeline.qc_regions(flanks["designs"], len(record.sequence))
+        self.assertEqual(
+            record.sequence[spans["insert"][0] : spans["insert"][1]], self.INSERTS[0]
+        )
+        self.assertEqual(sorted(spans), ["flank_3p", "flank_5p", "insert"])
+
+
 class InsertViewTests(unittest.TestCase):
     """Chimera detection needs the discriminative part, not the whole amplicon."""
 

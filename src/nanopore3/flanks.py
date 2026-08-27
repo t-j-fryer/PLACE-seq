@@ -23,7 +23,7 @@ down.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import edlib
@@ -59,6 +59,36 @@ class Flanks:
     downstream: str
     left_anchor: str
     right_anchor: str
+    # True when the flanks were read *out of* the references, so those references
+    # already carry them. Such a library must be trimmed to the primer anchors,
+    # never flanked again - doing both produced references with the backbone
+    # duplicated at each end.
+    references_include_flanks: bool = False
+
+    def transform(self, sequence: str) -> str:
+        """Put one reference record into the coordinate system the pipeline uses.
+
+        Every reference ends up as ``inner_upstream + insert + inner_downstream``:
+        the region a read spans, bounded by the primer anchors and excluding them.
+        A library supplied as inserts gets there by having the constant regions
+        joined on; a library supplied already assembled gets there by having the
+        anchors trimmed off.  Same destination, opposite operations, which is why
+        the distinction has to be carried rather than inferred.
+        """
+
+        return self.trim(sequence) if self.references_include_flanks else self.flank(sequence)
+
+    def trim(self, assembled: str) -> str:
+        """Strip the primer anchors from an already-assembled reference."""
+
+        sequence = normalize_sequence(assembled)
+        start, end = len(self.left_anchor), len(sequence) - len(self.right_anchor)
+        if end <= start:
+            raise FlankError(
+                f"reference of {len(sequence)} nt is shorter than its two "
+                f"{len(self.left_anchor)} nt primer anchors"
+            )
+        return sequence[start:end]
 
     @property
     def inner_upstream(self) -> str:
@@ -260,9 +290,10 @@ def from_assembled(
             "backbone. Either they are not all the same construct, or they are "
             "insert-only - in which case name the flanks explicitly instead"
         )
-    return from_sequences(
+    derived = from_sequences(
         first[:prefix], first[len(first) - suffix :], anchor_length=anchor_length
     )
+    return replace(derived, references_include_flanks=True)
 
 
 def flank_sequences(

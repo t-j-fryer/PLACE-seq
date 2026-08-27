@@ -48,8 +48,9 @@ of it. `preset:` supplies a named, versioned bundle:
 preset: ont-r10-amplicon
 ```
 
-Available: `ont-r10-amplicon` (whole-vector or insert, thresholds measured over the
-insert) and `ont-r10-amplicon-insert` (references *are* the designed region).
+There is one: `ont-r10-amplicon`. The input is always an amplicon, and neither the
+span of the primers nor the form of the reference list changes the tuning — so a
+second preset would only have implied a distinction that does not exist.
 
 The preset supplies tuning; your configuration supplies the experiment and **wins
 wherever both mention a key** — including one key inside a section, leaving the rest

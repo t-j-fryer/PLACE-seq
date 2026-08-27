@@ -15,6 +15,86 @@ Conventions:
 
 ---
 
+## 2026-08-26 (third) — CORRECTION: "insert" and "whole vector" were never two modes
+
+**Scientific change** - `flanks.derive` produced wrong references, and this fixes
+them. Corrects the framing in the 2026-08-26 (second) entry and in
+`docs/workflows.md`.
+
+### The framing was wrong
+
+Reported from the bench, and right: the input is **always** an amplicon. What varies
+is only
+
+1. **how much of the construct the primers span** - the expression cassette, or
+   nearly the whole vector. That is a length, not a mode. 200 nt of flank and 850 nt
+   of flank are described identically and handled by identical code.
+2. **what form the reference list arrives in** - the designed inserts alone, or
+   sequences already assembled around them (cassettes *or* whole vectors, again the
+   same case at different lengths).
+3. **whether a barcode holds one culture plate or several.**
+
+These are independent, and the documentation had collapsed 1 and 2 into a single
+"insert-only versus whole-vector" axis, then only ever shown pooling against the
+whole-vector one. `docs/workflows.md` is rewritten around the four corners of (2)
+x (3), and the two presets are collapsed to one - they differed by a single key
+that was already the default, which is what a false distinction looks like once it
+reaches configuration.
+
+### And the framing was hiding a real bug
+
+Following the bench's point that a user may supply an already-assembled library, I
+tested `flanks.derive` **through the pipeline** for the first time rather than as a
+unit:
+
+| | |
+|---|---|
+| assembled reference, as supplied | 300 nt |
+| the same reference after `flank_transforms` | **500 nt** |
+
+`from_assembled` reads the constant regions *out of* the references, and
+`flank_transforms` then joined them *onto* those same references - **the backbone
+duplicated at both ends, on every record.** Every consensus in such a run would have
+been scored against a reference that does not exist.
+
+The fix carries the distinction rather than inferring it: `Flanks` gains
+`references_include_flanks`, and `Flanks.transform` sends both routes to the same
+place by opposite operations -
+
+- supplied as inserts: **join** the constant regions on
+- supplied assembled: **trim** the primer anchors off
+
+Both land as `inner_upstream + insert + inner_downstream`, so `insert_span`,
+`qc_regions` and everything downstream are unchanged.
+
+### Why the tests did not catch it
+
+`from_assembled` had six tests and all of them passed, because the function was
+correct. The defect was entirely in the wiring, which nothing exercised - the
+shipped configs all supply inserts. New tests build an assembled library, run it
+through `load_config` -> `resolve_flanks` -> `flank_transforms`, and assert the
+reference is *trimmed by 40 nt* rather than *grown by 240*, that `insert_span`
+recovers the designed region exactly, and that `qc_regions` splits it into three.
+
+Also added: the same library at 90 nt and 900 nt of flank, asserting both recover
+the same designed region - the "cassette and vector are one case" claim, as a test
+rather than a sentence.
+
+345 pass.
+
+### Lesson
+
+**A unit test on a correct function proves nothing about the path that calls it.**
+Every new route needs one test that starts where a user starts - a config file - and
+ends where the result is used. Six passing tests and a shipped feature, and the
+first end-to-end exercise of it found a 67% error in every reference.
+
+Second: **a distinction that survives into configuration should be checked for
+existing.** Two presets differing by one defaulted key was the tell, and I wrote
+both without noticing.
+
+---
+
 ## 2026-08-26 (second) — Making the repository shareable
 
 No scientific change. Prompted by pushing to GitHub and finding absolute paths in

@@ -1,5 +1,10 @@
 # Tuning for Oxford Nanopore R10.4.1 amplicon reads, plate + well barcoded.
 #
+# One preset covers every run this pipeline is for. The input is always an amplicon;
+# what varies between experiments is how much of the construct the primers span, what
+# form the reference list arrives in, and whether a barcode holds one culture plate
+# or several. None of those changes the tuning below.
+#
 # These are the values the 260608 run arrived at over several iterations, and none
 # of them is guessable from first principles. A configuration that names this
 # preset inherits them and states only what describes its own experiment; any key

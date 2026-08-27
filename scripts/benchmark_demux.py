@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import json
+from collections import Counter
 from multiprocessing import freeze_support
 from pathlib import Path
 from time import perf_counter

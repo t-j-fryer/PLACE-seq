@@ -15,6 +15,91 @@ Conventions:
 
 ---
 
+## 2026-08-27 (second) — A review pass: eight defects, six of them mine
+
+No scientific change. Asked to look for Colab bugs and general oddness, with
+robustness and user-friendliness as the lens. Everything below was found by running
+the thing rather than reading it.
+
+### Config handling: four defects, all in code written yesterday
+
+| defect | what it did |
+|---|---|
+| `_apply_preset` set `run_name` to `None` | **adding `preset:` broke a working config**: `run_name` defaults to the file's stem, and a line I wrote with a comment claiming it preserved provenance instead overwrote it with `None` |
+| a variable set but **empty** expanded to `""` | `export SEQ_DATA=` gave `/reads.fastq` - precisely the silent breakage the docstring said naming variables prevents |
+| `$SEQ_DATA` without braces stayed literal | a path with a dollar in it that can never exist |
+| `${SEQ_DATA` unclosed stayed literal | same |
+
+All four now refuse with the variable named. The malformed-brace check took two
+attempts: the first flagged `cost $5`, because a directory may legitimately contain a
+dollar sign. It now fires only on something that *looks like* an attempted reference
+(`$` then optional `{` then a letter), and runs on the configuration text rather than
+the expansion - a variable whose **value** contains a dollar is the user's data.
+
+### Two more defects, older
+
+**Several reference libraries and no `plate_reference_map` was accepted.** One
+library is routed to by default; two or more without a map leave *every* read
+unroutable, so the run completes, reports nothing, and explains nothing. Preflight
+now refuses, and prints the mapping to write.
+
+**A failed stage logged "running" and nothing else**, leaving the traceback to imply
+which stage it was and how far it got. It now logs `FAILED after 4m51s`.
+
+Also narrowed an `except Exception` in the layout cross-check to `except KeyError`.
+As written it would have swallowed any real error and silently stopped checking.
+
+### Colab notebook
+
+Executed every cell through IPython rather than trusting `nbformat.validate`:
+
+- **`pandas` was imported in section A but used in section B**, which the notebook
+  says can be run on its own. Imports now have their own cell, separate from the
+  `!doctor`/`!free` diagnostics - so a failing diagnostic cannot break everything
+  after it.
+- **A failing `!command` does not stop a notebook.** A failed run left every cell
+  below reporting a confusing missing file. Both run cells now assert their output
+  exists, which stops execution with a sentence instead.
+- Paths in shell commands are quoted: Drive folder names contain spaces.
+- The copy-back cell tolerates absent files instead of raising on the first one.
+- Verified that `!cmd {var}` interpolates correctly **inside an `if` block** - it
+  does, at runtime, though the transformed source does not look like it will.
+
+### `subsample` copied text, not bytes
+
+It decoded as UTF-8 with `errors="replace"`, so a byte it could not decode would be
+written back as a substitution character - silently corrupting the output. Now binary
+throughout: it copies records rather than reading them. Also detects a file that ends
+mid-record.
+
+### The repository's own linter failed on the repository
+
+58 errors in its own code, and **CI never ran it**, so the configuration in
+`pyproject.toml` was aspirational. A repository whose linter fails on itself
+discourages the contributors it is meant to attract. All 58 fixed - 34 by `--fix`,
+the rest by hand - and `ruff check` now runs in CI.
+
+Wrapping the long lines produced one instructive failure: a replacement matched a
+*suffix of the indentation* of a 16-space line, leaving four stray spaces and an
+`IndentationError`. And the CI condition I first wrote (`ubuntu-latest` + `3.12`)
+matched no job in the matrix, so the lint step would have been a silent no-op
+forever. Both caught by checking rather than assuming.
+
+`validate` also now reports preflight progress - it reads the whole input twice and
+is the first thing a user runs, so it was the longest unexplained wait in the tool.
+
+366 tests.
+
+### Lesson
+
+**Six of the eight were in code I had written in the previous two days**, and every
+one of them passed its tests. The tests were of functions; the defects were of
+situations - an empty variable, a second library, a notebook cell run on its own, a
+stage that fails. What found them was asking "what would a user do that I have not
+done", then doing it.
+
+---
+
 ## 2026-08-27 — Colab, and three things that were wrong everywhere
 
 Presentation and infrastructure; no scientific change.

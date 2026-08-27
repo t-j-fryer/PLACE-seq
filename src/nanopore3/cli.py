@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import logging
-from importlib.resources import as_file, files
 import json
-from multiprocessing import freeze_support
-from pathlib import Path
+import logging
 import shutil
 import sys
+from importlib.resources import as_file, files
+from multiprocessing import freeze_support
+from pathlib import Path
 
 from . import __version__
 from .config import ConfigError, load_config
-from .provenance import StageValidationError
 from .pipeline import PipelineError, run_pipeline, validate_inputs
+from .provenance import StageValidationError
 from .runtime import doctor_report
 
 
@@ -27,12 +27,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"nanopore3 {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    doctor = subparsers.add_parser("doctor", help="report runtime and optional backend capabilities")
+    doctor = subparsers.add_parser(
+        "doctor", help="report runtime and optional backend capabilities"
+    )
     doctor.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
-    validate = subparsers.add_parser("validate", help="validate configuration, inputs and references")
+    validate = subparsers.add_parser(
+        "validate", help="validate configuration, inputs and references"
+    )
     validate.add_argument("--config", type=Path, required=True)
     validate.add_argument("--quick", action="store_true", help="do not scan every FASTQ record")
+    validate.add_argument(
+        "--quiet", action="store_true", help="suppress preflight progress"
+    )
 
     run = subparsers.add_parser("run", help="execute the portable staged workflow")
     run.add_argument("--config", type=Path, required=True)
@@ -170,16 +177,22 @@ def _subsample(source: Path, destination: Path, reads: int) -> int:
     writer = gzip.open if destination.suffix == ".gz" else open
     destination.parent.mkdir(parents=True, exist_ok=True)
     written = 0
-    with opener(source, "rt", encoding="utf-8", errors="replace") as handle, writer(
-        destination, "wt", encoding="utf-8"
-    ) as out:
+    # Binary throughout: this copies records rather than reading them, so there is
+    # no encoding to get wrong. Decoding as text with errors="replace" would write
+    # substitution characters into the output instead of failing.
+    with opener(source, "rb") as handle, writer(destination, "wb") as out:
         while written < reads:
             block = [handle.readline() for _ in range(4)]
             if not block[0]:
                 break
-            if not block[0].startswith("@"):
+            if not block[0].startswith(b"@"):
                 raise PipelineError(
-                    f"{source} is not a FASTQ: record {written + 1} does not begin with '@'"
+                    f"{source} is not a FASTQ: record {written + 1} does not begin "
+                    "with '@' (a gzipped file needs a .gz name to be recognised)"
+                )
+            if not all(block):
+                raise PipelineError(
+                    f"{source} ends mid-record after {written} complete record(s)"
                 )
             out.writelines(block)
             written += 1
@@ -327,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor":
             _print_doctor(args.json)
         elif args.command == "validate":
+            _configure_progress(args.quiet)
             config = load_config(args.config)
             result = validate_inputs(config, scan_fastq=not args.quick)
             print(json.dumps(result, indent=2, sort_keys=True))

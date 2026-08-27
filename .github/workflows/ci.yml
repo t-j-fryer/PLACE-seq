@@ -44,6 +44,15 @@ jobs:
           python -m pip check
           nanopore3 --help
 
+      - name: Check style
+        # The repository had 58 lint errors in its own code and never ran this, so
+        # the configuration in pyproject was aspirational. Enforced now, on one
+        # runner: style does not vary by platform.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        run: |
+          python -m pip install ruff
+          python -m ruff check src scripts tests
+
       - name: Run tests
         run: python -m unittest discover -s tests -v
 

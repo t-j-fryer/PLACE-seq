@@ -11,9 +11,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import random
-
+from pathlib import Path
 
 DNA = frozenset(b"ACGTRYSWKMBDHVNacgtryswkmbdhvn")
 

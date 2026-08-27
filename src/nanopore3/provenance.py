@@ -8,20 +8,20 @@ trusts file presence alone; it validates the fingerprint and artifact hashes.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, is_dataclass
-from datetime import datetime, timezone
-from enum import Enum
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import subprocess
 import sys
-from typing import Any, Mapping
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, is_dataclass
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
-
 
 MANIFEST_NAME = "manifest.json"
 SUCCESS_NAME = "_SUCCESS"
@@ -184,7 +184,7 @@ class ArtifactManifest:
     semantic_sha256: str | None = None
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "ArtifactManifest":
+    def from_mapping(cls, value: Mapping[str, Any]) -> ArtifactManifest:
         allowed = {
             "path",
             "sha256",
@@ -239,7 +239,7 @@ class StageManifest:
         return asdict(self)
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "StageManifest":
+    def from_mapping(cls, value: Mapping[str, Any]) -> StageManifest:
         allowed = {
             "schema_version",
             "stage",
@@ -523,7 +523,7 @@ class StageDirectory:
         destination.parent.mkdir(parents=True, exist_ok=True)
         return destination
 
-    def __enter__(self) -> "StageDirectory":
+    def __enter__(self) -> StageDirectory:
         stages = self.run_directory / "stages"
         stages.mkdir(parents=True, exist_ok=True)
         if self.final_path.exists():

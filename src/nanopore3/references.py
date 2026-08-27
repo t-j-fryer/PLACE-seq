@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Iterable, Mapping
 
 from .io import open_text_auto
 from .provenance import canonical_digest, sha256_bytes, sha256_file
-
 
 REFERENCE_DNA_IUPAC = frozenset("ACGTRYSWKMBDHVN")
 

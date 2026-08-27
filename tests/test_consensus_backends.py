@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from nanopore3.config import ConfigError, ConsensusSettings

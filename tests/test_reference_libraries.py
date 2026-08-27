@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 import csv
 import gzip
 import tempfile
 import unittest
+from pathlib import Path
 
 from nanopore3.config import ConfigError, load_config
 from nanopore3.pipeline import run_pipeline

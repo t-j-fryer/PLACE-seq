@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict, deque
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from contextlib import contextmanager
-import os
-import time
 import csv
-import logging
-from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timezone
 import gzip
 import hashlib
 import heapq
 import io
 import json
-from multiprocessing import get_context
+import logging
+import os
 import re
+import time
+from collections import Counter, defaultdict, deque
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
+from multiprocessing import get_context
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO, TypeVar
+from typing import Any, TextIO, TypeVar
 
 from . import __version__
 from .assignment import (
@@ -28,6 +29,12 @@ from .assignment import (
     _align_geometry,
     assign_read,
     extract_insert,
+)
+from .chimera import (
+    ASSEMBLY_ORIGIN,
+    group_chimeras,
+    signature_for,
+    synthesise_reference,
 )
 from .config import BarcodeSettings, PipelineConfig
 from .consensus import (
@@ -41,13 +48,6 @@ from .deconvolution import (
     Deconvolution,
     block_from_reference_id,
 )
-from .chimera import (
-    ASSEMBLY_ORIGIN,
-    group_chimeras,
-    signature_for,
-    synthesise_reference,
-)
-from .export import normalized_well, safe_name, write_consensus_tree
 from .demux import (
     BarcodeCall,
     PreparedBarcodePanel,
@@ -55,6 +55,9 @@ from .demux import (
     prepare_barcode_panel,
     validate_barcodes,
 )
+from .export import normalized_well, safe_name, write_consensus_tree
+from .flanks import Flanks, from_assembled, from_sequences, from_template
+from .fragments import FragmentLibrary
 from .io import FastqRecord, iter_fastq
 from .provenance import (
     StageDirectory,
@@ -64,7 +67,7 @@ from .provenance import (
     git_provenance,
     sha256_file,
 )
-from .fragments import FragmentLibrary
+from .qc import _locate as _locate_motif
 from .qc import (
     classify_mixed_positions,
     designed_allele_fraction,
@@ -72,13 +75,10 @@ from .qc import (
     mixed_signature,
     worst_protein_effect,
 )
-from .qc import _locate as _locate_motif
-from .flanks import Flanks, from_assembled, from_sequences, from_template
 from .references import read_fasta, read_reference_libraries
 from .report import write_html_report
 from .runtime import doctor_report, plan_resources
 from .sequence import reverse_complement
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -424,7 +424,10 @@ def check_pooling_layout(config: PipelineConfig, reference_collection) -> list[s
     for library_id in sorted(config.reference_sets):
         try:
             records = reference_collection.get(library_id).records
-        except Exception:  # a library the collection could not load reports elsewhere
+        except KeyError:
+            # A library absent from the collection is reported by the loader; any
+            # other failure here is a real one and must not be swallowed, or the
+            # layout cross-check silently stops happening.
             continue
         seen = set()
         for record in records:
@@ -498,11 +501,21 @@ def _stage(run_dir: Path, name: str, fingerprint: str, **kwargs: Any):
     """A stage directory that says when it started, finished, or was reused."""
 
     started = time.monotonic()
-    with StageDirectory(run_dir, name, fingerprint, **kwargs) as stage:
-        LOGGER.info(
-            "stage %s: %s", name, "reusing completed stage" if stage.reused else "running"
+    try:
+        with StageDirectory(run_dir, name, fingerprint, **kwargs) as stage:
+            LOGGER.info(
+                "stage %s: %s",
+                name,
+                "reusing completed stage" if stage.reused else "running",
+            )
+            yield stage
+    except BaseException:
+        # Without this a failed stage logs "running" and nothing else, leaving the
+        # traceback to imply which stage it was and how far it got.
+        LOGGER.error(
+            "stage %s: FAILED after %s", name, _duration(time.monotonic() - started)
         )
-        yield stage
+        raise
     LOGGER.info("stage %s: done in %s", name, _duration(time.monotonic() - started))
 
 
@@ -582,6 +595,21 @@ def validate_inputs(
     )
     if config.consensus.backend == "mafft_spoa":
         require_mafft_spoa()
+    # A single library is routed to by default; two or more need to be told which
+    # barcode carries which, and without that *every* read is unroutable. The run
+    # would complete, report nothing, and explain nothing.
+    if len(config.reference_sets) > 1 and not config.plate_reference_map:
+        raise PipelineError(
+            f"{len(config.reference_sets)} reference libraries are configured "
+            f"({', '.join(sorted(config.reference_sets))}) but plate_reference_map "
+            "is empty, so no read can be routed to a library. Map each plate "
+            "barcode to a library, for example:\n"
+            "  plate_reference_map:\n"
+            + "\n".join(
+                f"    BC{index + 1:02d}: {library}"
+                for index, library in enumerate(sorted(config.reference_sets))
+            )
+        )
     layout_problems = check_pooling_layout(config, reference_collection)
     if layout_problems:
         raise PipelineError(
@@ -606,9 +634,28 @@ def validate_inputs(
     for item in config.inputs:
         if not require_inputs and not item.path.is_file():
             continue
+        # Preflight reads the whole input twice, and it is the first thing a user
+        # runs. Silence here is the longest unexplained wait in the tool -
+        # especially over a network or cloud-synced filesystem.
+        size_gb = item.path.stat().st_size / 1e9
+        LOGGER.info(
+            "preflight %s: checksumming %.2f GB (%s)",
+            item.sample_id,
+            size_gb,
+            item.path,
+        )
+        started = time.monotonic()
         digest = sha256_file(item.path)
+        LOGGER.info(
+            "preflight %s: checksum done in %s (%.0f MB/s)",
+            item.sample_id,
+            _duration(time.monotonic() - started),
+            size_gb * 1000 / max(time.monotonic() - started, 1e-9),
+        )
         count = None
         if scan_fastq:
+            LOGGER.info("preflight %s: counting records", item.sample_id)
+            started = time.monotonic()
             count = sum(
                 1
                 for _ in iter_fastq(
@@ -616,6 +663,12 @@ def validate_inputs(
                     source_sha256=digest,
                     allow_empty_sequence=config.library.allow_empty_reads,
                 )
+            )
+            LOGGER.info(
+                "preflight %s: %s records in %s",
+                item.sample_id,
+                f"{count:,}",
+                _duration(time.monotonic() - started),
             )
         inputs.append(
             {
@@ -807,9 +860,11 @@ def _demux_one(
         row.update(_call_dict(_disabled_barcode("not_attempted"), "well"))
         return row, None
     length_status = "pass"
-    if config.library.minimum_read_length is not None and len(record.sequence) < config.library.minimum_read_length:
+    minimum = config.library.minimum_read_length
+    if minimum is not None and len(record.sequence) < minimum:
         length_status = "out_of_length"
-    if config.library.maximum_read_length is not None and len(record.sequence) > config.library.maximum_read_length:
+    maximum = config.library.maximum_read_length
+    if maximum is not None and len(record.sequence) > maximum:
         length_status = "out_of_length"
     quality_status = "pass"
     if (
@@ -1377,7 +1432,9 @@ def _detect_chimeras(
     return dict(sorted(totals.items()))
 
 
-def _write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fields: Sequence[str]) -> Counter[str]:
+def _write_csv(
+    path: Path, rows: Iterable[Mapping[str, Any]], fields: Sequence[str]
+) -> Counter[str]:
     counts: Counter[str] = Counter()
     with _open_gzip_text(path) as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
@@ -1545,7 +1602,10 @@ def run_pipeline(
                 if config.well_barcodes.sequences
                 else None
             )
-            with _open_gzip_text(calls_path) as call_handle, _open_gzip_text(reads_path) as read_handle:
+            with (
+                _open_gzip_text(calls_path) as call_handle,
+                _open_gzip_text(reads_path) as read_handle,
+            ):
                 writer: csv.DictWriter[str] | None = None
                 for item in config.inputs:
                     digest = input_digests[item.sample_id]
@@ -1668,7 +1728,10 @@ def run_pipeline(
             calls_path = stage.output_path("assignment_calls.csv.gz")
             eligible_path = stage.output_path("consensus_eligible.jsonl.gz")
             counts: Counter[str] = Counter()
-            with _open_gzip_text(calls_path) as call_handle, _open_gzip_text(eligible_path) as eligible_handle:
+            with (
+                _open_gzip_text(calls_path) as call_handle,
+                _open_gzip_text(eligible_path) as eligible_handle,
+            ):
                 writer: csv.DictWriter[str] | None = None
                 batches = _batched(_iter_gzip_json(demux_reads), _ASSIGNMENT_BATCH_READS)
 
@@ -1697,12 +1760,19 @@ def run_pipeline(
                 ):
                     for row, eligible in results:
                         if writer is None:
-                            writer = csv.DictWriter(call_handle, fieldnames=list(row), lineterminator="\n")
+                            writer = csv.DictWriter(
+                                call_handle, fieldnames=list(row), lineterminator="\n"
+                            )
                             writer.writeheader()
                         writer.writerow(row)
                         counts[row["assignment_status"]] += 1
                         if eligible is not None:
-                            eligible_handle.write(json.dumps(eligible, sort_keys=True, separators=(",", ":")) + "\n")
+                            eligible_handle.write(
+                                json.dumps(
+                                    eligible, sort_keys=True, separators=(",", ":")
+                                )
+                                + "\n"
+                            )
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(counts.items())))
 
     assignment_dir = run_dir / "stages" / "03_assignment"
@@ -1814,9 +1884,15 @@ def run_pipeline(
                 available[key] += 1
                 if row.get("culture_plate"):
                     culture_plates[key].add(str(row["culture_plate"]))
-                rank = int(hashlib.sha256(f"{config.random_seed}\0{key}\0{row['read_uid']}".encode()).hexdigest(), 16)
-                qualities = None if row["quality"] is None else tuple(ord(c) - 33 for c in row["quality"])
-                item = (-rank, row["read_uid"], ConsensusRead(row["read_uid"], row["sequence"], qualities))
+                seed_text = f"{config.random_seed}\0{key}\0{row['read_uid']}"
+                rank = int(hashlib.sha256(seed_text.encode()).hexdigest(), 16)
+                qualities = (
+                    None
+                    if row["quality"] is None
+                    else tuple(ord(c) - 33 for c in row["quality"])
+                )
+                read = ConsensusRead(row["read_uid"], row["sequence"], qualities)
+                item = (-rank, row["read_uid"], read)
                 heap = groups[key]
                 if len(heap) < config.consensus.maximum_reads:
                     heapq.heappush(heap, item)
@@ -1846,9 +1922,15 @@ def run_pipeline(
                         seed=config.random_seed,
                         backend=config.consensus.backend,
                     )
-                consensus_id = "cons-" + canonical_digest({"group": group_id, "sequence": result.sequence})[:16]
+                digest = canonical_digest(
+                    {"group": group_id, "sequence": result.sequence}
+                )
+                consensus_id = "cons-" + digest[:16]
                 row = {
-                    "consensus_id": consensus_id, "sample_id": sample, "plate_id": plate, "well_id": well,
+                    "consensus_id": consensus_id,
+                    "sample_id": sample,
+                    "plate_id": plate,
+                    "well_id": well,
                     "reference_library_id": library_id,
                     "reference_ids": "|".join(aliases), "status": result.status,
                     "culture_plate": "|".join(sorted(culture_plates.get(key, ()))),
@@ -1870,7 +1952,11 @@ def run_pipeline(
                     "weakest_support": f"{result.weakest_support:.4f}",
                     "low_quality_bases": result.low_quality_bases,
                     "backend": result.backend,
-                    "sequence_sha256": hashlib.sha256(result.sequence.encode()).hexdigest() if result.sequence else "",
+                    "sequence_sha256": (
+                        hashlib.sha256(result.sequence.encode()).hexdigest()
+                        if result.sequence
+                        else ""
+                    ),
                     "failure_reason": result.failure_reason or "",
                 }
                 consensus_rows.append(row)
@@ -1887,12 +1973,24 @@ def run_pipeline(
                         + f"\n{result.sequence}\n"
                     )
                 for rank, read_uid in enumerate(result.contributor_ids, start=1):
-                    contributor_rows.append({"consensus_id": consensus_id, "read_uid": read_uid, "selection_rank": rank})
+                    contributor_rows.append(
+                    {
+                        "consensus_id": consensus_id,
+                        "read_uid": read_uid,
+                        "selection_rank": rank,
+                    }
+                )
             fields = list(consensus_rows[0]) if consensus_rows else ["consensus_id", "status"]
             _write_csv(stage.output_path("consensus.csv.gz"), consensus_rows, fields)
-            _write_csv(stage.output_path("contributors.csv.gz"), contributor_rows, ["consensus_id", "read_uid", "selection_rank"])
+            _write_csv(
+            stage.output_path("contributors.csv.gz"),
+            contributor_rows,
+            ["consensus_id", "read_uid", "selection_rank"],
+        )
             stage.output_path("consensus.fasta").write_text("".join(fasta_parts), encoding="ascii")
-            consensus_summary = dict(sorted(Counter(row["status"] for row in consensus_rows).items()))
+            consensus_summary = dict(
+            sorted(Counter(row["status"] for row in consensus_rows).items())
+        )
             if claimed_reads:
                 consensus_summary["reads_excluded_as_chimeric"] = excluded
             atomic_write_json(stage.output_path("summary.json"), consensus_summary)
@@ -1923,13 +2021,17 @@ def run_pipeline(
         if not stage.reused:
             sequences: dict[str, str] = {}
             current = None
-            for line in (consensus_dir / "consensus.fasta").read_text(encoding="ascii").splitlines():
+            fasta_text = (consensus_dir / "consensus.fasta").read_text(encoding="ascii")
+            for line in fasta_text.splitlines():
                 if line.startswith(">"):
-                    current = line[1:].split()[0]; sequences[current] = ""
+                    current = line[1:].split()[0]
+                    sequences[current] = ""
                 elif current is not None:
                     sequences[current] += line.strip()
             qc_rows: list[dict[str, Any]] = []
-            with gzip.open(consensus_dir / "consensus.csv.gz", "rt", encoding="utf-8", newline="") as handle:
+            with gzip.open(
+                consensus_dir / "consensus.csv.gz", "rt", encoding="utf-8", newline=""
+            ) as handle:
                 for row in csv.DictReader(handle):
                     sequence = sequences.get(row["consensus_id"])
                     if not sequence:
@@ -2068,7 +2170,8 @@ def run_pipeline(
                 if scaffold_file.exists():
                     for line in scaffold_file.read_text(encoding="ascii").splitlines():
                         if line.startswith(">"):
-                            current = line[1:].split()[0]; scaffolds[current] = ""
+                            current = line[1:].split()[0]
+                            scaffolds[current] = ""
                         elif current is not None:
                             scaffolds[current] += line.strip()
                 with (chimera_dir / "clones.csv").open(encoding="utf-8", newline="") as handle:
@@ -2106,11 +2209,16 @@ def run_pipeline(
                         })
                 qc_rows.extend(chimera_rows)
             _write_csv(stage.output_path("qc.csv.gz"), qc_rows, fields)
-            atomic_write_json(stage.output_path("summary.json"), dict(sorted(Counter(row["overall"] for row in qc_rows).items())))
+            atomic_write_json(
+                stage.output_path("summary.json"),
+                dict(sorted(Counter(row["overall"] for row in qc_rows).items())),
+            )
             # A browsable, graded copy of the consensuses. It lives here rather
             # than in 04_consensus because the grade needs QC, and a promoted
             # stage directory is immutable.
-            with gzip.open(consensus_dir / "consensus.csv.gz", "rt", encoding="utf-8", newline="") as handle:
+            with gzip.open(
+                consensus_dir / "consensus.csv.gz", "rt", encoding="utf-8", newline=""
+            ) as handle:
                 consensus_rows = list(csv.DictReader(handle))
             if (chimera_dir / "clones.csv").exists():
                 with (chimera_dir / "clones.csv").open(encoding="utf-8", newline="") as handle:
@@ -2212,7 +2320,16 @@ def run_pipeline(
                     }
                 if recovery:
                     sections["Culture plate recovery"] = recovery
-            write_html_report(stage.output_path("report.html"), title=f"Nanopore3 — {config.run_name}", sections=sections, provenance={"run_id": run_id, "pipeline_version": __version__, "config_digest": config_digest})
+            write_html_report(
+                stage.output_path("report.html"),
+                title=f"Nanopore3 — {config.run_name}",
+                sections=sections,
+                provenance={
+                    "run_id": run_id,
+                    "pipeline_version": __version__,
+                    "config_digest": config_digest,
+                },
+            )
             # Figures need matplotlib, which is an optional extra. A run must
             # not fail because a plotting library is absent, so this is
             # best-effort and records why it was skipped.

@@ -1,24 +1,21 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import replace
 import gzip
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from dataclasses import replace
+from pathlib import Path
 
-from nanopore3.config import load_config
-from nanopore3.pipeline import run_pipeline
-from nanopore3.pipeline import _trimmed_barcodes
-from nanopore3.config import BarcodeSettings
+from nanopore3.config import BarcodeSettings, load_config
+from nanopore3.pipeline import _trimmed_barcodes, run_pipeline
 from nanopore3.provenance import (
     StageDirectory,
     StageValidationError,
     canonical_digest,
     validate_stage_directory,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,7 +100,10 @@ class ProvenancePipelineTests(unittest.TestCase):
                 left = serial_run / "stages" / relative
                 right = threaded_run / "stages" / relative
                 if relative.endswith(".gz"):
-                    with gzip.open(left, "rb") as left_handle, gzip.open(right, "rb") as right_handle:
+                    with (
+        gzip.open(left, "rb") as left_handle,
+        gzip.open(right, "rb") as right_handle,
+    ):
                         self.assertEqual(left_handle.read(), right_handle.read(), relative)
                 else:
                     self.assertEqual(left.read_bytes(), right.read_bytes(), relative)

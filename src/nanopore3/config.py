@@ -8,16 +8,16 @@ working directory.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, replace
 import os
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import yaml
 
 from .barcodes import BarcodeRegistryError, read_barcode_panel
-
 
 DNA_IUPAC = frozenset("ACGTRYSWKMBDHVN")
 
@@ -78,6 +78,11 @@ def _nonempty_string(value: Any, location: str) -> str:
 
 
 _VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# A "$" that *looks like* an attempted variable reference but is not a well-formed
+# ${NAME} - "$HOME/data", or a missing closing brace - would otherwise stay literal
+# and produce a path containing a dollar sign that can never exist. A "$" followed
+# by anything else is left alone: a directory may legitimately contain one.
+_MALFORMED = re.compile(r"\$(?!\{[A-Za-z_][A-Za-z0-9_]*\})\{?[A-Za-z_]")
 
 
 def expand_variables(value: str, location: str) -> str:
@@ -94,7 +99,17 @@ def expand_variables(value: str, location: str) -> str:
     file-not-found three lines later that says nothing about the cause.
     """
 
+    # Checked on the input rather than the result: a variable whose *value*
+    # contains a dollar sign is the user's data, not a typo in the config.
+    stray = _MALFORMED.search(value)
+    if stray:
+        raise ConfigError(
+            f"{location} contains {stray.group(0)!r}, which is not a variable "
+            "reference. Write ${NAME} with braces, and check for a missing '}'"
+        )
+
     missing: list[str] = []
+    empty: list[str] = []
 
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
@@ -102,9 +117,22 @@ def expand_variables(value: str, location: str) -> str:
         if resolved is None:
             missing.append(name)
             return ""
+        if not resolved.strip():
+            # Set but empty is a mistake, not an answer: `export SEQ_DATA=` gives
+            # "/reads.fastq", which is exactly the silent breakage naming the
+            # variable was meant to avoid.
+            empty.append(name)
+            return ""
         return resolved
 
     expanded = _VARIABLE.sub(replace, value)
+    if empty:
+        names = ", ".join(sorted(set(empty)))
+        raise ConfigError(
+            f"{location} refers to environment variable(s) that are set but empty: "
+            f"{names}. An empty value would silently produce a path like "
+            f"'{expanded}'; set them to a real location or unset them"
+        )
     if missing:
         names = ", ".join(sorted(set(missing)))
         raise ConfigError(
@@ -703,7 +731,7 @@ class PipelineConfig:
             for library_id in sorted(self.reference_libraries)
         }
 
-    def with_rescue_policy(self, rescue_policy: str) -> "PipelineConfig":
+    def with_rescue_policy(self, rescue_policy: str) -> PipelineConfig:
         """Return a copy whose reference libraries all use one rescue policy.
 
         This exists so a benchmark or audit can compare rescue policies against
@@ -828,7 +856,9 @@ def _parse_barcodes(value: Any, location: str, base_dir: Path | None = None) -> 
             raise ConfigError(
                 f"{location}.registry_csv and {location}.family_id must be provided together"
             )
-        raw_path = Path(_nonempty_string(mapping["registry_csv"], f"{location}.registry_csv")).expanduser()
+        raw_path = Path(
+            _nonempty_string(mapping["registry_csv"], f"{location}.registry_csv")
+        ).expanduser()
         registry_path = (
             raw_path if raw_path.is_absolute() else (base_dir or Path.cwd()) / raw_path
         ).resolve(strict=False)
@@ -1213,10 +1243,27 @@ def _parse_qc(value: Any) -> QcSettings:
         downstream_constant=(
             None if downstream is None else _dna(downstream, "qc.downstream_constant")
         ),
-        minimum_identity=_number(mapping.get("minimum_identity", 0.98), "qc.minimum_identity", minimum=0, maximum=1),
-        minimum_query_coverage=_number(mapping.get("minimum_query_coverage", 0.95), "qc.minimum_query_coverage", minimum=0, maximum=1),
-        minimum_reference_coverage=_number(mapping.get("minimum_reference_coverage", 0.95), "qc.minimum_reference_coverage", minimum=0, maximum=1),
-        length_tolerance=_positive_int(mapping.get("length_tolerance", 10), "qc.length_tolerance", minimum=0),
+        minimum_identity=_number(
+            mapping.get("minimum_identity", 0.98),
+            "qc.minimum_identity",
+            minimum=0,
+            maximum=1,
+        ),
+        minimum_query_coverage=_number(
+            mapping.get("minimum_query_coverage", 0.95),
+            "qc.minimum_query_coverage",
+            minimum=0,
+            maximum=1,
+        ),
+        minimum_reference_coverage=_number(
+            mapping.get("minimum_reference_coverage", 0.95),
+            "qc.minimum_reference_coverage",
+            minimum=0,
+            maximum=1,
+        ),
+        length_tolerance=_positive_int(
+            mapping.get("length_tolerance", 10), "qc.length_tolerance", minimum=0
+        ),
     )
 
 
@@ -1399,9 +1446,6 @@ def _apply_preset(root: Mapping[str, Any]) -> dict[str, Any]:
     loaded = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
     merged = _deep_merge(_mapping(loaded, f"preset {name}"), root)
     del merged["preset"]
-    # Kept so a reader of the run's recorded configuration can see where the
-    # values came from without having to diff them against the preset.
-    merged["run_name"] = merged.get("run_name")
     return merged
 
 

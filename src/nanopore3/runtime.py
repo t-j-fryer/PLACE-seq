@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import importlib.metadata
 import os
-from pathlib import Path
 import platform
 import shutil
 import subprocess
 import sys
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)

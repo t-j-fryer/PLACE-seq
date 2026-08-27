@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from nanopore3.barcodes import BarcodeRegistryError, read_barcode_panel
 from nanopore3.config import ConfigError, load_config
-
 
 ROOT = Path(__file__).resolve().parents[1]
 

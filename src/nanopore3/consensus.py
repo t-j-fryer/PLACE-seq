@@ -8,19 +8,18 @@ selected explicitly.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass
 import hashlib
 import math
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
-from typing import Iterable, Sequence
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 
 import edlib
-
 
 _CIGAR_TOKEN = re.compile(r"(\d+)([=XID])")
 SUPPORTED_CONSENSUS_BACKENDS = frozenset({"portable", "mafft_spoa"})
@@ -73,7 +72,7 @@ class ConsensusResult:
 
 
 def _stable_rank(read_uid: str, seed: int, group_id: str) -> str:
-    value = f"{seed}\0{group_id}\0{read_uid}".encode("utf-8")
+    value = f"{seed}\0{group_id}\0{read_uid}".encode()
     return hashlib.sha256(value).hexdigest()
 
 

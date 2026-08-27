@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import gzip
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from nanopore3.io import FastqFormatError, iter_fastq
 from nanopore3.references import read_fasta

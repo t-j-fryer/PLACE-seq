@@ -15,6 +15,53 @@ Conventions:
 
 ---
 
+## 2026-08-27 (seventh) — AFFRnd2 re-run clean, figures rebuilt
+
+Housekeeping after the occupancy fix; no scientific change.
+
+The original AFFRnd2 run had its report stage built by the code that counted
+references, so `stages/06_report/figures/` held the wrong plate map even after the
+fix landed. Rebuilding only that stage with `rerun --from 06_report` produced correct
+figures and byte-identical science, which confirmed the fix touched nothing else.
+
+The run was then **repeated in full** under its original name rather than shipped as
+a rerun. The reason is the gap recorded in the 2026-08-27 (third) entry: a stage
+fingerprint covers `pipeline_version` but not the source revision, so a run whose
+stages were produced by two code versions is only as trustworthy as the claim that
+the difference did not matter. Seventeen minutes buys not having to make that claim.
+
+All four stage summaries reproduce the first run exactly:
+
+    03_assignment  identical
+    03b_chimera    identical
+    04_consensus   identical
+    05_qc          identical
+
+`runs/20260622_AFFRnd2`, 2.4 GB, every stage from one code version.
+
+| barcode | usable clones | exact | wells |
+|---|---|---|---|
+| RP04 | 84 | 84 | 84 |
+| RP05 | 87 | 84 | 87 |
+| RP06 | 101 | 101 | 93 |
+| RP07 | 15 | 12 | 15 |
+| **total** | **287** | **281** | |
+
+RP06 recovers 101 clones from 93 wells - the ten wells holding two sequences and the
+one holding three, which the corrected figure now shows as a real tail rather than
+burying in a median of 7.
+
+### Also checked
+
+The three other readers of `assignment_calls.csv.gz` were audited for the same
+mistake and are all correct: `platforms.load_nanopore_read_identities` measures
+per-read identity, where a read is the right unit, and `encoding_defects.py` and
+`rarefy_encodings.py` deliberately count designs seen in *any* read, which is the
+"ceiling" measure the 2026-08-21 (fifth) entry defines. The defect was confined to
+one function.
+
+---
+
 ## 2026-08-27 (sixth) — The occupancy figure counted references, not clones
 
 **Scientific reporting change.** Reported from the bench against the AFFRnd2

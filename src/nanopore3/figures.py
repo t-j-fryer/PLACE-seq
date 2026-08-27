@@ -374,6 +374,8 @@ def plate_occupancy_figure(summaries: Sequence[PlateSummary], path: Path) -> Pat
 
     use_print_style()
     count = len(summaries)
+    if not count:
+        raise NothingToPlot("plate_occupancy_figure needs at least one plate")
     columns = min(4, count)
     rows = (count + columns - 1) // columns
     # A 96-well plate is 12x8, so the panel aspect fixes the figure height once
@@ -542,15 +544,30 @@ def _save(figure, path: Path, *, tight: bool = True) -> Path:
     return path.with_suffix(".pdf")
 
 
+class NothingToPlot(ValueError):
+    """The run recovered no plate, so there is nothing for a figure to show."""
+
+
 def write_all(
     run_dir: Path,
     output_dir: Path,
     expected_clones: Mapping[str, int] | None = None,
     pooled: Mapping[str, int] | None = None,
 ) -> list[Path]:
-    """Write every figure for a completed run and return the PDF paths."""
+    """Write every figure for a completed run and return the PDF paths.
+
+    Raises :class:`NothingToPlot` when no plate was recovered - an empty input, or
+    barcode and read-length settings that matched nothing.  That is a normal
+    outcome of a bad flowcell and belongs in the run's report as a stated reason,
+    not as a ``ZeroDivisionError`` from inside a panel-layout calculation.
+    """
 
     summaries, _, by_plate = summarize_run(run_dir, expected_clones)
+    if not summaries:
+        raise NothingToPlot(
+            "no plate was recovered, so there is nothing to plot - check the barcode "
+            "settings and the read-length limits against the demux stage's summary"
+        )
     written = [
         plate_occupancy_figure(summaries, output_dir / "fig1_plate_occupancy"),
         clonality_figure(summaries, output_dir / "fig2_clonality"),

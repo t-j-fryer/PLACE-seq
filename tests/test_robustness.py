@@ -131,3 +131,95 @@ class RoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DoubleFlankGuardTests(unittest.TestCase):
+    """Flanking a sequence that already has the flanks must be refused.
+
+    Joining the constant regions on a second time is silent - the reference simply
+    grows - and it produced a real defect: flanks derived *from* a set of assembled
+    references were then joined *onto* those same references. The guard belongs at
+    the point of work, so every caller inherits it.
+    """
+
+    UP = "TTAGGCATCCGAATTGCACGATTGCCATAGGTTCAGGATCCAATTGCACGTAGCTTAAGG"
+    DOWN = "CCATTGACCTAGGTTCAGCATGCATTGACCGGTTAAGGCCATTAGCTAGGATCCTTAAGC"
+    INSERT = "ACGTTGCAAGGTCCATTAGCAA"
+
+    def flanks(self):
+        from nanopore3.flanks import from_sequences
+
+        return from_sequences(self.UP, self.DOWN, anchor_length=20)
+
+    def test_an_insert_is_flanked_normally(self) -> None:
+        built = self.flanks().flank(self.INSERT)
+        self.assertEqual(len(built), len(self.INSERT) + 2 * (60 - 20))
+
+    def test_a_reference_this_already_built_is_refused(self) -> None:
+        from nanopore3.flanks import FlankError
+
+        flanks = self.flanks()
+        with self.assertRaises(FlankError) as caught:
+            flanks.flank(flanks.flank(self.INSERT))
+        self.assertIn("already carries", str(caught.exception))
+
+    def test_an_assembled_construct_is_refused_and_points_at_derive(self) -> None:
+        from nanopore3.flanks import FlankError
+
+        with self.assertRaises(FlankError) as caught:
+            self.flanks().flank(self.UP + self.INSERT + self.DOWN)
+        self.assertIn("flanks.derive", str(caught.exception))
+
+    def test_the_derive_route_is_unaffected(self) -> None:
+        from nanopore3.flanks import from_assembled
+
+        inserts = (self.INSERT, "TTGACCAGTTCAGGATCCAACC", "GGCATTACCGTAAGGTTCCATT")
+        assembled = [self.UP + i + self.DOWN for i in inserts]
+        derived = from_assembled(assembled, anchor_length=20, minimum_constant=40)
+        # trim, not flank: 20 nt of primer anchor off each end
+        self.assertEqual(len(derived.transform(assembled[0])), len(assembled[0]) - 40)
+
+
+class NothingRecoveredTests(unittest.TestCase):
+    """A run that recovers nothing must say why, not raise from a figure."""
+
+    def test_figures_report_a_reason_instead_of_dividing_by_zero(self) -> None:
+        # An empty input, or read-length limits that match nothing, left
+        # plate_occupancy_figure computing rows from zero columns.
+        try:
+            from nanopore3.figures import NothingToPlot, plate_occupancy_figure
+        except ImportError:
+            self.skipTest("matplotlib not installed")
+        with self.assertRaises(NothingToPlot):
+            plate_occupancy_figure([], Path("unused"))
+
+    def test_a_stage_with_no_successes_is_reported_loudly(self) -> None:
+        import logging
+
+        from nanopore3.pipeline import _report_stage_counts
+
+        logger = logging.getLogger("nanopore3")
+        with self.assertLogs(logger, level="WARNING") as captured:
+            _report_stage_counts("02_demux", {"out_of_length": 2}, "assigned")
+        joined = "\n".join(captured.output)
+        self.assertIn("no assigned reads", joined)
+        self.assertIn("read-length", joined)
+
+    def test_a_stage_with_successes_is_reported_quietly(self) -> None:
+        import logging
+
+        from nanopore3.pipeline import _report_stage_counts
+
+        logger = logging.getLogger("nanopore3")
+        with self.assertLogs(logger, level="INFO") as captured:
+            _report_stage_counts("02_demux", {"assigned": 7, "no_match": 1}, "assigned")
+        self.assertFalse([m for m in captured.output if m.startswith("WARNING")])
+
+    def test_an_empty_stage_says_nothing_reached_it(self) -> None:
+        import logging
+
+        from nanopore3.pipeline import _report_stage_counts
+
+        with self.assertLogs(logging.getLogger("nanopore3"), level="WARNING") as caught:
+            _report_stage_counts("03_assignment", {}, "assigned_unique")
+        self.assertIn("no reads reached", "\n".join(caught.output))

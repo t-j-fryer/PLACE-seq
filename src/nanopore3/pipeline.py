@@ -496,6 +496,33 @@ def _duration(seconds: float) -> str:
     return f"{hours}h{minutes:02d}m"
 
 
+def _report_stage_counts(stage_name: str, counts: Mapping[str, int], success: str) -> None:
+    """Log a stage's outcome breakdown, loudly when nothing succeeded.
+
+    A run whose barcodes or length limits match nothing still completes: every
+    stage succeeds, and the counters are the only explanation of why the output is
+    empty. Printing them here means the reason is on screen at the moment it is
+    determined, rather than only in a summary file nobody knows to open.
+    """
+
+    total = sum(counts.values())
+    if not total:
+        LOGGER.warning("stage %s: no reads reached this stage", stage_name)
+        return
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    breakdown = ", ".join(f"{name} {value:,}" for name, value in ordered)
+    LOGGER.info("stage %s: %s", stage_name, breakdown)
+    if not counts.get(success):
+        LOGGER.warning(
+            "stage %s produced no %s reads out of %s. The breakdown above says which "
+            "check rejected them; the usual causes are barcode settings that do not "
+            "match this run, read-length limits, or the wrong reference library",
+            stage_name,
+            success,
+            f"{total:,}",
+        )
+
+
 @contextmanager
 def _stage(run_dir: Path, name: str, fingerprint: str, **kwargs: Any):
     """A stage directory that says when it started, finished, or was reused."""
@@ -1662,6 +1689,7 @@ def run_pipeline(
                                     )
                                     + "\n"
                                 )
+            _report_stage_counts("02_demux", counts, "assigned")
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(counts.items())))
 
     demux_dir = run_dir / "stages" / "02_demux"
@@ -1773,6 +1801,7 @@ def run_pipeline(
                                 )
                                 + "\n"
                             )
+            _report_stage_counts("03_assignment", counts, "assigned_unique")
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(counts.items())))
 
     assignment_dir = run_dir / "stages" / "03_assignment"
@@ -2353,13 +2382,27 @@ def run_pipeline(
                     if compressed_plan is not None
                     else {}
                 )
-                written = _write_figures(
-                    run_dir, stage.output_path("figures"), expected, pooled
-                )
-                atomic_write_json(
-                    stage.output_path("figures.json"),
-                    {"written": sorted(p.name for p in written), "skipped": None},
-                )
+                from .figures import NothingToPlot
+
+                try:
+                    written = _write_figures(
+                        run_dir, stage.output_path("figures"), expected, pooled
+                    )
+                except NothingToPlot as exc:
+                    # A run that recovered no plate is a normal outcome of a bad
+                    # flowcell or of barcode settings that matched nothing. It is
+                    # recorded and reported, not raised: every other stage
+                    # succeeded and its counts are what the user needs to see.
+                    LOGGER.warning("figures skipped: %s", exc)
+                    atomic_write_json(
+                        stage.output_path("figures.json"),
+                        {"written": [], "skipped": str(exc)},
+                    )
+                else:
+                    atomic_write_json(
+                        stage.output_path("figures.json"),
+                        {"written": sorted(p.name for p in written), "skipped": None},
+                    )
 
     if config.consensus_tree:
         # Built after the stages rather than inside one: it is derived entirely

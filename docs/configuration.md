@@ -148,6 +148,12 @@ Set it to `false` only for a very large run where writing one small file per clo
 is itself a cost; the same tree can then be built afterwards with
 `python scripts/export_consensus_tree.py --run <run>`.
 
+The tree is **regenerated on every run and rerun**, so do not keep your own files
+inside it — a stale FASTA is indistinguishable from a current one, which is why it is
+replaced rather than merged. A directory the exporter did not write (one with no
+`index.csv`) is refused rather than replaced, so your own directory of that name is
+safe.
+
 ## Compressed PCR: gene identity as an extra demultiplexing key
 
 > The layout can be supplied as a spreadsheet rather than nested YAML, and is

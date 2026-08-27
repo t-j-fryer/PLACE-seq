@@ -103,9 +103,34 @@ class Flanks:
         return self.downstream[: len(self.downstream) - len(self.right_anchor)]
 
     def flank(self, insert: str) -> str:
-        """Return the full-length reference for one insert."""
+        """Return the full-length reference for one insert.
 
-        return self.inner_upstream + normalize_sequence(insert) + self.inner_downstream
+        Refuses a sequence that already carries the constant regions.  Joining them
+        on a second time is silent - the reference simply grows - and it produced a
+        real defect: flanks derived *from* a set of assembled references were then
+        joined *onto* those same references, duplicating the backbone at both ends
+        of every record.  The check belongs here, at the point of work, rather than
+        in one of the callers.
+
+        Both shapes are recognised: a reference this method already built (which
+        begins with ``inner_upstream``) and one supplied assembled (which begins
+        with the primer anchor as well).  Requiring a match at *both* ends makes a
+        chance hit impossible at these lengths.
+        """
+
+        sequence = normalize_sequence(insert)
+        for start, end, description in (
+            (self.inner_upstream, self.inner_downstream, "constant regions"),
+            (self.upstream, self.downstream, "constant regions and primer sites"),
+        ):
+            if start and end and sequence.startswith(start) and sequence.endswith(end):
+                raise FlankError(
+                    f"this sequence already carries the {description}, so flanking it "
+                    "would duplicate them. If the references are already assembled, "
+                    "describe them with flanks.derive rather than flanks.upstream/"
+                    "downstream or flanks.template"
+                )
+        return self.inner_upstream + sequence + self.inner_downstream
 
     def insert_span(self, full_length: int) -> tuple[int, int]:
         """Half-open coordinates of the insert inside a full-length reference."""
@@ -304,13 +329,11 @@ def flank_sequences(
 
     built: list[tuple[str, str]] = []
     for name, insert in inserts:
-        normalized = normalize_sequence(insert)
-        if flanks.inner_upstream and flanks.inner_upstream[-12:] in normalized:
-            raise FlankError(
-                f"insert {name!r} already contains the 5' constant region; flanking it "
-                "again would double that sequence"
-            )
-        built.append((name, flanks.flank(normalized)))
+        try:
+            built.append((name, flanks.flank(insert)))
+        except FlankError as exc:
+            # Flanks.flank does the checking; this only says which record failed.
+            raise FlankError(f"insert {name!r}: {exc}") from exc
     return built
 
 

@@ -249,7 +249,7 @@ compressed_pcr:
 
 `per_block` sums the blocks across that plate's pooled culture plates. Three
 culture plates holding blocks 1-3, 4-6 and 7-10 give an expected 3 + 3 + 4 = 10
-distinct genes per well, drawn on the clonality figure as a reference line.
+consensus sequences per well, drawn on the clonality figure as a reference line.
 
 Block keys are **nested by reference library**, because block numbering restarts
 in each one — block 1 of `sumo_lab` is unrelated to block 1 of `aaseq_biotin`:
@@ -270,7 +270,7 @@ absent, and `figures.json` records what was written or why it was skipped.
 
 | Figure | Shows |
 | --- | --- |
-| `fig1_plate_occupancy` | distinct genes recovered per well, one 96-well panel per plate |
+| `fig1_plate_occupancy` | **consensus sequences** per well, one 96-well panel per plate |
 | `fig2_clonality` | observed clones per well by plate, against the expected count |
 | `fig3_deconvolution` | read fate per plate; only when compressed PCR is enabled |
 

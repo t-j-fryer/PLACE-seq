@@ -19,7 +19,21 @@ _FIELDS = [
 ]
 
 
+_CONSENSUS_FIELDS = [
+    "consensus_id", "plate_id", "well_id", "reference_library_id", "reference_ids",
+    "status", "culture_plate", "n_reads_available", "n_reads_used", "mean_depth",
+    "min_depth", "ambiguous_bases", "backend", "sequence_sha256", "failure_reason",
+]
+
+
 def _write_run(root: Path) -> Path:
+    """A run where reads scatter but only some groups build a sequence.
+
+    Well A1 is the case the occupancy figure used to get wrong: one deep clone plus
+    a tail of shallow groups from reads that landed on near neighbours. It holds one
+    consensus sequence and used to be reported as holding four genes.
+    """
+
     stage = root / "stages" / "03_assignment"
     stage.mkdir(parents=True)
     rows = []
@@ -44,6 +58,34 @@ def _write_run(root: Path) -> Path:
         writer = csv.DictWriter(handle, fieldnames=_FIELDS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+
+    # The consensus stage decides occupancy. A1 sees four references among its reads
+    # but builds one sequence; H12 genuinely builds two; B1 builds none.
+    consensus = root / "stages" / "04_consensus"
+    consensus.mkdir(parents=True)
+    built = [("A1", 1, 3), ("A2", 1, 0), ("B1", 0, 2), ("H12", 2, 1)]
+    consensus_rows = []
+    for well, deep, shallow in built:
+        for index in range(deep):
+            consensus_rows.append({f: "" for f in _CONSENSUS_FIELDS} | {
+                "consensus_id": f"c-{well}-{index}", "plate_id": "RP01",
+                "well_id": well, "reference_ids": f"Block_1_gene{index}",
+                "status": "consensus_pass", "culture_plate": "CP_A",
+                "n_reads_available": "40", "n_reads_used": "40", "mean_depth": "40",
+            })
+        for index in range(shallow):
+            consensus_rows.append({f: "" for f in _CONSENSUS_FIELDS} | {
+                "consensus_id": f"s-{well}-{index}", "plate_id": "RP01",
+                "well_id": well, "reference_ids": f"Block_1_noise{index}",
+                "status": "low_depth", "culture_plate": "CP_A",
+                "n_reads_available": "1", "n_reads_used": "1", "mean_depth": "1",
+            })
+    with gzip.open(consensus / "consensus.csv.gz", "wt", newline="") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=_CONSENSUS_FIELDS, lineterminator="\n"
+        )
+        writer.writeheader()
+        writer.writerows(consensus_rows)
     return root
 
 
@@ -56,15 +98,32 @@ class FigureTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._dir.cleanup()
 
-    def test_summary_counts_distinct_genes_not_reads(self) -> None:
+    def test_occupancy_counts_consensus_sequences_not_references(self) -> None:
+        """The defect this replaced: reads scattering made a well look polyclonal.
+
+        A1's reads reach four references and build one sequence. Counting
+        references reported four genes in a clean monoclonal well.
+        """
+
         summaries, status, by_plate = figures.summarize_run(self.run)
         self.assertEqual(len(summaries), 1)
         summary = summaries[0]
-        # A2 has two reads of two genes; H12 has four. Reads are not clones.
         self.assertEqual(summary.clones_per_well["A1"], 1)
-        self.assertEqual(summary.clones_per_well["H12"], 4)
+        self.assertEqual(summary.clones_per_well["H12"], 2)
         self.assertEqual(status["resolved"], 10)
         self.assertEqual(by_plate[("RP01", "unknown_block")], 1)
+
+    def test_shallow_groups_do_not_inflate_a_well(self) -> None:
+        summaries, _, _ = figures.summarize_run(self.run)
+        # A2 has one deep group and no tail; A1 has one deep group and three
+        # shallow ones. Both hold one clone.
+        self.assertEqual(summaries[0].clones_per_well["A2"], 1)
+        self.assertEqual(summaries[0].clones_per_well["A1"], 1)
+
+    def test_a_well_that_built_nothing_is_zero_not_absent(self) -> None:
+        # An absent panel on the plate map would read as an absent well.
+        summaries, _, _ = figures.summarize_run(self.run)
+        self.assertEqual(summaries[0].clones_per_well["B1"], 0)
 
     def test_unassigned_reads_do_not_count_as_clones(self) -> None:
         summaries, _, _ = figures.summarize_run(self.run)

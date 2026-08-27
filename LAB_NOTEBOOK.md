@@ -15,6 +15,74 @@ Conventions:
 
 ---
 
+## 2026-08-27 (sixth) — The occupancy figure counted references, not clones
+
+**Scientific reporting change.** Reported from the bench against the AFFRnd2
+figures: many wells appeared to hold lots of genes, which does not match one culture
+plate per barcode. It did not match the data either.
+
+### What it was counting
+
+`figures.summarize_run` read the **assignment** stage and counted distinct
+`reference_ids` per well among reads whose status began with `assigned`. So every
+read that landed on a near neighbour added a gene to that well:
+
+    RP06 C10: 1,037 reads across 13 references -> 1018, 4, 4, 2, 1, 1, 1, 1, 1, 1, 1, 1
+
+One clean monoclonal well, reported as thirteen genes. Across AFFRnd2 the figure
+showed a median of 7 per well and a maximum of 26.
+
+### What it counts now
+
+The **consensus** stage, restricted to groups that built a sequence - the same
+`status != "low_depth"` rule `summarize_culture_plates` has always used, and the
+reason that figure was already right. Chimeric clones are included: they are
+sequences present in the well, they are exported beside the reference-guided
+consensuses, and omitting them would make the figure disagree with `index.csv`.
+
+A well that reached assignment and built nothing is kept as **zero** rather than
+dropped, because an absent panel on a plate map reads as an absent well.
+
+### AFFRnd2, before and after
+
+| barcode | median per well, before | after | distribution after |
+|---|---|---|---|
+| RP04 | 7 | **1** | 84 wells x1, 12 empty |
+| RP05 | 7 | **1** | 87 x1, 8 empty |
+| RP06 | 7 | **1** | 82 x1, 10 x2, 1 x3, 3 empty |
+| RP07 | 7 | **0** | 15 x1, 66 empty |
+
+Which is what one culture plate per colony-PCR barcode should look like, and makes
+RP07's under-sequencing visible as empty wells rather than hidden inside an inflated
+count.
+
+Labels changed with it: "distinct genes per well" -> "consensus sequences per well"
+on both the colour bar and the clonality axis. The old wording is what made the
+number read as gene diversity.
+
+### Why the tests did not catch it
+
+`tests/test_figures.py` asserted the old behaviour, in a test named
+`test_summary_counts_distinct_genes_not_reads` - it checked that reads were not
+counted as clones, which was true, while references were. Its fixture had no
+consensus stage at all, so there was nothing to count from. Replaced with a fixture
+where reads scatter but only some groups build a sequence, and three tests: that
+occupancy counts sequences rather than references, that a shallow tail does not
+inflate a well, and that a well which built nothing is zero rather than missing.
+
+411 tests.
+
+### Lesson
+
+**A test can pin the wrong behaviour precisely.** This one was specific, well
+named, and passed for weeks. It asserted the distinction the author was thinking
+about - reads versus genes - and not the one that mattered - references versus
+sequences built. The figure was wrong from the first run that had a noise tail, and
+only a person looking at a plate map and knowing what the experiment was could see
+it.
+
+---
+
 ## 2026-08-27 (fifth) — 20260622_AFFRnd2: a new run, insert mode, four barcodes
 
 First run of a new sequencing set. `runs/20260622_AFFRnd2`, 17.4 min for a 9.24 GB

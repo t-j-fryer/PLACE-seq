@@ -196,19 +196,67 @@ def _read_csv_gz(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _built_a_sequence(row: Mapping[str, str]) -> bool:
+    """Whether this consensus group actually produced a sequence.
+
+    On ``status``, the same rule :func:`summarize_culture_plates` already uses:
+    ``low_depth`` is the only status that builds nothing, and ``mixed_variants``
+    does produce a sequence - one carrying an ``N`` at the contested position.
+    """
+
+    return row.get("status") != "low_depth"
+
+
 def summarize_run(
     run_dir: Path, expected_clones: Mapping[str, int] | None = None
 ) -> tuple[list[PlateSummary], Counter[str], Counter[tuple[str, str]]]:
-    """Derive plate occupancy and deconvolution outcome from a completed run."""
+    """Derive plate occupancy and deconvolution outcome from a completed run.
 
-    rows = _read_csv_gz(run_dir / "stages" / "03_assignment" / "assignment_calls.csv.gz")
-    assigned = [row for row in rows if row["assignment_status"].startswith("assigned")]
+    Occupancy counts the **consensus sequences** a well produced, not the number of
+    references its reads were assigned to. Those differ by a lot: reads scatter onto
+    near neighbours, so one clean monoclonal well looks like this at the assignment
+    stage -
+
+        RP06 C10: 1,037 reads across 13 references -> 1018, 4, 4, 2, 1, 1, 1, ...
+
+    - and counting references made that well report thirteen genes. Every group in
+    the tail is below the depth floor and builds nothing, which is why the figure has
+    to be built from the consensus stage: a well holds as many clones as it produced
+    sequences.
+
+    Chimeric clones are included. They are sequences that are present in the well,
+    they are exported alongside the reference-guided consensuses, and leaving them
+    out would make the figure disagree with ``index.csv``.
+    """
+
+    assignment_rows = _read_csv_gz(
+        run_dir / "stages" / "03_assignment" / "assignment_calls.csv.gz"
+    )
     clones: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     sources: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for row in assigned:
-        clones[row["plate_id"]][row["well_id"]].add(row["reference_ids"])
-        if row.get("culture_plate"):
-            sources[row["plate_id"]][row["well_id"]].add(row["culture_plate"])
+    consensus_path = run_dir / "stages" / "04_consensus" / "consensus.csv.gz"
+    if consensus_path.exists():
+        for row in _read_csv_gz(consensus_path):
+            if not _built_a_sequence(row):
+                continue
+            clones[row["plate_id"]][row["well_id"]].add(row["consensus_id"])
+            if row.get("culture_plate"):
+                sources[row["plate_id"]][row["well_id"]].add(row["culture_plate"])
+    chimera_path = run_dir / "stages" / "03b_chimera" / "clones" / "clones.csv"
+    if chimera_path.is_file():
+        with chimera_path.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if not row.get("plate_id"):
+                    continue
+                clones[row["plate_id"]][row["well_id"]].add(row["chimera_id"])
+                if row.get("culture_plate"):
+                    sources[row["plate_id"]][row["well_id"]].add(row["culture_plate"])
+    # Wells that reached assignment but produced nothing still belong on the plate
+    # map, as zero: an absent panel would read as an absent well.
+    for row in assignment_rows:
+        if row["assignment_status"].startswith("assigned") and row["plate_id"]:
+            clones[row["plate_id"]].setdefault(row["well_id"], set())
+    rows = assignment_rows
     status = Counter(row.get("culture_plate_status", "not_configured") for row in rows)
     by_plate = Counter(
         (row["plate_id"], row.get("culture_plate_status", "not_configured"))
@@ -218,7 +266,7 @@ def summarize_run(
     summaries = [
         PlateSummary(
             plate_id=plate_id,
-            clones_per_well={well: len(genes) for well, genes in wells.items()},
+            clones_per_well={well: len(built) for well, built in wells.items()},
             plates_per_well={
                 well: tuple(sorted(found)) for well, found in sources[plate_id].items()
             },
@@ -370,7 +418,7 @@ def _plate_grid(
 
 
 def plate_occupancy_figure(summaries: Sequence[PlateSummary], path: Path) -> Path:
-    """Small multiples: distinct genes recovered per well, one panel per plate."""
+    """Small multiples: consensus sequences per well, one panel per plate."""
 
     use_print_style()
     count = len(summaries)
@@ -418,7 +466,7 @@ def plate_occupancy_figure(summaries: Sequence[PlateSummary], path: Path) -> Pat
     else:
         bar_axes = figure.add_axes((0.13, 0.02, 0.30, 0.014))
     bar = figure.colorbar(mappable, cax=bar_axes, orientation="horizontal")
-    bar.set_label("distinct genes per well", color=INK, labelpad=3, fontsize=6.5)
+    bar.set_label("consensus sequences per well", color=INK, labelpad=3, fontsize=6.5)
     bar.outline.set_visible(False)
     bar.ax.tick_params(length=2, width=0.6, pad=1.5, labelsize=6)
     return _save(figure, path, tight=True)
@@ -465,7 +513,7 @@ def clonality_figure(summaries: Sequence[PlateSummary], path: Path) -> Path:
     ax.set_yticklabels(labels)
     ax.set_ylim(-0.7, len(summaries) - 0.3)
     ax.invert_yaxis()
-    ax.set_xlabel("distinct genes per well")
+    ax.set_xlabel("consensus sequences per well")
     ax.set_xlim(left=0)
     ax.xaxis.grid(True, color=FAINT, linewidth=0.5)
     ax.set_axisbelow(True)

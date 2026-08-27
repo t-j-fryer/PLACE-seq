@@ -21,15 +21,17 @@ from pathlib import Path
 
 import edlib
 
+from .errors import Nanopore3Error
+
 _CIGAR_TOKEN = re.compile(r"(\d+)([=XID])")
 SUPPORTED_CONSENSUS_BACKENDS = frozenset({"portable", "mafft_spoa"})
 
 
-class ConsensusBackendUnavailable(RuntimeError):
+class ConsensusBackendUnavailable(Nanopore3Error, RuntimeError):
     """Raised when an explicitly selected optional backend cannot be executed."""
 
 
-class ConsensusBackendError(RuntimeError):
+class ConsensusBackendError(Nanopore3Error, RuntimeError):
     """Raised when an optional consensus tool fails or emits unusable output."""
 
 

@@ -15,6 +15,85 @@ Conventions:
 
 ---
 
+## 2026-08-27 (third) — Third review pass: four defects, and one class of defect closed
+
+No scientific change. Deliberately aimed at areas the previous two passes had not
+touched: the scientific core, determinism, and the error surface.
+
+### The core is sound
+
+Checked rather than assumed, because two passes of infrastructure review had said
+nothing about correctness:
+
+| checked | result |
+|---|---|
+| `binomial_upper_tail` against exact `math.comb` sums | worst relative error **4.6e-14** over 8 cases |
+| its boundaries (k=0, k>n, n=0, p=0, p=1) | all sane, no exceptions |
+| `_call_position` on ties, three-way splits, all-deletions, single reads, and both sides of the 20% and 60% thresholds | all correct |
+| **determinism** across serial / thread / process and 1, 2, 4 and auto workers | consensus FASTA, consensus CSV, QC table and index.csv **byte-identical across six configurations** |
+| deconvolution with an unresolvable layout | refused at construction, with the fix in the message |
+| the demux progress counter against a 450,000-read input | exact |
+
+Two of my own tests were wrong, not the code: I passed `_call_position` a depth
+that excluded deletions (the pileup includes them), and I wrote rewritten configs
+one directory up so their relative paths broke.
+
+### Four defects
+
+**1. `jobs: 0` failed before the run began.** Resolved in two places: the run used
+the detected CPU count, preflight reported the plan from the raw value and
+`plan_resources` rejects 0. So the feature I added, documented and unit-tested was
+broken end to end. One `resolved_jobs()` now serves both. **Third time this pass
+that a unit test passed while the real path was broken.**
+
+**2. `designed_allele_fraction` reported 0.0 for "unknown".** A run recorded before
+the read fractions existed has the mixed position but not its shares, and 0.0 there
+says *the designed sequence is gone from this well* - the opposite conclusion, from
+absent data. It bites exactly the case `rerun` exists for: `--from 05_qc` over an
+older consensus stage would have reported 0.0000 for every mixed clone, against the
+finding that all 58 still carry the design. Now `None`, and one unknown position
+makes the clone unknown rather than reporting a confident minimum from partial data.
+
+**3. Two error classes reached the user as tracebacks.** The command line caught a
+hand-written tuple, so `RerunError(RuntimeError)` (an unknown `--from` stage) and
+`ConsensusBackendUnavailable` (choosing `mafft_spoa` without the tools installed)
+crashed. Both had excellent messages. The second is a very likely first-run mistake.
+
+Fixed as a class rather than as two instances: `Nanopore3Error` is now the base of
+all fifteen user-facing errors, alongside each one's natural base so existing
+`except ValueError` handlers still work. The command line catches that. **Anything
+not inheriting from it is a bug in the package rather than a mistake by its user,
+and should show a traceback.** A test asserts all fifteen inherit from it, so the
+next one added cannot slip through.
+
+**4. The preset enabled chimera detection.** Whether a read can be a chimera is a
+property of how the library was built - Golden Gate assembly from a pool - not of
+the flow cell, and `chimera.exclude_reads` decides which reads feed a consensus. A
+preset named after a platform has no business making that call. Removed; the
+experiment's configuration says it. `260608_full_length_short.yaml` carries its own
+chimera section again, which is why it is now 117 lines rather than 105 - the
+2026-08-26 (second) entry's figure, and `docs/configuration.md`, are corrected.
+
+### Also
+
+`flank_sequences` was dead code holding the double-flank guard the live path lacked;
+that was fixed in the previous entry. This pass confirmed no other caller of
+`.flank()` needs `.transform()`, that all 18 scripts still run, that `rerun` works
+from every valid stage, and that the exporter refuses a directory it did not write.
+
+386 tests, lint clean.
+
+### Lesson
+
+**Three of the four were features I had added, documented, and unit-tested in the
+previous three days.** The tests exercised functions; the defects lived in the
+paths between them - a second call site, a missing measurement, an exception base
+class. The one durable fix here is the third: instead of adding a type to a tuple,
+the tuple became a base class with a test that every error inherits from it. That
+closes the class of defect rather than the instance.
+
+---
+
 ## 2026-08-27 (second) — A review pass: eight defects, six of them mine
 
 No scientific change. Asked to look for Colab bugs and general oddness, with

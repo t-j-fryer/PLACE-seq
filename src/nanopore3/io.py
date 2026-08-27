@@ -15,12 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from .errors import Nanopore3Error
 from .provenance import atomic_write_bytes, sha256_file
 
 FASTQ_DNA_IUPAC = frozenset("ACGTRYSWKMBDHVN.-")
 
 
-class FastqFormatError(ValueError):
+class FastqFormatError(Nanopore3Error, ValueError):
     """A FASTQ structural or sequence validation failure."""
 
     def __init__(self, path: Path, record_index: int, message: str) -> None:

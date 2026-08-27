@@ -18,11 +18,12 @@ from typing import Any
 import yaml
 
 from .barcodes import BarcodeRegistryError, read_barcode_panel
+from .errors import Nanopore3Error
 
 DNA_IUPAC = frozenset("ACGTRYSWKMBDHVN")
 
 
-class ConfigError(ValueError):
+class ConfigError(Nanopore3Error, ValueError):
     """Raised when a configuration file is malformed or internally inconsistent."""
 
 

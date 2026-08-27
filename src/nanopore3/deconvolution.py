@@ -30,6 +30,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from .errors import Nanopore3Error
+
 DeconvolutionStatus = Literal[
     "resolved",
     "ambiguous",
@@ -40,7 +42,7 @@ DeconvolutionStatus = Literal[
 ]
 
 
-class DeconvolutionError(ValueError):
+class DeconvolutionError(Nanopore3Error, ValueError):
     """A compressed-PCR layout cannot resolve the wells it describes."""
 
 

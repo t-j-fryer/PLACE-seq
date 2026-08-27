@@ -6,13 +6,14 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .errors import Nanopore3Error
 from .io import open_text_auto
 from .provenance import canonical_digest, sha256_bytes, sha256_file
 
 REFERENCE_DNA_IUPAC = frozenset("ACGTRYSWKMBDHVN")
 
 
-class FastaFormatError(ValueError):
+class FastaFormatError(Nanopore3Error, ValueError):
     """A FASTA structure, alphabet, or identifier validation failure."""
 
 

@@ -30,11 +30,13 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
+from .errors import Nanopore3Error
+
 REQUIRED_COLUMNS = ("plate_barcode", "culture_plate", "library", "block")
 OPTIONAL_COLUMNS = ("clonality",)
 
 
-class LayoutError(ValueError):
+class LayoutError(Nanopore3Error, ValueError):
     """The layout table cannot be read, or contradicts itself."""
 
 

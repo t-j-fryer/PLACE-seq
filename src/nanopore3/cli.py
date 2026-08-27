@@ -13,7 +13,8 @@ from multiprocessing import freeze_support
 from pathlib import Path
 
 from . import __version__
-from .config import ConfigError, load_config
+from .config import load_config
+from .errors import Nanopore3Error
 from .pipeline import PipelineError, run_pipeline, validate_inputs
 from .provenance import StageValidationError
 from .runtime import doctor_report
@@ -376,7 +377,11 @@ def main(argv: list[str] | None = None) -> int:
         else:  # pragma: no cover - argparse enforces subcommands
             raise AssertionError(args.command)
         return 0
-    except (ConfigError, PipelineError, OSError, ValueError) as exc:
+    except (Nanopore3Error, OSError) as exc:
+        # One base rather than a list of types: a hand-written tuple silently let
+        # two error classes through as tracebacks, and would have let through the
+        # next one added. Anything that is not a Nanopore3Error is a bug in this
+        # package, not a mistake by its user, and should show its traceback.
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

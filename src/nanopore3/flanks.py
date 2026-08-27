@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 import edlib
 
+from .errors import Nanopore3Error
 from .sequence import normalize_sequence, reverse_complement
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -42,7 +43,7 @@ DEFAULT_ANCHOR_LENGTH = 20
 DEFAULT_MINIMUM_TEMPLATE_IDENTITY = 0.90
 
 
-class FlankError(ValueError):
+class FlankError(Nanopore3Error, ValueError):
     """A flank definition that would produce misleading references."""
 
 

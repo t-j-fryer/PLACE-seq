@@ -10,6 +10,12 @@
 # preset inherits them and states only what describes its own experiment; any key
 # it does set wins.
 #
+# What is deliberately NOT here: chimera detection. Whether a read can be a chimera
+# is a property of how the library was built - Golden Gate assembly from a pool -
+# not of the sequencer, and `chimera.exclude_reads` decides which reads feed a
+# consensus. A preset named after a flow cell has no business making that choice, so
+# it stays in the configuration that describes the experiment.
+#
 # Every value here is recorded in the run's provenance exactly as if it had been
 # written out longhand, so naming a preset costs nothing in reproducibility.
 
@@ -47,12 +53,3 @@ qc:
   minimum_query_coverage: 0.95
   minimum_reference_coverage: 0.95
   length_tolerance: 10
-
-chimera:
-  enabled: true
-  window: 90
-  step: 45
-  write_pcr_origin: false
-  # A read belonging to a chimeric clone stops also feeding a parent design's
-  # consensus: the molecule is counted once, as itself. Reads are never discarded.
-  exclude_reads: written

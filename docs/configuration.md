@@ -82,7 +82,7 @@ merged result is what is validated, digested and recorded in the run, so two run
 naming the same preset are exactly as reproducible as two spelling it out.
 
 `configs/runs/260608_full_length_short.yaml` is the shipped 260608 run written this
-way: **222 lines to 105**, resolving to identical settings.
+way: **222 lines to 117**, resolving to identical settings.
 
 ## Main sections
 

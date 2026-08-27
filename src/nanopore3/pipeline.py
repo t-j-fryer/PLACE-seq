@@ -55,6 +55,7 @@ from .demux import (
     prepare_barcode_panel,
     validate_barcodes,
 )
+from .errors import Nanopore3Error
 from .export import normalized_well, safe_name, write_consensus_tree
 from .flanks import Flanks, from_assembled, from_sequences, from_template
 from .fragments import FragmentLibrary
@@ -98,7 +99,7 @@ CODING_STOP_ANCHOR = 24
 CODING_ANCHOR_EDITS = 3
 
 
-class PipelineError(RuntimeError):
+class PipelineError(Nanopore3Error, RuntimeError):
     """A user-actionable workflow failure."""
 
 
@@ -496,6 +497,20 @@ def _duration(seconds: float) -> str:
     return f"{hours}h{minutes:02d}m"
 
 
+def resolved_jobs(config: PipelineConfig) -> int:
+    """The worker count this machine will actually use.
+
+    ``parallel.jobs: 0`` means "whatever this machine has", so one configuration
+    runs sensibly on a workstation and on a two-core hosted notebook. Resolved in
+    one place because it was resolved in two: preflight reported the plan from the
+    raw value and raised on 0, so the feature failed before the run began.
+    """
+
+    if config.parallel.backend == "serial":
+        return 1
+    return config.parallel.jobs or (os.cpu_count() or 1)
+
+
 def _report_stage_counts(stage_name: str, counts: Mapping[str, int], success: str) -> None:
     """Log a stage's outcome breakdown, loudly when nothing succeeded.
 
@@ -721,7 +736,7 @@ def validate_inputs(
             for library_id, bundle in reference_collection.libraries
         },
         "resources": asdict(
-            plan_resources(config.parallel.jobs, config.parallel.threads_per_job)
+            plan_resources(resolved_jobs(config), config.parallel.threads_per_job)
         ),
     }
 
@@ -1570,14 +1585,7 @@ def run_pipeline(
         atomic_write_json(metadata_path, run_metadata)
 
     input_digests = {item["sample_id"]: item["sha256"] for item in preflight["inputs"]}
-    requested_jobs = (
-        1
-        if config.parallel.backend == "serial"
-        # 0 means "whatever this machine has", so one config runs sensibly on a
-        # workstation and on a two-core hosted notebook.
-        else (config.parallel.jobs or (os.cpu_count() or 1))
-    )
-    resources = plan_resources(requested_jobs, config.parallel.threads_per_job)
+    resources = plan_resources(resolved_jobs(config), config.parallel.threads_per_job)
 
     ingest_parameters = {"schema": 1}
     ingest_fp = _stage_fingerprint("01_ingest", ingest_parameters, input_digests)

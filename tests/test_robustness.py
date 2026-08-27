@@ -223,3 +223,174 @@ class NothingRecoveredTests(unittest.TestCase):
         with self.assertLogs(logging.getLogger("nanopore3"), level="WARNING") as caught:
             _report_stage_counts("03_assignment", {}, "assigned_unique")
         self.assertIn("no reads reached", "\n".join(caught.output))
+
+
+class ResolvedJobsTests(unittest.TestCase):
+    """`jobs: 0` must survive preflight, not only the stage that uses it.
+
+    It was resolved in two places: the run used the detected CPU count, and
+    preflight reported the plan from the raw value and raised on 0. The feature
+    passed its unit test and failed before the run began.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "reads.fastq").write_text("@a\nACGT\n+\n####\n", encoding="ascii")
+        (self.root / "r.fasta").write_text(">r1\n" + "ACGT" * 8 + "\n", encoding="ascii")
+
+    def config(self, jobs: int, backend: str) -> Path:
+        body = {
+            "schema_version": 1,
+            "run_name": "t",
+            "output_root": str(self.root / "runs"),
+            "inputs": [{"path": str(self.root / "reads.fastq"), "sample_id": "s"}],
+            "references": {"fasta": str(self.root / "r.fasta")},
+            "library": {
+                "name": "x",
+                "forward_motif": "ACGTACGTACGTACGTACGT",
+                "reverse_motif": "TGCATGCATGCATGCATGCA",
+            },
+            "parallel": {"jobs": jobs, "backend": backend},
+        }
+        path = self.root / f"c_{jobs}_{backend}.yaml"
+        path.write_text(yaml.safe_dump(body), encoding="utf-8")
+        return path
+
+    def test_preflight_accepts_zero_jobs(self) -> None:
+        # The whole point: this is what failed, while the unit test passed.
+        report = validate_inputs(load_config(self.config(0, "process")), scan_fastq=False)
+        self.assertGreaterEqual(report["resources"]["jobs"], 1)
+
+    def test_zero_jobs_resolves_to_the_machine_for_every_parallel_backend(self) -> None:
+        from nanopore3.pipeline import resolved_jobs
+
+        for backend in ("auto", "thread", "process"):
+            self.assertEqual(
+                resolved_jobs(load_config(self.config(0, backend))),
+                os.cpu_count() or 1,
+                backend,
+            )
+
+    def test_serial_is_one_worker_whatever_jobs_says(self) -> None:
+        from nanopore3.pipeline import resolved_jobs
+
+        for jobs in (0, 1, 8):
+            self.assertEqual(resolved_jobs(load_config(self.config(jobs, "serial"))), 1)
+
+    def test_an_explicit_count_is_respected(self) -> None:
+        from nanopore3.pipeline import resolved_jobs
+
+        self.assertEqual(resolved_jobs(load_config(self.config(3, "process"))), 3)
+
+
+class UnknownIsNotZeroTests(unittest.TestCase):
+    """A missing measurement must not be reported as a measurement of zero.
+
+    `designed_allele_fraction` answers "is the designed sequence still in this
+    well". A run recorded before the read fractions existed has the position but
+    not its shares, and 0.0 there says "the design is gone" - the opposite
+    conclusion, drawn from absent data.
+    """
+
+    REFERENCE = "ATG" + "AAACCCGGGTTTTGGCATGAC" + "TAA"
+
+    def test_no_recorded_shares_reports_unknown(self) -> None:
+        from nanopore3.qc import classify_mixed_positions, designed_allele_fraction
+
+        positions = classify_mixed_positions(((9, "G", "GT"),), self.REFERENCE)
+        self.assertIsNone(positions[0].designed_fraction)
+        self.assertIsNone(designed_allele_fraction(positions))
+
+    def test_the_design_being_absent_still_reports_zero(self) -> None:
+        from nanopore3.qc import classify_mixed_positions
+
+        # Neither allele is the designed base: measured, and it is gone.
+        positions = classify_mixed_positions(
+            ((9, "G", "AT", (0.55, 0.45)),), self.REFERENCE
+        )
+        self.assertEqual(positions[0].designed_fraction, 0.0)
+
+    def test_one_unknown_position_makes_the_clone_unknown(self) -> None:
+        from nanopore3.qc import classify_mixed_positions, designed_allele_fraction
+
+        positions = classify_mixed_positions(
+            ((9, "G", "GT", (0.62, 0.38)), (12, "T", "CT")), self.REFERENCE
+        )
+        # Not 0.62: a confident number from partial data is worse than none.
+        self.assertIsNone(designed_allele_fraction(positions))
+
+    def test_an_old_consensus_column_still_parses(self) -> None:
+        from nanopore3.pipeline import parse_mixed_alleles
+
+        self.assertEqual(parse_mixed_alleles("12:G>GT"), ((12, "G", "GT", ()),))
+
+
+class ErrorPresentationTests(unittest.TestCase):
+    """Every error meant for a person must reach them as a sentence.
+
+    The command line caught a hand-written tuple of exception types, so anything
+    not on the list arrived as a traceback. Two did: an unknown `rerun --from`
+    stage, and choosing a consensus backend whose native tools are absent. Both had
+    good messages; both were presented as a crash.
+    """
+
+    def test_every_user_facing_error_shares_one_base(self) -> None:
+        from nanopore3.barcodes import BarcodeRegistryError
+        from nanopore3.config import ConfigError
+        from nanopore3.consensus import (
+            ConsensusBackendError,
+            ConsensusBackendUnavailable,
+        )
+        from nanopore3.deconvolution import DeconvolutionError
+        from nanopore3.demux import BarcodeValidationError
+        from nanopore3.errors import Nanopore3Error
+        from nanopore3.flanks import FlankError
+        from nanopore3.fragments import FragmentError
+        from nanopore3.io import FastqFormatError
+        from nanopore3.layout import LayoutError
+        from nanopore3.pipeline import PipelineError
+        from nanopore3.provenance import ProvenanceError
+        from nanopore3.references import FastaFormatError
+        from nanopore3.rerun import RerunError
+        from nanopore3.sequence import SequenceValidationError
+
+        for error in (
+            BarcodeRegistryError, BarcodeValidationError, ConfigError,
+            ConsensusBackendError, ConsensusBackendUnavailable, DeconvolutionError,
+            FastaFormatError, FastqFormatError, FlankError, FragmentError,
+            LayoutError, PipelineError, ProvenanceError, RerunError,
+            SequenceValidationError,
+        ):
+            self.assertTrue(
+                issubclass(error, Nanopore3Error), f"{error.__name__} is not caught"
+            )
+
+    def test_the_natural_bases_are_preserved(self) -> None:
+        # Existing `except ValueError` handlers, in this package and in callers,
+        # must keep working.
+        from nanopore3.config import ConfigError
+        from nanopore3.flanks import FlankError
+        from nanopore3.rerun import RerunError
+
+        for error in (ConfigError, FlankError, RerunError):
+            self.assertTrue(issubclass(error, ValueError), error.__name__)
+
+    def test_the_cli_catches_the_base_not_a_list(self) -> None:
+        import inspect
+
+        from nanopore3 import cli
+
+        source = inspect.getsource(cli.main)
+        self.assertIn("Nanopore3Error", source)
+        # The old tuple is what let two error classes through.
+        self.assertNotIn("except (ConfigError, PipelineError, OSError, ValueError)", source)
+
+    def test_an_unknown_rerun_stage_lists_the_real_ones(self) -> None:
+        from nanopore3.errors import Nanopore3Error
+        from nanopore3.rerun import stages_before
+
+        with self.assertRaises(Nanopore3Error) as caught:
+            stages_before("04_consensuss")
+        self.assertIn("04_consensus", str(caught.exception))

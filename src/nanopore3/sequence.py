@@ -11,6 +11,8 @@ import re
 from collections.abc import Iterator
 from functools import lru_cache
 
+from .errors import Nanopore3Error
+
 IUPAC_DNA_BASES = frozenset("ACGTRYSWKMBDHVN")
 
 # Anything outside the unambiguous alphabet separates canonical k-mer runs.
@@ -55,7 +57,7 @@ _COMPLEMENT = str.maketrans(
 )
 
 
-class SequenceValidationError(ValueError):
+class SequenceValidationError(Nanopore3Error, ValueError):
     """Raised when a sequence contains unsupported symbols."""
 
 

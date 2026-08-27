@@ -11,10 +11,11 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import Nanopore3Error
 from .provenance import sha256_file
 
 
-class BarcodeRegistryError(ValueError):
+class BarcodeRegistryError(Nanopore3Error, ValueError):
     """A malformed registry or unsafe family selection."""
 
 

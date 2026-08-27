@@ -25,6 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import Nanopore3Error
 from .sequence import normalize_sequence
 
 BSAI_FORWARD = "GGTCTC"
@@ -34,7 +35,7 @@ _BSAI_SPACER = 1
 OVERHANG_LENGTH = 4
 
 
-class FragmentError(ValueError):
+class FragmentError(Nanopore3Error, ValueError):
     """A fragment table could not be parsed or did not reconstruct its gene."""
 
 

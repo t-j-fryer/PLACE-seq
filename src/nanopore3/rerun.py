@@ -31,6 +31,7 @@ import os
 import shutil
 from pathlib import Path
 
+from .errors import Nanopore3Error
 from .provenance import StageValidationError, validate_stage_directory
 
 # Every stage, in the order they run. A rerun from a stage recomputes it and all
@@ -50,7 +51,7 @@ STAGE_ORDER = (
 INPUT_CONSUMING_STAGES = ("01_ingest", "02_demux")
 
 
-class RerunError(RuntimeError):
+class RerunError(Nanopore3Error, ValueError):
     """The source run cannot serve as a basis for this rerun."""
 
 

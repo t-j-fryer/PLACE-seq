@@ -8,6 +8,7 @@ from typing import Literal
 
 import edlib
 
+from .errors import Nanopore3Error
 from .sequence import edlib_iupac_equalities, normalize_sequence, reverse_complement
 
 BarcodeStatus = Literal["assigned", "ambiguous", "unassigned", "conflicting"]
@@ -15,7 +16,7 @@ ReadOrientation = Literal["forward", "reverse", "unknown"]
 ReadEnd = Literal["head", "tail"]
 
 
-class BarcodeValidationError(ValueError):
+class BarcodeValidationError(Nanopore3Error, ValueError):
     """Raised when a barcode panel is invalid or not safely distinguishable."""
 
 

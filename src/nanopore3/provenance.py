@@ -23,13 +23,15 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .errors import Nanopore3Error
+
 MANIFEST_NAME = "manifest.json"
 SUCCESS_NAME = "_SUCCESS"
 STAGE_SCHEMA_VERSION = 1
 _SAFE_STAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
-class ProvenanceError(RuntimeError):
+class ProvenanceError(Nanopore3Error, RuntimeError):
     """Base error for an invalid or unsafe provenance operation."""
 
 

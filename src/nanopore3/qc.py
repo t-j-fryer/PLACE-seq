@@ -195,7 +195,7 @@ class MixedPosition:
     fractions: tuple[float, ...] = ()
 
     @property
-    def designed_fraction(self) -> float:
+    def designed_fraction(self) -> float | None:
         """Share of reads still carrying the designed base at this position.
 
         The question screening asks is not "is this clone clean" but "is the
@@ -203,8 +203,15 @@ class MixedPosition:
         variant and 40% the design still contains the design, and a plate picked
         from it can still yield the intended protein - which is a different
         decision from a well where the design is absent.
+
+        ``None`` means *unknown*, not zero: a run recorded before the read
+        fractions existed has the position but not its shares, and reporting 0.0
+        there would say "the designed sequence is gone from this well" - the
+        opposite conclusion, from missing data rather than from evidence.
         """
 
+        if not self.fractions:
+            return None
         for allele, fraction in zip(self.alleles, self.fractions, strict=False):
             if allele == self.reference_base:
                 return fraction
@@ -275,14 +282,21 @@ def classify_mixed_positions(
 def designed_allele_fraction(positions: Sequence[MixedPosition]) -> float | None:
     """The worst share of the designed base across a clone's mixed positions.
 
-    ``None`` when the clone has no mixed position.  A clone is only as recoverable
-    as its weakest position: if the design is absent at any one of them, no cell in
-    the well carries the intended sequence end to end.
+    ``None`` when the clone has no mixed position, or when any position's shares
+    were not recorded - an unknown anywhere makes the minimum unknown, and a
+    confident-looking number built from partial data is worse than none.
+
+    A clone is only as recoverable as its weakest position: if the design is absent
+    at any one of them, no cell in the well carries the intended sequence end to
+    end.
     """
 
     if not positions:
         return None
-    return min(p.designed_fraction for p in positions)
+    shares = [p.designed_fraction for p in positions]
+    if any(share is None for share in shares):
+        return None
+    return min(share for share in shares if share is not None)
 
 
 def worst_protein_effect(positions: Sequence[MixedPosition]) -> str:

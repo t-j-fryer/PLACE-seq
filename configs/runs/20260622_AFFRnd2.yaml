@@ -1,0 +1,103 @@
+# AFF Round 2. Expression-cassette amplicons, so the references are the designed
+# inserts as ordered and no constant regions are reconstructed: no `flanks` block,
+# and acceptance floors are already measured over the designed sequence.
+#
+# One culture plate per colony-PCR barcode, so a well coordinate identifies a well
+# and `compressed_pcr` stays off. Nothing to deconvolve.
+#
+# The flow cell carries other experiments: RP03 is roughly half the reads, with
+# RP01, RP02, RP08, RP09 and RP11 also present. They are deliberately absent from
+# plate_reference_map, so their reads are counted as `unmapped_reference_library`
+# rather than being forced onto a library they did not come from.
+#
+#   export NANOPORE_RAW=/path/to/sequencing/data
+
+schema_version: 1
+preset: ont-r10-amplicon
+run_name: 20260622_AFFRnd2
+output_root: ../../runs
+
+inputs:
+  - path: ${NANOPORE_RAW}/260617_CL_TF/CL_TF.fastq
+    sample_id: CL_TF
+
+reference_libraries:
+  sumo_ab:
+    fasta: ../../runs/refs_260608/sumo_ab.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+  lab:
+    fasta: ../../runs/refs_260608/lab.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+
+plate_reference_map:
+  RP04: sumo_ab
+  RP05: sumo_ab
+  RP06: lab
+  RP07: lab
+
+library:
+  name: rp-amplicon-insert
+  # Unchanged from the 260608 insert run: the same primers bound the same cassette.
+  forward_motif: TAAGAAGGAGAGCAGCTATGCAGCTT
+  reverse_motif: TCCGAAACACCAGGCACGTC
+  # Measured on the first 200,000 reads of this file: p1 214, median 985, p95
+  # 1789, p99 2351. This window keeps 96.9%.
+  minimum_read_length: 500
+  maximum_read_length: 3000
+
+barcodes:
+  plate:
+    registry_csv: ../barcodes/reverse_primer_families.csv
+    family_id: rp_amplicon
+    trim_bases: 12
+    max_edits: 6
+    search_window: 400
+    search_ends: [head, tail]
+    allow_reverse_complement: true
+    minimum_margin: 0
+    decision_policy: legacy_unique_threshold
+  well:
+    registry_csv: ../barcodes/well_forward_primers_a1_h12.csv
+    family_id: well_forward_full
+    trim_bases: 12
+    max_edits: 7
+    search_window: 400
+    search_ends: [head]
+    allow_reverse_complement: false
+    minimum_margin: 0
+    decision_policy: legacy_unique_best
+
+parallel:
+  jobs: 8
+
+random_seed: 141142
+
+qc:
+  # Insert mode: the constant regions are assembled around the consensus to check
+  # frame and internal stops. upstream_constant begins at the start codon.
+  upstream_constant: ATGCAGCTT
+  downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA
+
+# These libraries are Golden Gate assemblies from a pool, so a chimeric molecule is
+# possible and is a real clone in a real well. Not supplied by the preset: whether
+# chimeras can occur is a property of how the library was built.
+chimera:
+  enabled: true
+  window: 90
+  step: 45
+  write_pcr_origin: false
+  exclude_reads: written

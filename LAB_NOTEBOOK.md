@@ -15,6 +15,69 @@ Conventions:
 
 ---
 
+## 2026-08-27 (fifth) — 20260622_AFFRnd2: a new run, insert mode, four barcodes
+
+First run of a new sequencing set. `runs/20260622_AFFRnd2`, 17.4 min for a 9.24 GB
+input (4.08 M reads). Config: `configs/runs/20260622_AFFRnd2.yaml`, 88 lines.
+
+Expression-cassette amplicons, so insert mode: references are the designed inserts
+as ordered, no `flanks`, acceptance floors already measured over the designed
+sequence. One culture plate per colony-PCR barcode, so `compressed_pcr` is off.
+Motifs, barcode settings and QC constants carry over from the 260608 insert run;
+the 500-3000 nt window was re-checked against this file (p1 214, median 985, p95
+1789 - it keeps 96.9%).
+
+### Result
+
+| barcode | library | reads | wells | usable clones | perfect | well yield |
+|---|---|---|---|---|---|---|
+| RP04 | sumo_ab | 91,551 | 96 | 84 | 84 | 88% |
+| RP05 | sumo_ab | 131,395 | 95 | 87 | 84 | 91% |
+| RP06 | lab | 152,266 | 96 | 101 | 101 | **97%** |
+| RP07 | lab | 25,228 | 81 | 15 | 12 | **16%** |
+
+**287 usable clones, 281 of them exact.** 60 distinct SUMO designs of 684 and 38
+LAB of 332, which is what ~380 picks over a 1,016-design library gives.
+
+### Two things worth knowing
+
+**RP04 carries only `A_` blocks and RP05 only `B_` blocks.** The two SUMO barcodes
+are the two encodings, not two plates of the combined set. Nothing needed changing -
+`sumo_ab` contains both and each read resolved to its own half - but it means the
+run is an A-versus-B comparison, not a replicate pair.
+
+**RP07 is under-sequenced, not failed.** 25,228 reads is 0.7% of the flow cell
+against RP06's 4.4%, and its yield falls with depth exactly as that predicts: 81
+wells reached, 15 clones. Nothing about the barcode or the references is wrong. If
+those wells matter, they need re-sequencing rather than re-analysis.
+
+### A counter that reads alarmingly and should not
+
+The consensus stage reports **`low_depth` 2,871 against `consensus_pass` 287**, and
+QC `not_evaluable` 2,871. That is not 90% failure. Each well produces one
+well-supported group and a tail of one- and two-read groups from reads that scatter
+onto near neighbours, and every member of the tail is correctly graded `low_depth`:
+
+    RP06 C10: 1,037 reads across 13 designs -> 1018, 4, 4, 2, 1, 1, 1, 1, 1, 1, 1, 1
+
+Median reads on a well's top design: **562**. 279 of 368 wells have a top design
+above the depth floor. The 90% is the noise tail being counted, not clones being
+lost.
+
+**This is a reporting defect, not a pipeline one, and it will mislead every new
+user.** The summary counts groups; a person reads it as wells. Recorded here rather
+than fixed mid-run.
+
+### The flow cell is shared
+
+RP03 is **57.3%** of reads and is not part of this experiment; RP08, RP09, RP01 and
+RP02 are also present. They are deliberately absent from `plate_reference_map`, so
+assignment counted 2,059,292 reads as `unmapped_reference_library` rather than
+forcing them onto a library they did not come from. The four barcodes of interest
+are 11.4% of the flow cell.
+
+---
+
 ## 2026-08-27 (fourth) — End-to-end coverage of every command, and mutation testing it
 
 No scientific change. Closes the gap the previous entry identified rather than

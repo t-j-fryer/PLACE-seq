@@ -754,14 +754,26 @@ class PipelineConfig:
     def reference_library_id_for_plate(self, plate_barcode_id: str) -> str:
         """Resolve a plate barcode to its configured reference-library ID.
 
-        A single reference set is an unambiguous fallback.  Configurations with
-        multiple sets must map every plate encountered by the pipeline.
+        A single reference set is an unambiguous fallback **only when no map was
+        given**.  Once ``plate_reference_map`` is non-empty it is a statement about
+        which barcodes belong to this analysis, and a barcode absent from it is
+        absent on purpose - a flow cell usually carries other experiments.
+
+        Falling back for an unlisted plate whenever there happened to be one
+        library made an explicit one-barcode map silently analyse eight: a run
+        configured for RP04 assigned RP08, RP01, RP02, RP03 and RP05 to the same
+        library, which is 42% of the reads it reported on.
         """
 
         plate_id = _nonempty_string(plate_barcode_id, "plate barcode identifier")
         mapped = self.plate_reference_map.get(plate_id)
         if mapped is not None:
             return mapped
+        if self.plate_reference_map:
+            raise KeyError(
+                f"plate barcode {plate_id!r} is not in plate_reference_map, so it is "
+                "not part of this analysis"
+            )
         reference_sets = self.reference_sets
         if len(reference_sets) == 1:
             return next(iter(reference_sets))

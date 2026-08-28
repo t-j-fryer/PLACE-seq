@@ -15,6 +15,78 @@ Conventions:
 
 ---
 
+## 2026-08-28 — An explicit plate map was being treated as a hint
+
+**Scientific change**: it alters which reads a run reports on. Found while setting
+up an RP04-only analysis of the 260608 flow cell.
+
+### The defect
+
+`reference_library_id_for_plate` fell back to the sole reference library whenever a
+plate barcode was absent from `plate_reference_map`, and did so **even when a map
+had been given**. The docstring called this "an unambiguous fallback", which it is
+when no map exists - a one-library run should not have to write one. It is not
+unambiguous when the user has written a map and left a barcode out of it.
+
+A configuration saying exactly this:
+
+    reference_libraries:
+      opTF001: ...
+    plate_reference_map:
+      RP04: opTF001
+
+analysed **eight barcodes**:
+
+| plate | assigned reads | |
+|---|---|---|
+| RP04 | 352,030 | intended |
+| RP08 | 176,616 | |
+| RP01, RP02, RP03 | ~73,500 | |
+| RP05, RP09, RP10 | ~3,800 | |
+
+**42% of the reads the run reported on were not RP04.** The flow cell carries six
+other experiments, and every one of them was assigned to opTF001 and graded against
+it.
+
+The tell was `unknown_pcr_plate` on 254,490 assigned reads - reads reaching
+deconvolution from barcodes with no entry in the pooling layout. There is no way for
+that to happen if only RP04 is being analysed.
+
+### Why it had never been seen
+
+It keys off there being exactly **one** reference library. Every run in this
+notebook until now had two or more, so an unmapped barcode correctly became
+`unmapped_reference_library`: v9b maps four barcodes of two libraries and leaves the
+rest alone, and AFFRnd2 leaves RP03 - 57% of its flow cell - correctly unanalysed.
+The first single-library configuration written was the first to hit it.
+
+### The fix
+
+A non-empty `plate_reference_map` is now authoritative, whatever the library count:
+a barcode absent from it raises *"not part of this analysis"*. The fallback survives
+only when no map was given at all, so a simple one-library run still needs none.
+
+Three tests, including one asserting the rule no longer keys off library count,
+which is the property that hid it.
+
+### And a mistake in my own reading of the results
+
+I first reported "median 56 clones per well against an expected 10". That number
+came from counting per `well_id` alone, collapsing eight barcodes onto 96 well
+labels. Grouping is by (plate, well) everywhere in the pipeline and my analysis
+should have matched it. Two errors compounding - a real routing bug and a wrong
+aggregation - produced a number that looked like a biological finding.
+
+### Lesson
+
+**A fallback should never override an explicit statement.** The rule was written for
+the case where the user said nothing, and it kept applying when the user had said
+something specific. "Absent from a map that exists" and "no map exists" are
+different inputs and needed different behaviour; conflating them turned a
+one-barcode analysis into an eight-barcode one without a word.
+
+---
+
 ## 2026-08-27 (seventh) — AFFRnd2 re-run clean, figures rebuilt
 
 Housekeeping after the occupancy fix; no scientific change.

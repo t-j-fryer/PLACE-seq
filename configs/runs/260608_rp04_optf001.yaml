@@ -1,0 +1,144 @@
+# RP04 only, reusing the demultiplexing already done in 260608-full-length-v9b.
+#
+# RP04 was never mapped in that run, so its 679,953 reads were counted as
+# `unmapped_reference_library` and never assigned. This maps it and recomputes from
+# assignment onward; ingest and demux are inherited, so the 9.2 GB input is not read
+# again.
+#
+# RP04 carries opTF001, confirmed against the reads rather than assumed: with the
+# pipeline's own matcher, 310 of 400 sampled RP04 reads assigned to opTF001 at
+# median identity 1.000, and 1 read to any other library.
+#
+# opTF001 sits in the same construct as RP08, so it takes the same constant regions
+# and the same primer motifs - the library block below is RP08's with the FASTA
+# swapped. Everything the demux stage reads is left exactly as v9b had it, because
+# changing any of it would make the inherited stage unusable.
+#
+#   export NANOPORE_RAW=/path/to/sequencing/data
+
+schema_version: 1
+run_name: 260608-RP04-opTF001
+output_root: ../../runs
+
+inputs:
+  - path: ${NANOPORE_RAW}/260608_SUMO_LAB_BS_FS_Ph/AI_DBTL.fastq
+    sample_id: AI_DBTL
+
+reference_libraries:
+  opTF001:
+    fasta: ../../runs/refs_260608/opTF001.fasta
+    kmer_sizes: [15, 11, 9]
+    max_kmer_owners: 10
+    candidate_count: 5
+    minimum_kmer_score: 2.0
+    minimum_identity: 0.80
+    minimum_query_coverage: 0.70
+    minimum_reference_coverage: 0.70
+    minimum_identity_margin: 0.02
+    flanks:
+      upstream: CATAATCCGCACGCATCTGGTCGATCCCGCGAAATTAATACGACTCACTATAGGGAGAGGAATTGTGAGCGGATAACAATTCCCCTCTAGAAATAATTTTGTTTAACTTTAAGAAGGAGAGCAGCTATGCAGCTT
+      downstream: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAATGACTCGAGTCTGGTAAAGAAACCGCTGCTGCGAAATTTGAACGCCAGCACATGGACTCGTCTACTAGCGCAGCTTAATTAACCTAGGCTGCTGCCACCGCTGAGCAATAACTAGCATAACCCCTTGGGGCCTCTAAACGGGTCTTGAGGGGTTTTTTGCTGAAAGGAGGAACTATATCCGGATTGGCGAATGGGACGC
+      anchor_length: 20
+
+plate_reference_map:
+  RP04: opTF001
+
+library:
+  name: rp-amplicon-full-length
+  forward_motif: CATAATCCGCACGCATCTGG
+  reverse_motif: CGGATTGGCGAATGGGACGC
+  motif_max_edits: 3
+  minimum_read_length: 500
+  maximum_read_length: 3000
+  minimum_mean_quality: 10
+  allow_empty_reads: true
+
+barcodes:
+  plate:
+    registry_csv: ../barcodes/reverse_primer_families.csv
+    family_id: rp_amplicon
+    trim_bases: 12
+    max_edits: 6
+    search_window: 400
+    search_ends: [head, tail]
+    allow_reverse_complement: True
+    minimum_margin: 0
+    decision_policy: legacy_unique_threshold
+  well:
+    registry_csv: ../barcodes/well_forward_primers_a1_h12.csv
+    family_id: well_forward_full
+    trim_bases: 12
+    max_edits: 7
+    search_window: 400
+    search_ends: [head]
+    allow_reverse_complement: False
+    minimum_margin: 0
+    decision_policy: legacy_unique_best
+
+parallel:
+  backend: process
+  jobs: 8
+  threads_per_job: 1
+  chunk_reads: 1000
+
+random_seed: 141142
+
+consensus:
+  backend: portable
+  minimum_depth: 6
+  maximum_reads: 300
+  minimum_support: 0.6
+  minimum_base_quality: 10
+  significance: 0.05
+  minimum_minor_fraction: 0.2
+
+qc:
+  minimum_identity: 0.98
+  minimum_query_coverage: 0.95
+  minimum_reference_coverage: 0.95
+  length_tolerance: 10
+  upstream_constant: ATGCAGCTT
+  downstream_constant: AGTGGATCCGAAACACCAGGCACGTCGGAAAGCGCTACCCCTGAATCAGTGTTTACCTTGGAGGACTTTGTGGGTGACTGGGAGCAGACCGCTGCCTACAATCTGGACCAGGTACTGGAACAAGGTGGTGTCTCATCACTTTTGCAGAACTTAGCAGTATCAGTTACTCCTATTCAACGTATTGTTCGGTCCGGTGAGAATGCTTTGAAAATTGACATTCACGTCATTATTCCGTATGAGGGGCTGTCTGCAGACCAGATGGCGCAAATCGAGGAAGTATTCAAAGTTGTATACCCGGTTGACGATCACCACTTTAAGGTCATTTTACCGTATGGGACCTTGGTAATTGACGGGGTAACGCCGAATATGCTTAACTATTTCGGTCGCCCGTATGAAGGCATCGCTGTCTTTGACGGCAAAAAAATTACTGTCACCGGCACCCTCTGGAATGGGAACAAGATCATTGATGAACGCCTGATTACTCCGGATGGCTCAATGCTCTTTCGCGTGACCATCAACAGCTCGGGCGGATCCCATCACCACCACCATCACTAA
+
+# Same construct as RP08, so chimera detection is insert-scoped for the same reason:
+# most of every full-length reference is constant, and positional profiling only
+# discriminates where the references differ.
+chimera:
+  enabled: true
+  window: 90
+  step: 45
+  write_pcr_origin: false
+  exclude_reads: written
+
+# Compressed PCR: blocks 1-10 were grown as culture plates 1-10 and pooled into one
+# colony-PCR plate, so a well coordinate does not identify a source plate. The gene
+# does: opTF001's ten blocks map one-to-one onto the ten plates, so a design only
+# ever picked onto plate 7 came from plate 7.
+#
+# clonality is per_block because that mapping is one-to-one here: each well received
+# one colony from each of the ten pooled plates, and each plate holds exactly one
+# block, so ten distinct genes per well is derivable from the layout rather than
+# assumed. (RP05 and RP08 in the sibling config are `unspecified` because several
+# blocks shared a culture plate there, which breaks that equivalence.)
+#
+# The plate names are labels chosen here; they appear in the output tree as
+# <barcode>/<culture plate>/<well>/.
+compressed_pcr:
+  enabled: true
+  block_pattern: "^(Block_\\d+)_"
+  pcr_plates:
+    RP04: [opTF001_P1, opTF001_P2, opTF001_P3, opTF001_P4, opTF001_P5, opTF001_P6, opTF001_P7, opTF001_P8, opTF001_P9, opTF001_P10]
+  clonality:
+    RP04: per_block
+  blocks:
+    opTF001:
+      "Block_1": [opTF001_P1]
+      "Block_2": [opTF001_P2]
+      "Block_3": [opTF001_P3]
+      "Block_4": [opTF001_P4]
+      "Block_5": [opTF001_P5]
+      "Block_6": [opTF001_P6]
+      "Block_7": [opTF001_P7]
+      "Block_8": [opTF001_P8]
+      "Block_9": [opTF001_P9]
+      "Block_10": [opTF001_P10]

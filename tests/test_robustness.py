@@ -394,3 +394,59 @@ class ErrorPresentationTests(unittest.TestCase):
         with self.assertRaises(Nanopore3Error) as caught:
             stages_before("04_consensuss")
         self.assertIn("04_consensus", str(caught.exception))
+
+
+class PlateRoutingTests(unittest.TestCase):
+    """An explicit plate map says which barcodes belong to the analysis.
+
+    The fallback to a sole reference library used to apply even when a map was
+    given, so a configuration naming one barcode silently analysed every barcode on
+    the flow cell. On a real run that was eight barcodes and 42% of the reported
+    reads.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "reads.fastq").write_text("@a\nACGT\n+\n####\n", encoding="ascii")
+        (self.root / "r.fasta").write_text(">r1\n" + "ACGT" * 8 + "\n", encoding="ascii")
+
+    def config(self, plate_map: dict[str, str] | None) -> object:
+        body = {
+            "schema_version": 1,
+            "run_name": "t",
+            "output_root": str(self.root / "runs"),
+            "inputs": [{"path": str(self.root / "reads.fastq"), "sample_id": "s"}],
+            "reference_libraries": {"only": {"fasta": str(self.root / "r.fasta")}},
+            "library": {
+                "name": "x",
+                "forward_motif": "ACGTACGTACGTACGTACGT",
+                "reverse_motif": "TGCATGCATGCATGCATGCA",
+            },
+        }
+        if plate_map is not None:
+            body["plate_reference_map"] = plate_map
+        path = self.root / "c.yaml"
+        path.write_text(yaml.safe_dump(body), encoding="utf-8")
+        return load_config(path)
+
+    def test_a_barcode_absent_from_an_explicit_map_is_not_analysed(self) -> None:
+        config = self.config({"RP04": "only"})
+        self.assertEqual(config.reference_library_id_for_plate("RP04"), "only")
+        with self.assertRaises(KeyError) as caught:
+            config.reference_library_id_for_plate("RP08")
+        self.assertIn("not part of this analysis", str(caught.exception))
+
+    def test_no_map_still_falls_back_to_a_sole_library(self) -> None:
+        # A simple one-library run should not have to write a map at all.
+        config = self.config(None)
+        self.assertEqual(config.reference_library_id_for_plate("anything"), "only")
+
+    def test_the_fallback_does_not_depend_on_library_count(self) -> None:
+        # The old rule keyed off "exactly one library", which is why the defect
+        # appeared only in single-library configurations.
+        config = self.config({"RP04": "only"})
+        self.assertEqual(len(config.reference_sets), 1)
+        with self.assertRaises(KeyError):
+            config.reference_library_id_for_plate("RP99")

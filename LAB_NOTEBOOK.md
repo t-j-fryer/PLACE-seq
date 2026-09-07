@@ -15,6 +15,382 @@ Conventions:
 
 ---
 
+
+## 2026-09-07 (publication) — GitHub update and migration guide
+
+The user requested publication of the completed repository/MCP work to GitHub
+with clear documentation. The origin is the existing private
+`t-j-fryer/nanopore3` repository, default branch `main`. Remote `main` was fetched
+and matched the local base (`5e3c5d7`). Publication is prepared on
+`codex/portable-mcp-and-interface-update` for pull-request CI before merging.
+Repository visibility is unchanged; no PyPI release or public MCP deployment is
+part of this update.
+
+Added `docs/updates/2026-09-07-portability-and-mcp.md` and linked it near the top
+of README. The guide covers installation, CLI/notebook/MCP entry points, all four
+fixes, maximum allocated parallelism, memory-estimate limits, legacy-run
+migration, private Colab access, and the benchmark/test evidence. Detailed
+configuration, MCP and assessment documents remain linked from it.
+
+Publication contains the reviewed code, tests, notebooks, documented example/run
+worker settings and synthetic benchmark evidence. No reads or generated run
+outputs are staged. The RP04 profile stages only `jobs: 8` to `jobs: 0`; its
+separate pre-existing clonality/explanatory edits remain local and unchanged.
+
+Pre-publication evidence is the 443-test pass recorded above, installed-wheel
+MCP smoke verification, and fresh lint/compile/diff checks. The GitHub pull
+request and its Actions checks record the hosted Linux/macOS/Windows and
+installed-wheel outcomes; do not infer those outcomes from this preparation
+entry. The existing CI matrix also runs the new notebook/interface regressions.
+
+---
+
+
+## 2026-09-07 (interfaces) — CLI, local Jupyter, Colab and MCP aligned
+
+**Interface/documentation changes; no scientific decision rules changed.** The
+user requested that every interface reflect the four preceding fixes. Maximum
+allocated process parallelism remains the default; positive consensus caps keep
+their previous values unless explicitly changed by the user.
+
+- CLI `run`, `rerun` and `subsample` help now explain source-compatible reuse,
+  zero consensus caps, effective CPU allocation, the estimated group-memory
+  guard and no-overwrite publication. `doctor` text/JSON includes default
+  resource settings and source identity. Preflight JSON additionally exposes
+  the configured/resolved `group_memory_limit_bytes` alongside its CPU plan.
+- The existing `notebooks/Nanopore3_Colab.ipynb` now supports local Jupyter on
+  Linux/macOS/Windows and Colab. Setup prefers a nearby checkout, accepts an
+  explicit wheel/pinned spec, and installs reporting/MCP together. The MCP cell
+  does not reinstall a moving branch. Every CLI call uses the kernel's Python
+  interpreter with checked subprocess argument lists; failures stop the cell.
+  Workspaces and run/config/staging paths are generated portably, and repeated
+  execution creates new outputs. Gzip filenames survive whole-file copying and
+  subsampling. Resource controls and zero-cap semantics are visible in the UI.
+  Source/reuse guidance is current. Exports retain linked report figures and
+  original YAML, with optional complete run backups; interrupted-run backup
+  guidance does not require a completed report. Drive mounting is standalone
+  so it can precede installation of a wheel stored on Drive.
+- MCP now exposes **13 tools**, adding `start_subsample` through the existing
+  subprocess job manager and safe CLI. Existing outputs/aliases and paths outside
+  the workspace are refused. `workspace_info.runtime` exposes resource/source
+  information; `run_summary` previews `analysis_implementation` and
+  `implementation_matches_current`. This preview is not checksum/config proof;
+  oversized metadata returns an explicitly truncated/unknown preview.
+  Tool descriptions, README, example YAMLs, configuration/MCP guides and the
+  executable MCP smoke client reflect the new contract.
+
+Validation: `.venv/bin/python -m pytest -q` — **443 passed in 39.87 s**;
+`python -m ruff check src scripts tests`, `python -m compileall -q src` and
+`git diff --check` passed. Four new notebook tests compile every code cell,
+exercise local-checkout installation selection without networking, simulate the
+standalone Drive mount, and execute the actual local notebook workflow including
+repeat runs, gzip staging, failure propagation, config creation and full backup.
+The first local notebook test exposed a macOS `/var` versus `/private/var` test
+assertion; resolving the temporary root corrected the assertion. No pipeline
+behavior was changed for that discrepancy. The enhanced real MCP session test
+covers subsampling, overwrite/path refusal, exposed budgets, compatible identity
+and readable legacy metadata with refused resume. Existing HTTP tests pass too.
+
+The wheel was rebuilt and installed into the separate temporary audit environment.
+From outside the checkout, the installed implementation identity matches source,
+and `scripts/mcp_smoke.py --workspace /private/tmp/nanopore3-interfaces-20260907
+--example` successfully discovers all 13 tools, subsamples, validates and completes
+all six stages. This remains a local macOS/Python 3.12 check: live Colab and remote
+Linux/Windows CI execution were not performed. No branch was pushed or service
+published; unpublished checkout changes require that checkout or its new wheel.
+
+---
+
+
+## 2026-09-07 (four fixes) — Safe publication, source-aware reuse and bounded grouping
+
+**Correctness and execution changes.** The user authorized all four priorities
+from the preceding review. Existing experimental inputs/runs and the user's RP04
+configuration edits were preserved. No scientific thresholds or positive-cap
+selection rules changed. Zero read caps now implement the already documented
+all-read behavior; previously they crashed or selected no chimera members.
+
+1. `cli._subsample` rejects existing outputs and input aliases, validates the
+   requested FASTQ prefix in a temporary sibling, flushes it and atomically
+   publishes with a no-clobber hard link. Malformed/truncated input, competing
+   writers and unsupported filesystems leave existing files intact. Windows
+   flushing uses a writable handle. Local APFS/ext4/NTFS work; use VM-local
+   storage for this operation when Colab Drive lacks hard links.
+2. Installed package Python/preset content now enters every stage fingerprint,
+   `run.json` and manifest runtime metadata. Relative paths and normalized
+   newlines give matching checkout/wheel identities without Git. Resume/rerun
+   refuse missing/different identities before reading raw data or inheriting
+   stages; manifests remain readable. Restart a resident interpreter after
+   source edits. Legacy runs need a fresh run from original inputs; do not forge
+   metadata to bypass this conservative compatibility policy.
+3. Zero consensus caps include every eligible read in pipeline selection,
+   portable/MAFFT-SPOA APIs and chimera membership. Contributor identities and
+   counts are tested, including identical capped-versus-unlimited chimera output
+   when both include the same reads.
+4. Effective CPU allocation considers host/process counts, affinity and visible
+   Linux cgroup v1/v2 quotas/cpusets, including ancestors. Both native threads
+   and workers are clamped; bounded threads reach MAFFT. Maximum allocation
+   remains the default. SQLite now stores read groups, chimera wells, claimed
+   IDs and output accumulators. Groups are processed one at a time with a
+   `parallel.group_memory_mb` estimate guard (default 512 MiB; further bounded by
+   one quarter of a visible cgroup memory limit). Oversized groups fail clearly
+   without discarding reads or publishing a partial stage. Cursors/databases are
+   cleaned up on success and failures, including suspended generators on Windows.
+   Storage errors become actionable CLI errors. This is not an RSS hard limit;
+   reference indexes, worker batches, native tools and reporting still need RAM.
+
+Validation: `.venv/bin/python -m pytest -q` — **439 passed in 35.90 s**;
+`python -m ruff check src scripts tests`, `python -m compileall -q src` and
+`git diff --check` passed. The 16 new cases in `tests/test_priority_fixes.py`
+cover destructive aliases/races, invalid FASTQ/gzip, stale identities, resident
+source edits, Linux allocation fixtures, disk grouping/order/cleanup, zero caps
+and explicit memory failures. Existing rerun/default tests now model the new
+identity/allocation contract; the MAFFT mock test also verifies zero cap.
+Focused new tests pass with warnings treated as errors. A full-suite `-W error`
+probe exposed a pre-existing unclosed test CSV handle in `test_export.py`; the
+normal required suite passes. No unrelated export implementation was changed.
+
+The rebuilt wheel installed successfully into the separate
+`/private/tmp/nanopore3-wheel-audit-20260907` environment, imported from its
+site-packages outside the checkout, and has exactly the checkout's source
+identity. A real MCP SDK stdio `scripts/mcp_smoke.py --workspace <clean-temp>
+--example` completed all six pipeline stages. An initial test workspace contained
+our own `matplotlib` cache directory, which shadowed the absent optional package
+as a namespace; repeating in a clean workspace passed. No dependency workaround
+or public service deployment was needed.
+
+Saved evidence: `docs/benchmarks/2026-09-07-priority-fixes.json` records three
+120,000-read trials at automatic **16 workers**: **7.365, 7.429, 7.584 s**,
+median **7.429 s**. All nine scientific artifacts match the archived serial
+benchmark after decompression; the seven-read example also matches a baseline
+saved before edits. This includes consensus table, contributor table, FASTA,
+summary counts and downstream QC. The historical auto-worker median was 6.981 s;
+the roughly 6.4% difference is unpaired and uses different monitoring methods,
+not a controlled attribution to SQLite. No new RSS claim: sandbox process-tree
+enumeration failed, so elapsed time used `subprocess.run`/`time.perf_counter`.
+Reproduction commands and artifact hashes are stored in that JSON. Temporary
+verification runs live under `/private/tmp/nanopore3-four-fixes`.
+
+Updated README, resource/reuse documentation, architecture, assessment and MCP
+troubleshooting/embedded guide. Remaining medium-priority work includes shared
+CLI/API run-ID validation, release environment locking and representative
+production profiling. Linux/Windows/Colab runtime execution was not performed
+locally; cross-platform cases are included in the existing CI matrix.
+
+---
+
+## 2026-09-07 (priority review) — Subsample can erase its own input
+
+Read-only code review and a temporary-fixture reproduction in response to the
+user asking which remaining cleanup is high priority. No implementation changed.
+
+`cli._subsample` opens its output with `wb` without guarding against an existing
+file or an alias of the input. Calling the CLI with the same temporary file for
+input and output reduced a valid 18-byte FASTQ to zero bytes and returned exit
+code 0. The reproduction created `@read\nACGT\n+\nIIII\n` under
+`TemporaryDirectory`, called `main(["subsample", "--input", str(path), "--output",
+str(path), "--reads", "1"])`, then inspected the exit code and file size.
+No experimental input was used or modified.
+
+This is the first cleanup priority: guard existing outputs and input aliases,
+including symlink/hard-link identities, and avoid leaving partial published files
+after parse failures. Follow with implementation-aware stage reuse, repair of
+the accepted zero consensus cap, and allocation-aware CPU/global memory control.
+Large-module refactoring has less urgency than these concrete correctness and
+reliability issues. The assessment now records the data-loss finding explicitly.
+
+---
+
+## 2026-09-07 (latest) — Maximum detected parallelism is the default
+
+**Execution defaults and a worker-initialization fix; no change to scientific
+decision rules.** The user explicitly requested maximum parallelism by default
+after reviewing the expanded worker sweep.
+
+`ParallelSettings` and its YAML parser now default to `backend: process`,
+`jobs: 0`, `threads_per_job: 1`. The preset declares the same policy. Both shipped
+examples and every tracked run profile now use automatic CPU detection instead
+of their previous two/eight-worker caps. Explicit user-selected positive caps
+and serial execution remain supported. On this machine, the default resolves
+to 16 workers. MCP keeps one concurrent pipeline run by default; each run uses
+the configuration's worker budget.
+
+The process backend now selects the already-prepared local assignment callable
+when the resolved worker budget is one. Previously it selected a worker-global
+callable without running its initializer, causing `KeyError: 'config'`. This fix
+is necessary for the automatic default on a one-CPU machine. No shared worker
+globals are introduced into local/thread execution.
+
+`tests/test_parallel_defaults.py` first reproduced all three old failures:
+omitted settings did not select maximum process parallelism, the shipped example
+did not use it, and one-worker process assignment crashed. After the change,
+fresh-interpreter runs on a simulated one-CPU host with requested worker counts
+0, 1 and 8 all match serial demux/assignment tables, consensus FASTA and QC tables.
+The existing multiworker determinism tests also pass.
+
+Validation: `python -m pytest -q` — **423 passed in 37.80 s**;
+`python -m ruff check src scripts tests` and `python -m compileall -q src` passed.
+The existing RP04 edits to clonality and its explanatory text were preserved;
+only its `parallel.jobs` line was changed in this turn. No old run was resumed
+or overwritten. Documentation distinguishes the new defaults from the preserved
+historical eight-worker settings and pre-fix benchmark failures.
+
+---
+
+## 2026-09-07 (later) — Four workers was not a scaling assessment
+
+**Benchmark and documentation changes only; no scientific code or production
+configuration changes.** The user correctly challenged the earlier assessment:
+testing four processes demonstrated a speedup but did not test the eight-worker
+production profiles, maximum parallelism, or the best worker count. The initial
+12k fixture had only 12 demux chunks, insufficient to occupy 16 workers at once.
+
+The production profiles currently request eight processes. `jobs: 0` detects all
+16 CPUs here; MCP's one-active-job default limits simultaneous *runs*, not the
+workers within one run. More workers affect demux and assignment; consensus,
+QC and reporting are not all parallelized by that setting.
+
+### Expanded evidence
+
+```bash
+python scripts/benchmark_portable.py \
+  --output runs/parallel-sweep-20260907-complete --reads 120000 --repeats 3 \
+  --process-jobs 1 2 4 8 12 16 0
+```
+
+Three trials per mode, ten times the synthetic input, seeded shuffled order.
+Median full-run times: serial **27.209 s**; four threads **29.022 s**; 2/4/8/12/16
+processes **16.227 / 10.153 / 7.719 / 7.024 / 6.937 s**. Automatic detection
+resolved to 16 and took **6.981 s**. All four compared artifacts matched across
+24 successful trials. Sixteen was 10% shorter than eight but used 59% more
+summed peak RSS (1,105 versus 695 MiB). Twelve and 16 have overlapping timing
+ranges; this is not evidence of a universally optimal worker count.
+
+Evidence: `docs/benchmarks/2026-09-07-parallel-sweep.json`, including analysis
+source hashes and raw trials. Generated outputs remain under
+`runs/parallel-sweep-20260907-complete/`. The original smaller comparison stays
+in the record and is now explicitly qualified in the assessment.
+
+### A defect exposed by the missing worker-count coverage
+
+`backend: process` with one resolved worker fails in a fresh CLI process:
+`_ordered_map` bypasses the initializer for its serial shortcut, while assignment
+still dispatches `_assign_batch_worker`, which reads unset worker globals.
+All three trials failed with `KeyError: 'config'`. A single-CPU host can hit the
+same path even when its configuration requests more workers. Until a focused
+core fix is tested, use `backend: serial` for a one-worker run.
+
+The first expanded attempt stopped at this failure and remains under
+`runs/parallel-sweep-20260907/`. The benchmark was then changed to preserve
+incremental trial records, record failed modes and complete the rest. The full
+sweep exits nonzero intentionally because one mode failed; successful output
+equivalence is reported separately. No failed trial is included in throughput
+medians or described as a successful analysis. Lint and diff checks pass.
+
+Next: add a fresh-process regression for one resolved worker and fix the
+assignment dispatch; use representative production data to decide whether 12
+or 16 workers improve the actual study enough to justify their RAM cost.
+
+---
+
+## 2026-09-07 — Repository assessment and optional MCP server
+
+**Infrastructure, packaging and documentation changes; no scientific algorithm
+or threshold changes.** The pre-existing local edit to
+`configs/runs/260608_rp04_optf001.yaml` was left untouched. No experimental run
+was recomputed. Baseline source revision: `5e3c5d78863820293c9706fdc4e35e30a4159889`.
+
+### What was delivered
+
+- `docs/repository-assessment.md`: structure, measured performance, platform
+  matrix and prioritized findings, with code evidence and clear limits on what
+  was actually tested.
+- Optional `nanopore3[mcp]` extra and `nanopore3-mcp` executable. Twelve typed
+  tools cover project inspection, new configs, validation, run/resume/rerun,
+  job status/logs, cancellation and bounded result previews. Two resources and
+  a prompt explain the workflow to an AI with no repository context.
+- `mcp_server.py` owns protocol/tool adaptation; `mcp_jobs.py` owns bounded
+  subprocess jobs and durable status. Both call the existing CLI, so analysis
+  preparation and scientific decisions remain on the established run path.
+- `docs/mcp.md` includes stdio/HTTP configuration, Windows and Colab usage,
+  job lifetime, trust boundaries and troubleshooting. `scripts/mcp_smoke.py`
+  demonstrates the actual SDK client sequence without needing an AI account.
+- A synthetic performance benchmark and versioned JSON evidence, plus MCP CI
+  on the existing OS matrix and an installed-wheel/report/MCP Linux smoke job.
+- Fixed the build backend minimum: existing SPDX license metadata needs
+  setuptools 77+, not the declared 69. Notebook wording no longer describes
+  edlib as pure Python; the current stage layout is called out in architecture.
+
+### Measurements and validation
+
+Baseline: `python -m pytest -q` gave **414 passed in 19.85 s** and lint was clean.
+Final: **420 passed in 22.41 s**, `python -m ruff check src scripts tests`,
+`python -m compileall -q src` and `python -m pip check` all passed.
+
+The six new test methods cover real stdio execution, protocol discovery and
+schemas, validation, resume/rerun, failure propagation, bounded gzip previews,
+path/symlink restrictions, process-tree cancellation, duplicate active run
+reservations, durable history, and transport shutdown. HTTP is tested in-process
+and was also exercised through a real loopback listener with
+`scripts/mcp_smoke.py --url http://127.0.0.1:18764/mcp --example`.
+
+A built wheel was installed into a fresh `/private/tmp` virtual environment.
+From outside the checkout, the packaged example ran with core dependencies
+alone. After installing its MCP extra, the smoke client successfully created,
+validated and analysed another packaged example. All notebook code cells compile
+after IPython transformation; hosted Colab itself was not executed.
+
+Fresh benchmark command:
+
+```bash
+python scripts/benchmark_portable.py \
+  --output runs/portability-audit-20260907 --reads 12000 --repeats 3
+```
+
+Machine: macOS 26.6.1 ARM64, Python 3.12.10, 16 logical CPUs. Median full-run
+time was **3.252 s serial**, **3.373 s with four threads**, and **1.718 s with
+four processes**. Four processes were 1.89× faster. Demux and assignment tables,
+consensus FASTA and QC tables matched across all nine runs. Peak summed RSS
+medians were 250.8, 245.8 and 271.0 MiB respectively; sampling includes shared
+pages in each process and is not unique physical memory.
+
+Evidence: `docs/benchmarks/2026-09-07-synthetic.json`; generated runs and logs are
+under `runs/portability-audit-20260907/`. These repeated short synthetic reads
+with a tiny panel cannot predict production throughput or scientific accuracy.
+Linux, native Windows, WSL and hosted Colab results remain unobserved in this
+session; adding a CI job is not evidence it passed remotely.
+
+### Findings still requiring core changes
+
+1. `consensus.maximum_reads: 0` is accepted but crashes on an empty selection
+   heap. The chimera path separately slices its members to zero. The assessment
+   includes a shipped-fixture reproduction; these need scientific regression
+   tests before repair.
+2. `plan_resources(2, 10000)` returns one worker with 10,000 threads on a 16-CPU
+   machine. Host CPU detection ignores quotas/affinity, and no global RAM budget
+   bounds all-well chimera storage or all-group consensus storage.
+3. A stage fingerprint includes package version, not implementation revision.
+   Checksumming inherited files does not solve cross-revision compatibility.
+4. The assignment benchmark omits parts of full-length preparation/gating;
+   production profiling should use the real pipeline until preparation is shared.
+5. Core CLI/API run IDs need the same short portable-path validation now applied
+   by MCP. The pipeline and configuration modules also remain too large.
+
+### Lessons for the MCP implementation
+
+Stateless HTTP tears down a **protocol** lifespan after each request. Attaching
+job cleanup there closed the manager before the next tool call. A stronger
+submit-and-poll test exposed it; cleanup now belongs to the HTTP application's
+lifespan (and to EOF/shutdown for stdio). The regression test also verifies
+shutdown cancellation. Job submission is never reported as completed analysis.
+
+The service is local and single-user. Tool paths/output roots are workspace
+bounded, while trusted YAML may name external readable inputs. It is not an OS
+sandbox or an authenticated public service. Unknown old jobs are not reattached
+using stale PIDs. Keep those limits visible in both AI instructions and docs.
+
+---
+
 ## 2026-08-28 — An explicit plate map was being treated as a hint
 
 **Scientific change**: it alters which reads a run reports on. Found while setting

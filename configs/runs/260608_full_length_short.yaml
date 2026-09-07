@@ -89,7 +89,7 @@ barcodes:
 
 # Machine-specific, so the preset deliberately does not set it.
 parallel:
-  jobs: 8
+  jobs: 0
 
 random_seed: 141142
 

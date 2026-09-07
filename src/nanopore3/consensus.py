@@ -91,7 +91,9 @@ def select_reads(
     ranked = sorted(
         unique.values(), key=lambda r: (_stable_rank(r.read_uid, seed, group_id), r.read_uid)
     )
-    return tuple(ranked[:max_reads])
+    if max_reads < 0:
+        raise ValueError("max_reads must be nonnegative (0 means all)")
+    return tuple(ranked[:max_reads or None])
 
 
 def validate_consensus_backend(backend: str) -> str:
@@ -307,8 +309,8 @@ def _build_portable_consensus(
     ref = reference.upper()
     if not ref:
         raise ValueError("reference cannot be empty")
-    if min_depth < 1 or max_reads < 1:
-        raise ValueError("min_depth and max_reads must be positive")
+    if min_depth < 1 or max_reads < 0:
+        raise ValueError("min_depth must be positive and max_reads must be nonnegative")
     if not 0.5 <= min_support <= 1.0:
         raise ValueError("min_support must be between 0.5 and 1.0")
     if not 0.0 < significance < 1.0:
@@ -573,8 +575,8 @@ def _build_mafft_spoa_consensus(
 
     if not reference:
         raise ValueError("reference cannot be empty")
-    if min_depth < 1 or max_reads < 1:
-        raise ValueError("min_depth and max_reads must be positive")
+    if min_depth < 1 or max_reads < 0:
+        raise ValueError("min_depth must be positive and max_reads must be nonnegative")
     if threads < 1:
         raise ValueError("threads must be positive")
     if timeout_seconds <= 0:

@@ -6,9 +6,46 @@ default. Start with `nanopore3 init` and edit the generated example.
 
 ## Running on a machine you did not configure for
 
-`parallel.jobs: 0` means *use whatever this machine has*. Any value is bounded by the
-detected CPU budget anyway, so `0` lets one configuration run sensibly on a
-workstation and on a two-core hosted notebook without being edited.
+Parallel execution defaults to `backend: process`, `jobs: 0` and
+`threads_per_job: 1`: use all detected CPUs for the parallel stages. An explicit
+positive `jobs` value still caps the worker count, and `backend: serial` disables
+process parallelism. On a single-CPU machine, execution falls back to the local
+worker without requiring process initialization.
+
+`parallel.jobs: 0` uses the effective CPU allocation. Detection considers the
+host count, process CPU count/affinity when the OS exposes it, and Linux cgroup
+v1/v2 CPU quotas and cpusets, including visible parent limits. Fractional quotas
+round down to a whole worker, with a minimum of one. Both workers and native
+threads are clamped so `jobs * threads_per_job` stays within this budget. The
+bounded thread count is passed to MAFFT. `doctor --json` reports both host
+`cpu_count` and effective `available_cpus`, plus `parallel_defaults`,
+`group_memory_limit_bytes` and `analysis_implementation`. These are default
+settings; `validate --config ... --quick` reports the configured CPU plan under
+`resources` and the configured/resolved group budget under
+`group_memory_limit_bytes`. MCP exposes the same doctor fields through
+`workspace_info.runtime` and the same validation JSON through job status. Linux hierarchy details are described
+in the [kernel cgroup v2 documentation](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+
+Consensus read groups, chimera wells, claimed IDs and their output accumulators
+use temporary SQLite storage under the active stage. Only one group is processed
+at a time; read order and deterministic selection are preserved. Allow free local
+disk space for uncompressed intermediates and the temporary database, especially
+in Colab. Temporary databases are removed on success and handled failures.
+
+`parallel.group_memory_mb` defaults to **512 MiB**. It limits the *estimated
+retained working data for one group*, using 2,048 bytes plus 64 times the sequence
+length per retained read. A visible Linux cgroup memory limit additionally caps
+this budget at one quarter of that limit. An oversized group fails explicitly
+before stage publication; reads are never silently discarded to fit memory.
+This is admission control, **not a hard limit on total RSS**: reference indexes,
+worker copies/batches, native aligners and later reporting also consume RAM. For
+those costs use a smaller explicit worker/chunk count when needed. OS memory
+limits remain the mechanism for enforcing total process/container memory.
+
+`consensus.maximum_reads: 0` uses every eligible read, including chimera clone
+members. A positive value retains the existing deterministic cap. Unlimited
+groups can hit the memory guard; raise `group_memory_mb` only with sufficient RAM
+or split the analysis. Resource settings change execution, not scientific filters.
 
 Progress is reported per stage by default — a run that prints nothing for an hour is
 indistinguishable from one that has hung, and on a hosted notebook it also risks
@@ -17,7 +54,12 @@ being disconnected for idleness. `--quiet` suppresses it.
 `nanopore3 subsample --input X --output Y --reads 100000` takes the first N reads of a
 FASTQ, for trying a configuration or checking barcode recovery before committing to a
 full run. Reads come in file order, so it is reproducible and costs one pass over the
-head of the file rather than over all of it.
+head of the file rather than over all of it. The output must be a new path:
+existing files and input aliases are refused. A validated prefix is published
+atomically without overwriting a competing writer's output. This requires hard
+link support in the output directory (e.g. local APFS/ext4/NTFS); unsupported
+filesystems fail safely. In Colab, write the subset on the local VM disk before
+copying it to Drive.
 
 ## Paths that travel
 
@@ -357,3 +399,19 @@ Each pooled colony-PCR plate gets two panels:
 The pooled denominator comes from `compressed_pcr.pcr_plates`, not from what was
 observed: a culture plate that contributed nothing must show as missing rather
 than silently shrinking the denominator.
+
+## Source identity and safe reuse
+
+Stage fingerprints and `run.json` now include a SHA-256 identity of all installed
+package Python source files and bundled presets, with relative paths and
+normalized newlines. It works in a checkout or installed wheel without Git and
+includes local edits. Documentation and bytecode cache changes do not affect it.
+A long-running Python process must restart after package source changes.
+
+Resume and rerun require the same implementation identity. Older runs lacking
+it, or runs made with different code, remain readable but cannot be inherited or
+resumed by this version. Start a new run with a new ID from the original inputs;
+do not edit old manifests to bypass the check. Configuration-tuning reruns still
+work with unchanged code when the inherited stage fingerprints match. This
+conservative policy invalidates reuse even for code changes unrelated to a
+particular stage; dependency/native-backend versions remain separately recorded.

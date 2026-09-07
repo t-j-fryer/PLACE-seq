@@ -265,11 +265,12 @@ class ResolvedJobsTests(unittest.TestCase):
 
     def test_zero_jobs_resolves_to_the_machine_for_every_parallel_backend(self) -> None:
         from nanopore3.pipeline import resolved_jobs
+        from nanopore3.runtime import effective_cpu_count
 
         for backend in ("auto", "thread", "process"):
             self.assertEqual(
                 resolved_jobs(load_config(self.config(0, backend))),
-                os.cpu_count() or 1,
+                effective_cpu_count(),
                 backend,
             )
 

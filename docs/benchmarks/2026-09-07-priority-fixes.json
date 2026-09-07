@@ -1,0 +1,114 @@
+{
+  "purpose": "Regression check after four priority fixes; historical timing comparison is not paired",
+  "python": "3.12.10",
+  "platform": "macOS-26.6.1-arm64-arm-64bit",
+  "host_cpus": 16,
+  "median_seconds": 7.428830000106245,
+  "rss_collected": false,
+  "reference_run": "parallel-sweep-20260907-complete/runs/serial-1-0",
+  "fixture_command": "python scripts/benchmark_portable.py --output <new-dir> --reads 120000 --repeats 1 --process-jobs 0",
+  "timing_command": "python -m nanopore3 run --config <new-dir>/example/configs/process-0.yaml --output <fresh-root> --run-id <unique-id> --quiet",
+  "timing_method": "subprocess.run wall time using time.perf_counter; three sequential trials",
+  "analysis_implementation": {
+    "scheme": "nanopore3-source-v1",
+    "sha256": "7d14e1fe40a2e78495be0f4ddbee3f476059b696c9ac02e9898ca357b2f4bcdc"
+  },
+  "example_all_nine_match": true,
+  "trials": [
+    {
+      "seconds": 7.365295459050685,
+      "returncode": 0,
+      "reads": 120000,
+      "requested_jobs": 0,
+      "repeat": 0,
+      "scientific_artifacts_match": {
+        "02_demux/demux_calls.csv.gz": true,
+        "02_demux/demuxed_reads.jsonl.gz": true,
+        "03_assignment/assignment_calls.csv.gz": true,
+        "03_assignment/consensus_eligible.jsonl.gz": true,
+        "04_consensus/summary.json": true,
+        "04_consensus/consensus.csv.gz": true,
+        "04_consensus/contributors.csv.gz": true,
+        "04_consensus/consensus.fasta": true,
+        "05_qc/qc.csv.gz": true
+      },
+      "artifact_sha256": {
+        "02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "02_demux/demuxed_reads.jsonl.gz": "a96b8333c9eab80cacbf1be11ad77a058ff012b1745ebc306081e64d98ff68f9",
+        "03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "03_assignment/consensus_eligible.jsonl.gz": "78af5d214d1cc3fe0e6f0bae85080b1739aba6806e6346ba8b0406d8e8404df8",
+        "04_consensus/summary.json": "ba28e0a9eeb36cf5d0a2cd6e2daddc529b9e3ffa579cbebc6ee5388090326dc5",
+        "04_consensus/consensus.csv.gz": "6cd9a787b659f33f45df89f862f16e021970432d9ab8f58e17e7360cd63aa4cd",
+        "04_consensus/contributors.csv.gz": "21d3d1ab78f8895154cedd1ef44afe79932e4d9054a60a6ca3f65c65519e101f",
+        "04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      },
+      "resolved_jobs": 16
+    },
+    {
+      "seconds": 7.428830000106245,
+      "returncode": 0,
+      "reads": 120000,
+      "requested_jobs": 0,
+      "repeat": 1,
+      "scientific_artifacts_match": {
+        "02_demux/demux_calls.csv.gz": true,
+        "02_demux/demuxed_reads.jsonl.gz": true,
+        "03_assignment/assignment_calls.csv.gz": true,
+        "03_assignment/consensus_eligible.jsonl.gz": true,
+        "04_consensus/summary.json": true,
+        "04_consensus/consensus.csv.gz": true,
+        "04_consensus/contributors.csv.gz": true,
+        "04_consensus/consensus.fasta": true,
+        "05_qc/qc.csv.gz": true
+      },
+      "artifact_sha256": {
+        "02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "02_demux/demuxed_reads.jsonl.gz": "a96b8333c9eab80cacbf1be11ad77a058ff012b1745ebc306081e64d98ff68f9",
+        "03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "03_assignment/consensus_eligible.jsonl.gz": "78af5d214d1cc3fe0e6f0bae85080b1739aba6806e6346ba8b0406d8e8404df8",
+        "04_consensus/summary.json": "ba28e0a9eeb36cf5d0a2cd6e2daddc529b9e3ffa579cbebc6ee5388090326dc5",
+        "04_consensus/consensus.csv.gz": "6cd9a787b659f33f45df89f862f16e021970432d9ab8f58e17e7360cd63aa4cd",
+        "04_consensus/contributors.csv.gz": "21d3d1ab78f8895154cedd1ef44afe79932e4d9054a60a6ca3f65c65519e101f",
+        "04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      },
+      "resolved_jobs": 16
+    },
+    {
+      "seconds": 7.584099750034511,
+      "returncode": 0,
+      "reads": 120000,
+      "requested_jobs": 0,
+      "repeat": 2,
+      "scientific_artifacts_match": {
+        "02_demux/demux_calls.csv.gz": true,
+        "02_demux/demuxed_reads.jsonl.gz": true,
+        "03_assignment/assignment_calls.csv.gz": true,
+        "03_assignment/consensus_eligible.jsonl.gz": true,
+        "04_consensus/summary.json": true,
+        "04_consensus/consensus.csv.gz": true,
+        "04_consensus/contributors.csv.gz": true,
+        "04_consensus/consensus.fasta": true,
+        "05_qc/qc.csv.gz": true
+      },
+      "artifact_sha256": {
+        "02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "02_demux/demuxed_reads.jsonl.gz": "a96b8333c9eab80cacbf1be11ad77a058ff012b1745ebc306081e64d98ff68f9",
+        "03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "03_assignment/consensus_eligible.jsonl.gz": "78af5d214d1cc3fe0e6f0bae85080b1739aba6806e6346ba8b0406d8e8404df8",
+        "04_consensus/summary.json": "ba28e0a9eeb36cf5d0a2cd6e2daddc529b9e3ffa579cbebc6ee5388090326dc5",
+        "04_consensus/consensus.csv.gz": "6cd9a787b659f33f45df89f862f16e021970432d9ab8f58e17e7360cd63aa4cd",
+        "04_consensus/contributors.csv.gz": "21d3d1ab78f8895154cedd1ef44afe79932e4d9054a60a6ca3f65c65519e101f",
+        "04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      },
+      "resolved_jobs": 16
+    }
+  ],
+  "limitations": [
+    "Small synthetic reference panel; not a production throughput forecast.",
+    "Historical comparison is not paired and used a different timing/RSS sampling harness.",
+    "No RSS measurements: process-tree enumeration is restricted in this sandbox."
+  ]
+}

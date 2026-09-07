@@ -133,12 +133,60 @@ def compute_stage_fingerprint(
             "stage": stage,
             "contract_version": contract_version,
             "pipeline_version": pipeline_version,
+            "analysis_implementation": analysis_implementation(),
             "parameters": dict(parameters or {}),
             "input_digests": dict(input_digests or {}),
             "reference_digest": reference_digest,
             "backend_versions": dict(backend_versions or {}),
         }
     )
+
+
+def analysis_implementation(package_root: Path | None = None) -> dict[str, str]:
+    """Hash installed source and presets, including uncommitted/local edits.
+
+    Paths are relative and source newlines normalized, so a wheel and checkout
+    have the same identity across platforms. No Git executable is required.
+    """
+    root = package_root or Path(__file__).resolve().parent
+    sources = sorted(set(root.rglob("*.py")) | set(root.glob("presets/*.yaml")))
+    if not sources:
+        raise StageValidationError(f"cannot establish analysis implementation: {root}")
+    return {
+        "scheme": "nanopore3-source-v1",
+        "sha256": canonical_digest(
+            {
+                path.relative_to(root).as_posix(): sha256_bytes(
+                    path.read_bytes().replace(b"\r\n", b"\n")
+                )
+                for path in sources
+            }
+        ),
+    }
+
+
+def require_current_implementation(metadata: Mapping[str, Any]) -> None:
+    """Refuse ambiguous legacy or changed-code reuse before touching stages."""
+    recorded = metadata.get("analysis_implementation")
+    current = analysis_implementation()
+    if current != _IMPORTED_IMPLEMENTATION:
+        raise StageValidationError(
+            "analysis source changed since this process started; restart Python/the MCP server "
+            "before starting or reusing a run"
+        )
+    if recorded != current:
+        reason = (
+            "missing implementation identity"
+            if recorded is None
+            else "analysis implementation differs"
+        )
+        raise StageValidationError(
+            f"resume/rerun refused: {reason}; start a new run with a new run ID. "
+            "Existing results remain readable."
+        )
+
+
+_IMPORTED_IMPLEMENTATION = analysis_implementation()
 
 
 def atomic_write_bytes(path: str | Path, data: bytes) -> Path:
@@ -307,6 +355,7 @@ def runtime_provenance() -> dict[str, Any]:
         "executable": sys.executable,
         "cpu_count": os.cpu_count(),
         "argv": list(sys.argv),
+        "analysis_implementation": analysis_implementation(),
     }
 
 

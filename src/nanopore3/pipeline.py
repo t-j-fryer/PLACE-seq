@@ -9,10 +9,9 @@ import heapq
 import io
 import json
 import logging
-import os
 import re
 import time
-from collections import Counter, defaultdict, deque
+from collections import Counter, deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
@@ -59,13 +58,16 @@ from .errors import Nanopore3Error
 from .export import normalized_well, safe_name, write_consensus_tree
 from .flanks import Flanks, from_assembled, from_sequences, from_template
 from .fragments import FragmentLibrary
+from .grouping import DiskStore, check_group_memory
 from .io import FastqRecord, iter_fastq
 from .provenance import (
     StageDirectory,
+    analysis_implementation,
     atomic_write_json,
     canonical_digest,
     compute_stage_fingerprint,
     git_provenance,
+    require_current_implementation,
     sha256_file,
 )
 from .qc import _locate as _locate_motif
@@ -78,7 +80,7 @@ from .qc import (
 )
 from .references import read_fasta, read_reference_libraries
 from .report import write_html_report
-from .runtime import doctor_report, plan_resources
+from .runtime import doctor_report, effective_cpu_count, group_memory_limit, plan_resources
 from .sequence import reverse_complement
 
 LOGGER = logging.getLogger(__name__)
@@ -508,7 +510,7 @@ def resolved_jobs(config: PipelineConfig) -> int:
 
     if config.parallel.backend == "serial":
         return 1
-    return config.parallel.jobs or (os.cpu_count() or 1)
+    return config.parallel.jobs or effective_cpu_count()
 
 
 def _report_stage_counts(stage_name: str, counts: Mapping[str, int], success: str) -> None:
@@ -544,6 +546,8 @@ def _stage(run_dir: Path, name: str, fingerprint: str, **kwargs: Any):
 
     started = time.monotonic()
     try:
+        metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        require_current_implementation(metadata)
         with StageDirectory(run_dir, name, fingerprint, **kwargs) as stage:
             LOGGER.info(
                 "stage %s: %s",
@@ -551,6 +555,7 @@ def _stage(run_dir: Path, name: str, fingerprint: str, **kwargs: Any):
                 "reusing completed stage" if stage.reused else "running",
             )
             yield stage
+            require_current_implementation(metadata)
     except BaseException:
         # Without this a failed stage logs "running" and nothing else, leaving the
         # traceback to imply which stage it was and how far it got.
@@ -738,6 +743,7 @@ def validate_inputs(
         "resources": asdict(
             plan_resources(resolved_jobs(config), config.parallel.threads_per_job)
         ),
+        "group_memory_limit_bytes": group_memory_limit(config.parallel.group_memory_mb),
     }
 
 
@@ -1325,153 +1331,180 @@ def _detect_chimeras(
         )
         for library, references in references_by_library.items()
     }
-    wells: dict[tuple[str, str, str], list[tuple[str, str]]] = defaultdict(list)
-    for read in _iter_gzip_json(demux_reads):
-        plate = str(read["plate_id"])
-        try:
-            library = config.reference_library_id_for_plate(plate)
-        except KeyError:
-            continue
-        wells[(plate, str(read["well_id"]), library)].append(
-            (str(read["read_uid"]), str(read["sequence"]))
-        )
-
-    root.mkdir(parents=True, exist_ok=True)
-    totals: Counter[str] = Counter()
-    rows: list[dict[str, Any]] = []
-    scaffolds: list[str] = []
-    # read_uid -> the chimeric clone that accounts for it, so the consensus stage
-    # can stop the same molecule appearing a second time under a design's name.
-    claimed: list[tuple[str, str]] = []
-    for (plate, well, library), reads in sorted(wells.items()):
-        reference_settings = config.reference_sets[library]
-        index = indexes[library]
-        signatures = []
-        inserts: dict[str, str] = {}
-        scoped = (region_motifs or {}).get(library)
-        extract = (extractors or {}).get(library)
-        if extract is None:
-            left_motif, right_motif = scoped or (
-                reference_settings.forward_motif or config.library.forward_motif,
-                reference_settings.reverse_motif or config.library.reverse_motif,
-            )
-            max_edits = (
-                config.library.motif_max_edits
-                if reference_settings.motif_max_edits is None
-                else reference_settings.motif_max_edits
+    with DiskStore(root) as storage:
+        memory_limit = group_memory_limit(config.parallel.group_memory_mb)
+        for read in _iter_gzip_json(demux_reads):
+            plate = str(read["plate_id"])
+            try:
+                library = config.reference_library_id_for_plate(plate)
+            except KeyError:
+                continue
+            storage.append(
+                "wells",
+                (str(read["read_uid"]), str(read["sequence"])),
+                key=(plate, str(read["well_id"]), library),
             )
 
-            def extract(sequence: str, left=left_motif, right=right_motif, edits=max_edits):
-                found = extract_insert(sequence, left, right, max_edits=edits)
-                return found.sequence if found.status == "found" else None
+        root.mkdir(parents=True, exist_ok=True)
+        totals: Counter[str] = Counter()
+        # read_uid -> the chimeric clone that accounts for it, so the consensus stage
+        # can stop the same molecule appearing a second time under a design's name.
+        for (plate, well, library), reads in storage.groups("wells"):
+            retained = 0
+            reference_settings = config.reference_sets[library]
+            index = indexes[library]
+            signatures = []
+            inserts: dict[str, str] = {}
+            scoped = (region_motifs or {}).get(library)
+            extract = (extractors or {}).get(library)
+            if extract is None:
+                left_motif, right_motif = scoped or (
+                    reference_settings.forward_motif or config.library.forward_motif,
+                    reference_settings.reverse_motif or config.library.reverse_motif,
+                )
+                max_edits = (
+                    config.library.motif_max_edits
+                    if reference_settings.motif_max_edits is None
+                    else reference_settings.motif_max_edits
+                )
 
-        for read_id, sequence in reads:
-            insert = extract(sequence)
-            if not insert:
-                continue
-            inserts[read_id] = insert
-            signatures.append(
-                signature_for(read_id, insert, index,
-                              window=settings.window, step=settings.step)
-            )
-        if not signatures:
-            continue
-        groups, outcome = group_chimeras(
-            signatures, minimum_depth=minimum_depth, block_pattern=block_pattern
-        )
-        totals.update(outcome)
-        for group in groups:
-            keep = group.origin == ASSEMBLY_ORIGIN or settings.write_pcr_origin
-            if not keep and settings.exclude_reads == "all":
-                # Not a clone, so nothing is written; but its reads are not
-                # evidence for any design either.
-                for read_id in group.read_ids:
-                    claimed.append((read_id, f"pcr:{group.label}"))
-            if not keep:
-                # Counted above, but not written: a PCR template-switch product
-                # is not a clone, and a FASTA beside real ones invites misreading.
-                totals["pcr_origin_not_written"] += 1
-                continue
-            members = [
-                ConsensusRead(rid, inserts[rid])
-                for rid in group.read_ids[: config.consensus.maximum_reads]
-                if rid in inserts
-            ]
-            scaffold = synthesise_reference(
-                group.signature, references_by_library[library],
-                group.junction_window, window=settings.window, step=settings.step,
-            )
-            if not scaffold or not members:
-                totals["no_scaffold"] += 1
-                continue
-            result = build_reference_consensus(
-                scaffold, members, group_id=group.label, min_depth=1,
-                max_reads=len(members), min_support=config.consensus.minimum_support,
-                seed=config.random_seed,
-            )
-            if not result.sequence:
-                totals["no_consensus"] += 1
-                continue
-            directory = root / safe_name(plate) / normalized_well(well)
-            directory.mkdir(parents=True, exist_ok=True)
-            label = "__".join(safe_name(p, limit=40) for p in group.signature)
-            name = f"{safe_name(plate)}_{normalized_well(well)}__{label}__chimera.fasta"
-            header = (
-                f">{safe_name(plate)}_{normalized_well(well)}_chimera "
-                f"parents={'|'.join(group.signature)} origin={group.origin} "
-                f"reads={group.size} junction_window={group.junction_window} "
-                f"library={library} region={'insert' if scoped else 'amplicon'}"
-            )
-            wrapped = "\n".join(
-                result.sequence[i : i + 60] for i in range(0, len(result.sequence), 60)
-            )
-            (directory / name).write_text(f"{header}\n{wrapped}\n", encoding="ascii")
-            totals["written"] += 1
-            # Both parents share a block for an assembly-origin chimera, so the
-            # culture plate is well defined; resolve it so the clone files under
-            # the same provenance as every other consensus from this well.
-            culture_plate = ""
-            if plan is not None and block_pattern is not None:
-                match = block_pattern.search(group.signature[0])
-                if match is not None:
-                    resolved = plan.resolve(
-                        plate, library,
-                        match.group(1) if match.groups() else match.group(0),
+                def extract(sequence: str, left=left_motif, right=right_motif, edits=max_edits):
+                    found = extract_insert(sequence, left, right, max_edits=edits)
+                    return found.sequence if found.status == "found" else None
+
+            for read_id, sequence in reads:
+                insert = extract(sequence)
+                if not insert:
+                    continue
+                # Reserve space for insert strings, positional signatures and the
+                # consensus working structures before retaining this read.
+                retained += 2048 + 64 * len(insert)
+                check_group_memory(retained, memory_limit, (plate, well, library))
+                inserts[read_id] = insert
+                signatures.append(
+                    signature_for(
+                        read_id, insert, index, window=settings.window, step=settings.step
                     )
-                    culture_plate = resolved.culture_plate or ""
-            chimera_id = f"chim-{canonical_digest({'g': group.label, 'p': plate, 'w': well})[:16]}"
-            scaffolds.append(f">{chimera_id}\n{scaffold}\n")
-            if settings.exclude_reads in ("written", "all"):
-                claimed.extend((read_id, chimera_id) for read_id in group.read_ids)
-            rows.append({
-                "chimera_id": chimera_id, "culture_plate": culture_plate,
-                "plate_id": plate, "well_id": well, "reference_library_id": library,
-                "parents": " >> ".join(group.signature), "n_parents": len(group.signature),
-                "origin": group.origin, "reads": group.size,
-                # A full-length run detects chimeras on the insert, so the clone
-                # written here is insert-scoped while its designed neighbours span
-                # the whole amplicon. Say which, rather than leave it to be
-                # inferred from a length.
-                "region": "insert" if scoped else "amplicon",
-                "junction_window": group.junction_window,
-                "ambiguous_bases": result.ambiguous_bases,
-                "length": len(result.sequence),
-                "file": str((directory / name).relative_to(root)),
-            })
-    if rows:
-        with (root / "clones.csv").open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(rows)
-    # The spliced scaffold is what QC must grade a chimera against; storing it
-    # here keeps QC from having to re-derive a junction it did not compute.
-    (root / "scaffolds.fasta").write_text("".join(scaffolds), encoding="ascii")
-    with (root / "claimed_reads.csv").open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle, lineterminator="\n")
-        writer.writerow(["read_uid", "chimera_id"])
-        writer.writerows(sorted(claimed))
-    totals["reads_claimed"] = len(claimed)
-    return dict(sorted(totals.items()))
+                )
+            if not signatures:
+                continue
+            groups, outcome = group_chimeras(
+                signatures, minimum_depth=minimum_depth, block_pattern=block_pattern
+            )
+            totals.update(outcome)
+            for group in groups:
+                keep = group.origin == ASSEMBLY_ORIGIN or settings.write_pcr_origin
+                if not keep and settings.exclude_reads == "all":
+                    # Not a clone, so nothing is written; but its reads are not
+                    # evidence for any design either.
+                    for read_id in group.read_ids:
+                        storage.append("claimed", (read_id, f"pcr:{group.label}"))
+                if not keep:
+                    # Counted above, but not written: a PCR template-switch product
+                    # is not a clone, and a FASTA beside real ones invites misreading.
+                    totals["pcr_origin_not_written"] += 1
+                    continue
+                members = [
+                    ConsensusRead(rid, inserts[rid])
+                    for rid in group.read_ids[: config.consensus.maximum_reads or None]
+                    if rid in inserts
+                ]
+                scaffold = synthesise_reference(
+                    group.signature,
+                    references_by_library[library],
+                    group.junction_window,
+                    window=settings.window,
+                    step=settings.step,
+                )
+                if not scaffold or not members:
+                    totals["no_scaffold"] += 1
+                    continue
+                result = build_reference_consensus(
+                    scaffold,
+                    members,
+                    group_id=group.label,
+                    min_depth=1,
+                    max_reads=len(members),
+                    min_support=config.consensus.minimum_support,
+                    seed=config.random_seed,
+                )
+                if not result.sequence:
+                    totals["no_consensus"] += 1
+                    continue
+                directory = root / safe_name(plate) / normalized_well(well)
+                directory.mkdir(parents=True, exist_ok=True)
+                label = "__".join(safe_name(p, limit=40) for p in group.signature)
+                name = f"{safe_name(plate)}_{normalized_well(well)}__{label}__chimera.fasta"
+                header = (
+                    f">{safe_name(plate)}_{normalized_well(well)}_chimera "
+                    f"parents={'|'.join(group.signature)} origin={group.origin} "
+                    f"reads={group.size} junction_window={group.junction_window} "
+                    f"library={library} region={'insert' if scoped else 'amplicon'}"
+                )
+                wrapped = "\n".join(
+                    result.sequence[i : i + 60] for i in range(0, len(result.sequence), 60)
+                )
+                (directory / name).write_text(f"{header}\n{wrapped}\n", encoding="ascii")
+                totals["written"] += 1
+                # Both parents share a block for an assembly-origin chimera, so the
+                # culture plate is well defined; resolve it so the clone files under
+                # the same provenance as every other consensus from this well.
+                culture_plate = ""
+                if plan is not None and block_pattern is not None:
+                    match = block_pattern.search(group.signature[0])
+                    if match is not None:
+                        resolved = plan.resolve(
+                            plate,
+                            library,
+                            match.group(1) if match.groups() else match.group(0),
+                        )
+                        culture_plate = resolved.culture_plate or ""
+                chimera_id = (
+                    f"chim-{canonical_digest({'g': group.label, 'p': plate, 'w': well})[:16]}"
+                )
+                storage.append("scaffolds", f">{chimera_id}\n{scaffold}\n")
+                if settings.exclude_reads in ("written", "all"):
+                    storage.extend("claimed", ((read_id, chimera_id) for read_id in group.read_ids))
+                storage.append(
+                    "rows",
+                    {
+                        "chimera_id": chimera_id,
+                        "culture_plate": culture_plate,
+                        "plate_id": plate,
+                        "well_id": well,
+                        "reference_library_id": library,
+                        "parents": " >> ".join(group.signature),
+                        "n_parents": len(group.signature),
+                        "origin": group.origin,
+                        "reads": group.size,
+                        # A full-length run detects chimeras on the insert, so the clone
+                        # written here is insert-scoped while its designed neighbours span
+                        # the whole amplicon. Say which, rather than leave it to be
+                        # inferred from a length.
+                        "region": "insert" if scoped else "amplicon",
+                        "junction_window": group.junction_window,
+                        "ambiguous_bases": result.ambiguous_bases,
+                        "length": len(result.sequence),
+                        "file": str((directory / name).relative_to(root)),
+                    },
+                )
+        if storage.count("rows"):
+            with (root / "clones.csv").open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle, fieldnames=list(next(storage.values("rows"))), lineterminator="\n"
+                )
+                writer.writeheader()
+                writer.writerows(storage.values("rows"))
+        # The spliced scaffold is what QC must grade a chimera against; storing it
+        # here keeps QC from having to re-derive a junction it did not compute.
+        with (root / "scaffolds.fasta").open("w", encoding="ascii") as handle:
+            handle.writelines(storage.values("scaffolds"))
+        with (root / "claimed_reads.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, lineterminator="\n")
+            writer.writerow(["read_uid", "chimera_id"])
+            writer.writerows(storage.sorted_values("claimed"))
+        totals["reads_claimed"] = storage.count("claimed")
+        return dict(sorted(totals.items()))
 
 
 def _write_csv(
@@ -1523,6 +1556,18 @@ def run_pipeline(
 
     from .rerun import INPUT_CONSUMING_STAGES
 
+    implementation = analysis_implementation()
+    require_current_implementation({"analysis_implementation": implementation})
+    if resume and run_id is not None:
+        prior = (output_root or config.output_root).expanduser().resolve() / run_id
+        if (prior / "run.json").is_file():
+            require_current_implementation(
+                json.loads((prior / "run.json").read_text(encoding="utf-8"))
+            )
+        elif (prior / "stages").exists() and not inherit:
+            raise PipelineError("resume refused: missing run metadata; start a new run")
+    if inherit:
+        require_current_implementation(inherit)
     inherited_stages = set((inherit or {}).get("inherited_stages", ()))
     skip_inputs = bool(inherit) and all(
         stage in inherited_stages for stage in INPUT_CONSUMING_STAGES
@@ -1563,6 +1608,7 @@ def run_pipeline(
     run_metadata = {
         "schema_version": 1,
         "pipeline_version": __version__,
+        "analysis_implementation": implementation,
         "run_id": run_id,
         "config_digest": config_digest,
         "config": config.as_dict(),
@@ -1575,6 +1621,7 @@ def run_pipeline(
     metadata_path = run_dir / "run.json"
     if metadata_path.exists():
         existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+        require_current_implementation(existing)
         if existing.get("config_digest") != config_digest and not inherit:
             raise PipelineError(
                 "resume refused: run configuration differs. To reuse this run's "
@@ -1785,7 +1832,9 @@ def run_pipeline(
                 # Threads cannot speed this stage up: its cost is Python-level
                 # k-mer work, not the GIL-releasing alignment calls. Only the
                 # explicitly requested process backend runs workers in parallel.
-                use_processes = config.parallel.backend == "process"
+                # With one resolved worker, _ordered_map bypasses the process
+                # initializer. Use the prepared local callable in that case.
+                use_processes = config.parallel.backend == "process" and resources.jobs > 1
                 for results in _ordered_map(
                     _assign_batch_worker if use_processes else assign_batch,
                     batches,
@@ -1852,15 +1901,6 @@ def run_pipeline(
     # consensus. Letting it also vote for one of the parent designs makes one
     # molecule appear twice, the second time under a name it does not have.
     claimed_path = run_dir / "stages" / "03b_chimera" / "clones" / "claimed_reads.csv"
-    claimed_reads: set[str] = set()
-    if config.chimera.enabled and config.chimera.exclude_reads != "none":
-        if claimed_path.is_file():
-            with claimed_path.open("r", encoding="utf-8", newline="") as handle:
-                claimed_reads = {row["read_uid"] for row in csv.DictReader(handle)}
-        LOGGER.info(
-            "excluding %d read(s) already accounted for by a chimeric clone",
-            len(claimed_reads),
-        )
     consensus_inputs = {
         "eligible": sha256_file(eligible_path),
         "references": reference_collection.digest,
@@ -1891,59 +1931,75 @@ def run_pipeline(
         resume=resume,
     ) as stage:
         if not stage.reused:
-            groups: dict[
-                tuple[str, str, str, str, tuple[str, ...]],
-                list[tuple[int, str, ConsensusRead]],
-            ] = defaultdict(list)
-            available: Counter[
-                tuple[str, str, str, str, tuple[str, ...]]
-            ] = Counter()
-            # Provenance only: the grouping key is deliberately unchanged so
-            # consensus identities stay stable whether or not deconvolution runs.
-            culture_plates: dict[
-                tuple[str, str, str, str, tuple[str, ...]], set[str]
-            ] = defaultdict(set)
-            excluded = 0
-            for row in _iter_gzip_json(eligible_path):
-                if row["read_uid"] in claimed_reads:
-                    # Counted here rather than silently skipped: a stage that
-                    # drops input must say how much.
-                    excluded += 1
-                    continue
-                aliases = tuple(row["reference_ids"])
-                key = (
-                    row["sample_id"],
-                    row["plate_id"],
-                    row["well_id"],
-                    row["reference_library_id"],
-                    aliases,
-                )
-                available[key] += 1
-                if row.get("culture_plate"):
-                    culture_plates[key].add(str(row["culture_plate"]))
-                seed_text = f"{config.random_seed}\0{key}\0{row['read_uid']}"
-                rank = int(hashlib.sha256(seed_text.encode()).hexdigest(), 16)
-                qualities = (
-                    None
-                    if row["quality"] is None
-                    else tuple(ord(c) - 33 for c in row["quality"])
-                )
-                read = ConsensusRead(row["read_uid"], row["sequence"], qualities)
-                item = (-rank, row["read_uid"], read)
-                heap = groups[key]
-                if len(heap) < config.consensus.maximum_reads:
-                    heapq.heappush(heap, item)
-                elif item > heap[0]:
-                    heapq.heapreplace(heap, item)
-            consensus_rows: list[dict[str, Any]] = []
-            contributor_rows: list[dict[str, Any]] = []
-            fasta_parts: list[str] = []
-            for key in sorted(groups):
-                sample, plate, well, library_id, aliases = key
-                reads = tuple(item[2] for item in groups[key])
-                ref = references_by_library[library_id][aliases[0]]
-                group_id = "|".join((sample, plate, well, library_id, *aliases))
-                result = build_reference_consensus(
+            with DiskStore(stage.path) as storage:
+                memory_limit = group_memory_limit(config.parallel.group_memory_mb)
+                if (
+                    config.chimera.enabled
+                    and config.chimera.exclude_reads != "none"
+                    and claimed_path.is_file()
+                ):
+                    with claimed_path.open("r", encoding="utf-8", newline="") as handle:
+                        for row in csv.DictReader(handle):
+                            storage.append("claimed", None, key=row["read_uid"])
+                claimed_count = storage.count("claimed")
+                if claimed_count:
+                    LOGGER.info(
+                        "excluding %d read(s) already accounted for by a chimeric clone",
+                        claimed_count,
+                    )
+                excluded = 0
+                for row in _iter_gzip_json(eligible_path):
+                    if storage.contains("claimed", row["read_uid"]):
+                        # Counted here rather than silently skipped: a stage that
+                        # drops input must say how much.
+                        excluded += 1
+                        continue
+                    aliases = tuple(row["reference_ids"])
+                    key = (
+                        row["sample_id"],
+                        row["plate_id"],
+                        row["well_id"],
+                        row["reference_library_id"],
+                        aliases,
+                    )
+                    storage.append("eligible", row, key=key)
+
+                def read_cost(read: ConsensusRead) -> int:
+                    return 2048 + 64 * len(read.sequence)
+
+                for key, group_rows in storage.groups("eligible"):
+                    heap: list[tuple[int, str, ConsensusRead]] = []
+                    available = retained = 0
+                    culture_plates: set[str] = set()
+                    for row in group_rows:
+                        available += 1
+                        if row.get("culture_plate"):
+                            culture_plates.add(str(row["culture_plate"]))
+                        seed_text = f"{config.random_seed}\0{key}\0{row['read_uid']}"
+                        rank = int(hashlib.sha256(seed_text.encode()).hexdigest(), 16)
+                        qualities = (
+                            None
+                            if row["quality"] is None
+                            else tuple(ord(c) - 33 for c in row["quality"])
+                        )
+                        read = ConsensusRead(row["read_uid"], row["sequence"], qualities)
+                        item = (-rank, row["read_uid"], read)
+                        if (
+                            not config.consensus.maximum_reads
+                            or len(heap) < config.consensus.maximum_reads
+                        ):
+                            retained += read_cost(read)
+                            check_group_memory(retained, memory_limit, key)
+                            heapq.heappush(heap, item)
+                        elif item > heap[0]:
+                            retained += read_cost(read) - read_cost(heap[0][2])
+                            check_group_memory(retained, memory_limit, key)
+                            heapq.heapreplace(heap, item)
+                    sample, plate, well, library_id, aliases = key
+                    reads = tuple(item[2] for item in heap)
+                    ref = references_by_library[library_id][aliases[0]]
+                    group_id = "|".join((sample, plate, well, library_id, *aliases))
+                    result = build_reference_consensus(
                         ref,
                         reads,
                         group_id=group_id,
@@ -1958,80 +2014,88 @@ def run_pipeline(
                         minor_fraction=config.consensus.minimum_minor_fraction,
                         seed=config.random_seed,
                         backend=config.consensus.backend,
+                        threads=resources.threads_per_job,
                     )
-                digest = canonical_digest(
-                    {"group": group_id, "sequence": result.sequence}
-                )
-                consensus_id = "cons-" + digest[:16]
-                row = {
-                    "consensus_id": consensus_id,
-                    "sample_id": sample,
-                    "plate_id": plate,
-                    "well_id": well,
-                    "reference_library_id": library_id,
-                    "reference_ids": "|".join(aliases), "status": result.status,
-                    "culture_plate": "|".join(sorted(culture_plates.get(key, ()))),
-                    "n_reads_available": available[key], "n_reads_used": result.n_reads_used,
-                    "mean_depth": f"{result.mean_depth:.4f}", "min_depth": result.min_depth,
-                    "ambiguous_bases": result.ambiguous_bases,
-                    # Marginal calls used to leave no trace: a base decided on 61%
-                    # support looked identical to one decided on 100%. These make
-                    # the evidence behind a consensus auditable.
-                    "mixed_positions": result.mixed_positions,
-                    # Which alleles disagreed, not just how many places. An "N"
-                    # cannot say whether the position carries a damage signature.
-                    "mixed_alleles": "|".join(
-                        f"{index}:{base}>{alleles}:"
-                        + ",".join(f"{f:.4f}" for f in fractions)
-                        for index, base, alleles, fractions in result.mixed_alleles
-                    ),
-                    "background_error_rate": f"{result.background_error_rate:.5f}",
-                    "weakest_support": f"{result.weakest_support:.4f}",
-                    "low_quality_bases": result.low_quality_bases,
-                    "backend": result.backend,
-                    "sequence_sha256": (
-                        hashlib.sha256(result.sequence.encode()).hexdigest()
-                        if result.sequence
-                        else ""
-                    ),
-                    "failure_reason": result.failure_reason or "",
-                }
-                consensus_rows.append(row)
-                if result.sequence:
-                    fasta_parts.append(
-                        f">{consensus_id} reference_library={library_id} "
-                        f"reference_ids={'|'.join(aliases)} sample={sample} "
-                        f"plate={plate} well={well}"
-                        + (
-                            f" culture_plate={'|'.join(sorted(culture_plates.get(key, ())))}"
-                            if culture_plates.get(key)
-                            else ""
-                        )
-                        + f"\n{result.sequence}\n"
-                    )
-                for rank, read_uid in enumerate(result.contributor_ids, start=1):
-                    contributor_rows.append(
-                    {
+                    digest = canonical_digest({"group": group_id, "sequence": result.sequence})
+                    consensus_id = "cons-" + digest[:16]
+                    row = {
                         "consensus_id": consensus_id,
-                        "read_uid": read_uid,
-                        "selection_rank": rank,
+                        "sample_id": sample,
+                        "plate_id": plate,
+                        "well_id": well,
+                        "reference_library_id": library_id,
+                        "reference_ids": "|".join(aliases),
+                        "status": result.status,
+                        "culture_plate": "|".join(sorted(culture_plates)),
+                        "n_reads_available": available,
+                        "n_reads_used": result.n_reads_used,
+                        "mean_depth": f"{result.mean_depth:.4f}",
+                        "min_depth": result.min_depth,
+                        "ambiguous_bases": result.ambiguous_bases,
+                        # Marginal calls used to leave no trace: a base decided on 61%
+                        # support looked identical to one decided on 100%. These make
+                        # the evidence behind a consensus auditable.
+                        "mixed_positions": result.mixed_positions,
+                        # Which alleles disagreed, not just how many places. An "N"
+                        # cannot say whether the position carries a damage signature.
+                        "mixed_alleles": "|".join(
+                            f"{index}:{base}>{alleles}:" + ",".join(f"{f:.4f}" for f in fractions)
+                            for index, base, alleles, fractions in result.mixed_alleles
+                        ),
+                        "background_error_rate": f"{result.background_error_rate:.5f}",
+                        "weakest_support": f"{result.weakest_support:.4f}",
+                        "low_quality_bases": result.low_quality_bases,
+                        "backend": result.backend,
+                        "sequence_sha256": (
+                            hashlib.sha256(result.sequence.encode()).hexdigest()
+                            if result.sequence
+                            else ""
+                        ),
+                        "failure_reason": result.failure_reason or "",
                     }
+                    storage.append("consensus_rows", row)
+                    if result.sequence:
+                        storage.append(
+                            "fasta",
+                            f">{consensus_id} reference_library={library_id} "
+                            f"reference_ids={'|'.join(aliases)} sample={sample} "
+                            f"plate={plate} well={well}"
+                            + (
+                                f" culture_plate={'|'.join(sorted(culture_plates))}"
+                                if culture_plates
+                                else ""
+                            )
+                            + f"\n{result.sequence}\n",
+                        )
+                    for rank, read_uid in enumerate(result.contributor_ids, start=1):
+                        storage.append(
+                            "contributors",
+                            {
+                                "consensus_id": consensus_id,
+                                "read_uid": read_uid,
+                                "selection_rank": rank,
+                            },
+                        )
+                first = next(storage.values("consensus_rows"), None)
+                fields = list(first) if first else ["consensus_id", "status"]
+                _write_csv(
+                    stage.output_path("consensus.csv.gz"), storage.values("consensus_rows"), fields
                 )
-            fields = list(consensus_rows[0]) if consensus_rows else ["consensus_id", "status"]
-            _write_csv(stage.output_path("consensus.csv.gz"), consensus_rows, fields)
-            _write_csv(
-            stage.output_path("contributors.csv.gz"),
-            contributor_rows,
-            ["consensus_id", "read_uid", "selection_rank"],
-        )
-            stage.output_path("consensus.fasta").write_text("".join(fasta_parts), encoding="ascii")
-            consensus_summary = dict(
-            sorted(Counter(row["status"] for row in consensus_rows).items())
-        )
-            if claimed_reads:
-                consensus_summary["reads_excluded_as_chimeric"] = excluded
-            atomic_write_json(stage.output_path("summary.json"), consensus_summary)
-
+                consensus_summary = dict(
+                    sorted(
+                        Counter(row["status"] for row in storage.values("consensus_rows")).items()
+                    )
+                )
+                _write_csv(
+                    stage.output_path("contributors.csv.gz"),
+                    storage.values("contributors"),
+                    ["consensus_id", "read_uid", "selection_rank"],
+                )
+                with stage.output_path("consensus.fasta").open("w", encoding="ascii") as handle:
+                    handle.writelines(storage.values("fasta"))
+                if claimed_count:
+                    consensus_summary["reads_excluded_as_chimeric"] = excluded
+                atomic_write_json(stage.output_path("summary.json"), consensus_summary)
 
     consensus_dir = run_dir / "stages" / "04_consensus"
     qc_inputs = {

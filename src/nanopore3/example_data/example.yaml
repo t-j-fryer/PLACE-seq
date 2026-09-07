@@ -42,15 +42,16 @@ barcodes:
     allow_reverse_complement: false
     minimum_margin: 2
 parallel:
-  backend: auto
-  jobs: 2
+  backend: process
+  jobs: 0
   threads_per_job: 1
+  group_memory_mb: 512  # estimate per group; not a total RSS cap
   chunk_reads: 1000
 random_seed: 20260811
 consensus:
   backend: portable
   minimum_depth: 3
-  maximum_reads: 100
+  maximum_reads: 100  # 0 includes all eligible reads
   minimum_support: 0.60
 qc:
   minimum_identity: 0.98

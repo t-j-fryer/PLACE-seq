@@ -6,8 +6,10 @@ import argparse
 import gzip
 import json
 import logging
+import os
 import shutil
 import sys
+import tempfile
 from importlib.resources import as_file, files
 from multiprocessing import freeze_support
 from pathlib import Path
@@ -42,11 +44,18 @@ def _parser() -> argparse.ArgumentParser:
         "--quiet", action="store_true", help="suppress preflight progress"
     )
 
-    run = subparsers.add_parser("run", help="execute the portable staged workflow")
+    run = subparsers.add_parser(
+        "run", help="execute the portable staged workflow",
+        epilog="YAML defaults: parallel.backend=process, jobs=0 (all allocated CPUs), "
+        "threads_per_job=1, group_memory_mb=512 (estimated group memory, not total RSS). "
+        "consensus.maximum_reads=0 uses all eligible reads. Resume requires the same "
+        "installed source identity; legacy or changed-code runs need a fresh run.",
+    )
     run.add_argument("--config", type=Path, required=True)
     run.add_argument("--output", type=Path, help="override the configured run root")
     run.add_argument("--run-id", help="portable directory name for this run")
-    run.add_argument("--resume", action="store_true", help="resume only checksum-compatible stages")
+    run.add_argument("--resume", action="store_true",
+                     help="reuse stages with matching source identity, config and checksums")
     run.add_argument(
         "--quiet",
         action="store_true",
@@ -68,7 +77,9 @@ def _parser() -> argparse.ArgumentParser:
             "produces the fingerprint that stage recorded, so a configuration "
             "change that reaches back into an inherited stage is refused by name "
             "rather than silently built upon. The original FASTQ need not be "
-            "attached when both stages that read it are inherited."
+            "attached when both stages that read it are inherited. The installed "
+            "source identity must match: legacy runs without an identity or runs "
+            "made with different code need a fresh run from original inputs."
         ),
     )
     rerun.add_argument("--config", type=Path, required=True)
@@ -97,11 +108,14 @@ def _parser() -> argparse.ArgumentParser:
             "For trying a configuration, or checking barcode recovery on a fresh "
             "flowcell, before committing to a full run. Reads are taken in file "
             "order rather than at random, so the result is reproducible and costs "
-            "one pass over the head of the file rather than over all of it."
+            "one pass over the head of the file rather than over all of it. "
+            "Existing outputs and input aliases are refused. Validated output is "
+            "published atomically using a hard link; use local disk in Colab, "
+            "then copy to Drive. Unsupported filesystems fail safely."
         ),
     )
     subsample.add_argument("--input", type=Path, required=True)
-    subsample.add_argument("--output", type=Path, required=True)
+    subsample.add_argument("--output", type=Path, required=True, help="new file; never overwritten")
     subsample.add_argument("--reads", type=int, default=100_000)
 
     layout = subparsers.add_parser(
@@ -126,7 +140,12 @@ def _print_doctor(as_json: bool) -> None:
     print(f"Nanopore3 {__version__}")
     print(f"Python: {report['python']}")
     print(f"Platform: {report['platform']}")
-    print(f"CPUs: {report['cpu_count']}")
+    print(f"CPUs: {report['available_cpus']} available ({report['cpu_count']} host)")
+    print(
+        f"Default group memory estimate budget: {report['group_memory_limit_bytes'] / 2**20:g} MiB "
+        "(not a total RSS limit)"
+    )
+    print(f"Source identity: {report['analysis_implementation']['sha256']}")
     print("Portable edlib backend: available")
     for name, details in report["optional_binaries"].items():
         state = details["version"] if details["available"] else "not found (optional)"
@@ -170,33 +189,58 @@ def _configure_progress(quiet: bool) -> None:
 
 
 def _subsample(source: Path, destination: Path, reads: int) -> int:
-    """Copy the first ``reads`` records of a FASTQ, gzipped or not."""
+    """Validate and atomically publish a FASTQ prefix without replacing a file."""
 
     if reads < 1:
         raise PipelineError("--reads must be at least 1")
+    # lexists also rejects dangling symlinks. Existing outputs include all
+    # hard-link/symlink aliases of the input, before either file is opened.
+    if os.path.lexists(destination) or source.resolve() == destination.resolve():
+        raise PipelineError(f"subsample output already exists or aliases the input: {destination}")
     opener = gzip.open if source.suffix == ".gz" else open
     writer = gzip.open if destination.suffix == ".gz" else open
     destination.parent.mkdir(parents=True, exist_ok=True)
     written = 0
-    # Binary throughout: this copies records rather than reading them, so there is
-    # no encoding to get wrong. Decoding as text with errors="replace" would write
-    # substitution characters into the output instead of failing.
-    with opener(source, "rb") as handle, writer(destination, "wb") as out:
-        while written < reads:
-            block = [handle.readline() for _ in range(4)]
-            if not block[0]:
-                break
-            if not block[0].startswith(b"@"):
-                raise PipelineError(
-                    f"{source} is not a FASTQ: record {written + 1} does not begin "
-                    "with '@' (a gzipped file needs a .gz name to be recognised)"
-                )
-            if not all(block):
-                raise PipelineError(
-                    f"{source} ends mid-record after {written} complete record(s)"
-                )
-            out.writelines(block)
-            written += 1
+    with tempfile.NamedTemporaryFile(
+        dir=destination.parent, prefix=".subsample-", delete=False
+    ) as tmp:
+        temporary = Path(tmp.name)
+    try:
+        # Preserve original bytes, including descriptions, plus lines and CRLF.
+        with opener(source, "rb") as handle, writer(temporary, "wb") as out:
+            while written < reads:
+                block = [handle.readline() for _ in range(4)]
+                if not block[0]:
+                    break
+                if not block[0].startswith(b"@"):
+                    raise PipelineError(
+                        f"{source} is not a FASTQ: record {written + 1} must begin with '@'"
+                    )
+                if not all(block):
+                    raise PipelineError(
+                        f"{source} ends mid-record after {written} complete record(s)"
+                    )
+                header, sequence, plus, quality = (line.rstrip(b"\r\n") for line in block)
+                if (
+                    not header[1:].strip()
+                    or not plus.startswith(b"+")
+                    or len(sequence) != len(quality)
+                    or any(c < 33 or c > 126 for c in quality)
+                    or any(c not in b"ACGTRYSWKMBDHVNacgtryswkmbdhvn.-" for c in sequence)
+                ):
+                    raise PipelineError(f"{source} is not a FASTQ: malformed record {written + 1}")
+                out.writelines(block)
+                written += 1
+        # Windows FlushFileBuffers requires a handle opened for writing.
+        with temporary.open("r+b") as handle:
+            os.fsync(handle.fileno())
+        # Unlike replace/rename on POSIX, link is an atomic *no-clobber* create.
+        # Unsupported filesystems fail safely, retaining any existing output.
+        os.link(temporary, destination)
+    except EOFError as exc:
+        raise PipelineError(f"{source}: truncated gzip input") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
     return written
 
 

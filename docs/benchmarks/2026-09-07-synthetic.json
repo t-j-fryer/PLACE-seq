@@ -1,0 +1,168 @@
+{
+  "platform": "macOS-26.6.1-arm64-arm-64bit",
+  "python": "3.12.10",
+  "cpu_count": 16,
+  "reads": 12000,
+  "repeats": 3,
+  "packages": {
+    "nanopore3": "0.3.0",
+    "edlib": "1.3.9.post1",
+    "PyYAML": "6.0.3",
+    "psutil": "7.2.2"
+  },
+  "memory_method": "20 ms sampling; summed process-tree RSS, includes shared pages per process",
+  "equivalent": true,
+  "results": [
+    {
+      "seconds": 3.3272112088743597,
+      "peak_tree_rss_mib": 249.46875,
+      "backend": "serial",
+      "requested_jobs": 1,
+      "repeat": 0,
+      "reads_per_second": 3606.624060412372,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 3.2517790000420064,
+      "peak_tree_rss_mib": 251.296875,
+      "backend": "serial",
+      "requested_jobs": 1,
+      "repeat": 1,
+      "reads_per_second": 3690.287685554579,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 3.173825499834493,
+      "peak_tree_rss_mib": 250.796875,
+      "backend": "serial",
+      "requested_jobs": 1,
+      "repeat": 2,
+      "reads_per_second": 3780.926204237054,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 3.364498875103891,
+      "peak_tree_rss_mib": 244.34375,
+      "backend": "thread",
+      "requested_jobs": 4,
+      "repeat": 0,
+      "reads_per_second": 3566.6529981019708,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 3.3903367498423904,
+      "peak_tree_rss_mib": 245.765625,
+      "backend": "thread",
+      "requested_jobs": 4,
+      "repeat": 1,
+      "reads_per_second": 3539.471411079697,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 3.3727203749585897,
+      "peak_tree_rss_mib": 249.453125,
+      "backend": "thread",
+      "requested_jobs": 4,
+      "repeat": 2,
+      "reads_per_second": 3557.9587590765914,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 1.718132499838248,
+      "peak_tree_rss_mib": 271.015625,
+      "backend": "process",
+      "requested_jobs": 4,
+      "repeat": 0,
+      "reads_per_second": 6984.327460850504,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 1.7141900409478694,
+      "peak_tree_rss_mib": 268.09375,
+      "backend": "process",
+      "requested_jobs": 4,
+      "repeat": 1,
+      "reads_per_second": 7000.390687933611,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 1.7325365419965237,
+      "peak_tree_rss_mib": 274.0625,
+      "backend": "process",
+      "requested_jobs": 4,
+      "repeat": 2,
+      "reads_per_second": 6926.260837287481,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e6da129ba8a1193ddc47e6483a86741c9ce43e893b9d825ac070387f3651ed8c",
+        "stages/03_assignment/assignment_calls.csv.gz": "d6d511638caa8b467060b38d4f90fd0d41059c0e8d69539f3c0e0b96c423b688",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    }
+  ],
+  "medians": {
+    "serial": {
+      "seconds": 3.2517790000420064,
+      "reads_per_second": 3690.287685554579,
+      "peak_tree_rss_mib": 250.796875
+    },
+    "thread": {
+      "seconds": 3.3727203749585897,
+      "reads_per_second": 3557.9587590765914,
+      "peak_tree_rss_mib": 245.765625
+    },
+    "process": {
+      "seconds": 1.718132499838248,
+      "reads_per_second": 6984.327460850504,
+      "peak_tree_rss_mib": 271.015625
+    }
+  },
+  "reporting_packages": {
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "pandas": "2.3.3",
+    "scipy": "1.18.0"
+  },
+  "source_revision": "5e3c5d78863820293c9706fdc4e35e30a4159889",
+  "source_note": "Baseline analysis code unchanged; MCP, documentation and benchmark additions were uncommitted."
+}

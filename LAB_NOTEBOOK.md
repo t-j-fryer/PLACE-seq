@@ -1,4 +1,4 @@
-# Nanopore3 lab notebook
+# PLACE-seq lab notebook
 
 A dated, append-only record of what changed, why, what was learned, and what to
 do next. Newest entry first. Every entry should be readable on its own by a
@@ -12,6 +12,68 @@ Conventions:
 - Separate **scientific** changes (which can alter results) from **performance**
   changes (which must not). Say explicitly which kind a change is.
 - Reference evidence by path so it can be re-checked.
+
+---
+
+## 2026-09-07 (naming) — PLACE-seq
+
+**Presentation changes; no scientific decision rules or resource defaults
+changed.** Adopted the requested name **PLACE-seq — Plate and Library Assignment,
+Consensus and Evaluation** in the README, current operating guides, notebook
+heading, package description, CLI help/version/doctor, MCP server discovery and
+instructions, and newly generated HTML report titles. The README and notebook
+emphasise the initials that form PLACE. Historical lab entries and benchmark
+evidence retain the names used when they were recorded.
+
+The distribution/import name, CLI commands, GitHub repository URL, notebook
+filename, environment name, resource URIs and job storage paths remain
+`nanopore3`-based. The README and MCP guide explain this compatibility mapping;
+existing client configurations and automation keep their entry points. Source
+identity still hashes installed Python content, including display strings, so
+this naming update changes that identity. Prior results remain readable, but
+reuse with the renamed build requires fresh recomputation from original inputs;
+the source checks were not weakened for the rename.
+
+Validation: `python -m pytest -q tests/test_cli_end_to_end.py tests/test_mcp.py
+tests/test_notebook_interface.py tests/test_provenance_pipeline.py` — **37 passed
+in 146.13 s**. After final docstring/formatting edits, lint, compilation and
+`git diff --check` passed. A real SDK stdio session verified the PLACE-seq server
+name, all 13 tools and the existing guide URI; `scripts/mcp_smoke.py --example`
+completed all stages and the new HTML report carried the PLACE-seq title.
+CLI help/version/doctor displayed the name. Smoke evidence is in
+`/private/tmp/place-seq-brand-zldt35h3`. Current guide links/anchors were checked.
+The update extends PR #2; the separate RP04 edits remain excluded.
+
+---
+
+## 2026-09-07 (README review) — A complete first-run path
+
+**Documentation only; no scientific or execution changes.** Reviewed the full
+GitHub README against package metadata, CLI behavior, the notebook, MCP guide,
+configuration reference and CI configuration. The previous reading order put
+example commands before installation, assumed a checkout without explaining
+how to obtain one, repeated advanced material, and left output interpretation
+to linked documents. It also described three worked examples where four exist.
+
+Reorganised the README around interface selection, repository access, platform
+installation, a deterministic synthetic example and opening its results. Added
+an input checklist, a Windows activation-free fallback, a private-repository
+Colab wheel route, local Jupyter launch commands, MCP host prerequisites and a
+compact troubleshooting table. Clarified that the base package includes HTML
+and core tables, the report extra adds figures, maximum CPU allocation does not
+remove consensus read caps, and live Colab remains unverified. Retained links
+to migration, technical evidence, scientific history and contributor guidance.
+
+Validation: using the existing Python 3.12 environment from a fresh temporary
+working directory, executed `nanopore3 doctor`, `init nanopore3-example`,
+`validate --config nanopore3-example/configs/example.yaml`, and
+`run --config nanopore3-example/configs/example.yaml --run-id first-run`.
+All commands succeeded; all five documented output paths existed under
+`/private/tmp/nanopore3-readme-eu10eoih/nanopore3-example/runs/first-run`.
+Checked all 30 local README links and section anchors and ran `git diff --check`.
+Installation commands were checked against metadata and existing platform
+guidance; this review did not repeat fresh installations or live Colab testing.
+The separate RP04 configuration edits are outside this documentation change.
 
 ---
 

@@ -25,9 +25,11 @@ from .runtime import doctor_report
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nanopore3",
-        description="Conservative, reproducible Nanopore amplicon consensus analysis",
+        description="PLACE-seq: Plate and Library Assignment, Consensus and Evaluation",
     )
-    parser.add_argument("--version", action="version", version=f"nanopore3 {__version__}")
+    parser.add_argument(
+        "--version", action="version", version=f"PLACE-seq {__version__} (nanopore3)"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     doctor = subparsers.add_parser(
@@ -137,7 +139,7 @@ def _print_doctor(as_json: bool) -> None:
     if as_json:
         print(json.dumps(report, indent=2, sort_keys=True))
         return
-    print(f"Nanopore3 {__version__}")
+    print(f"PLACE-seq {__version__} (nanopore3)")
     print(f"Python: {report['python']}")
     print(f"Platform: {report['platform']}")
     print(f"CPUs: {report['available_cpus']} available ({report['cpu_count']} host)")

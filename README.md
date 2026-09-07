@@ -1,214 +1,292 @@
-# Nanopore3
+# PLACE-seq
 
-Nanopore3 is a clean-room successor to the exploratory Nanopore2 notebooks. Its goal is a
-portable, reproducible, and inspectable pipeline for demultiplexing Nanopore amplicons,
-assigning reads to references, constructing consensuses, and reporting quality-control
-evidence.
+**P**late and **L**ibrary **A**ssignment, **C**onsensus and **E**valuation
 
-> **Status: v0.3 pre-alpha.** The current release implements a portable end-to-end workflow,
-> explicit multi-library plate routing, and the contracts needed for experimental validation. It is not yet a
-> production-validated replacement for Nanopore2. Keep Nanopore2 and its results unchanged
-> while outputs are compared against synthetic controls and held-out experimental runs.
+Analyse Nanopore amplicon reads from FASTQ to a browsable report. PLACE-seq
+separates reads by plate and well barcode, matches them to reference sequences,
+builds consensus sequences, and reports quality control (QC) for each result.
+Use it from the command line, a Jupyter/Colab notebook, or an AI assistant with
+Model Context Protocol (MCP) support. All three use the same pipeline.
 
-**September 2026 update:** maximum allocated parallelism, safe subsampling,
-source-aware reuse, disk-backed grouping and a documented MCP server. Read the
+> **v0.3.0 · pre-alpha.** The workflow runs end to end, but experimental
+> validation is still in progress. Compare results with controls and retain
+> existing Nanopore2 analyses before adopting it as a replacement.
+
+PLACE-seq was previously called Nanopore3. The package, commands and GitHub
+repository still use `nanopore3`; the instructions below use those existing names.
+
+## Choose how to run
+
+| I want to… | Start here |
+|---|---|
+| Run on my computer or a Linux server | [Install and run the example](#install-and-run-the-example) |
+| Work interactively in Jupyter or Google Colab | [Notebook setup](#jupyter-and-google-colab) |
+| Let an AI assistant run and inspect analyses | [Connect an AI assistant](#connect-an-ai-assistant) |
+| Configure my own sequencing experiment | [Use your own data](#use-your-own-data) |
+
+**Updating an existing installation?** Read the
 [update and migration guide](docs/updates/2026-09-07-portability-and-mcp.md)
-before resuming an older run.
+before resuming older runs. Reuse requires matching installed source code,
+including the code changes for this naming update.
 
-## Design promises
+## Install and run the example
 
-- The portable core installs with pip on macOS, native Windows, Linux, and Google Colab.
-- Inputs are never modified. A run writes to a new directory and records its configuration.
-- Classification has explicit rejection states; weak evidence is not silently called assigned.
-- Parallel execution is bounded, deterministic, and avoids nested CPU oversubscription.
-- Optional native tools are detected during preflight and recorded in provenance.
-- Notebooks are clients of the package, not the implementation or source of hidden state.
+You need **Python 3.10–3.13**; use Python 3.12 if you are setting up a new
+environment. The portable workflow runs on macOS, Linux and native Windows
+without additional bioinformatics executables.
 
-**Try it without installing anything:**
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/t-j-fryer/nanopore3/blob/main/notebooks/Nanopore3_Colab.ipynb)
-— runs the synthetic example after Setup, then walks through your own data from Drive.
-For private repository access, use an authenticated checkout or upload a wheel.
+### 1. Get the repository
 
-**New here? Start with [Worked examples](docs/workflows.md)** — three complete scenarios,
-from what is on the bench to what you read afterwards.
+With Git installed and access to this repository:
 
-**Using an AI assistant?** The optional [MCP server](docs/mcp.md) exposes project
-inspection, configuration creation, safe FASTQ subsampling, validation, background runs, resume/rerun,
-job logs, cancellation and result previews through stdio or Streamable HTTP:
-
-```bash
-python -m pip install -e ".[mcp]"
-python -m nanopore3.mcp_server --workspace /absolute/path/to/project
+```sh
+git clone https://github.com/t-j-fryer/nanopore3.git
+cd nanopore3
 ```
 
-The guide includes Windows setup, client configuration, an executable smoke
-client, and Colab usage. See the [repository assessment](docs/repository-assessment.md)
-for measured performance, portability evidence and known core limitations.
+Alternatively, use GitHub's **Code → Download ZIP**, extract it, and open a
+terminal in the extracted folder containing `pyproject.toml`. If you already
+have a checkout, open that folder. This update is distributed through the
+repository or a wheel built from it; it is not a PyPI release.
 
-See [Architecture](docs/architecture.md) for the stage model and reproducibility contract,
-[Configuration](docs/configuration.md) for the option reference,
-[References](docs/references.md) for the four ways to describe your constructs, and
-[Pooling layout](docs/pooling-layout.md) if several culture plates were combined into one
-colony-PCR plate.
+### 2. Install in a virtual environment
 
-## Quick start
+**macOS / Linux**
 
-Nanopore3 requires Python 3.10–3.13. Python 3.12 is the reference development version.
-
-Once installed, create and run a self-contained example:
-
-```bash
-nanopore3 init nanopore3-example
-nanopore3 validate --config nanopore3-example/configs/example.yaml
-nanopore3 run --config nanopore3-example/configs/example.yaml
-```
-
-Each run gets a new directory containing checksummed stage manifests, per-read decisions,
-consensus contributor IDs, tri-state QC and an HTML report. Use `--run-id NAME --resume` only to
-resume that exact configuration; changed or corrupted artifacts are rejected.
-
-### macOS and Linux
-
-```bash
-python3 -m venv .venv
+```sh
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
-nanopore3 --help
+python -m pip install -e ".[report]"
+nanopore3 doctor
 ```
 
-### Windows PowerShell
+Use `python3` instead of `python3.12` if it points to a supported Python version.
+
+**Windows PowerShell**
 
 ```powershell
 py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e .
-nanopore3 --help
+python -m pip install -e ".[report]"
+nanopore3 doctor
 ```
 
-Native Windows supports the portable edlib-based workflow. WSL2 is recommended when a run
-requires Unix bioinformatics binaries such as MAFFT, SPOA, or minimap2.
+If PowerShell blocks activation, use `.\.venv\Scripts\python.exe` instead of
+`python` in the install commands, and `.\.venv\Scripts\python.exe -m nanopore3`
+instead of `nanopore3` in subsequent commands. No execution-policy change is needed.
 
-### Micromamba or Conda
+The `report` extra adds plots and their dependencies. For a smaller installation,
+use `python -m pip install -e .`; consensus sequences, core tables and the HTML
+report still work. Missing optional executables in `doctor` are expected when
+using the default `portable` consensus backend.
 
-The supplied environment is deliberately portable and does not require Bioconda:
+<details>
+<summary>Prefer Micromamba or Conda?</summary>
 
-```bash
+From the repository folder:
+
+```sh
 micromamba create -f environment.yml
 micromamba activate nanopore3
-nanopore3 --help
+nanopore3 doctor
 ```
 
-### Jupyter and Google Colab
+For Conda, replace `micromamba` with `conda env` in the create command and use
+`conda activate nanopore3`. The environment includes reporting and notebook
+support; it does not require Bioconda.
 
-The [notebook](notebooks/Nanopore3_Colab.ipynb) works in local Jupyter on
-Linux/macOS/Windows and in Colab. Clone or upload this repository, then install
-into the active Colab kernel:
+</details>
 
-```python
-%pip install -e "/content/Nanopore3[notebook,report,mcp]"
+### 3. Run the bundled synthetic example
+
+Run these commands from the same terminal. No sequencing data is needed:
+
+```sh
+nanopore3 init nanopore3-example
+nanopore3 validate --config nanopore3-example/configs/example.yaml
+nanopore3 run --config nanopore3-example/configs/example.yaml --run-id first-run
 ```
 
-Notebook Setup prefers a nearby checkout, or accepts an explicit wheel/pinned
-package specification, and installs reporting/MCP together.
-The notebook uses checked CLI subprocesses through the kernel's interpreter,
-shows effective CPU/memory budgets, and creates new paths for inputs and runs.
-Stage active data/output on local disk; archive to Drive or other durable storage.
-Keep a full run archive for reuse, and reinstall the same source revision/wheel.
-Summary exports alone cannot resume a run. The portable backend needs no apt or conda.
+The CLI prints stage progress and finishes with `Completed run:` and the output
+paths. Results are under `nanopore3-example/runs/first-run/`. To run the example
+again, choose a new `--run-id`, such as `second-run`.
 
-## Optional features
+### 4. Open the results
 
-Install only what is needed:
+Paths below are relative to the completed run directory:
 
-```bash
-python -m pip install -e ".[report]"          # tables, statistics, and plots
-python -m pip install -e ".[notebook]"        # JupyterLab and kernel support
-python -m pip install -e ".[report,notebook]"
-python -m pip install -e ".[dev]"             # tests, coverage, and linting
+| File or folder | What to look at |
+|---|---|
+| `stages/06_report/report.html` | Open in a browser for the run overview |
+| `consensus_by_plate/index.csv` | Open in a spreadsheet for one row per clone, grades and sequence accuracy |
+| `consensus_by_plate/` | Individual consensus FASTA files organised by plate and well |
+| `stages/05_qc/qc.csv.gz` | Detailed QC calls in a compressed CSV |
+| `run.json` and stage manifests | Recorded configuration, source identity, checksums and execution details |
+
+Clone files and their index are written by default (`consensus_tree: true`).
+A completed command means the analysis finished; inspect QC to determine which
+results passed, failed or remain uncertain. See
+[Reading the results](docs/workflows.md#reading-the-results) for column meanings.
+
+## Use your own data
+
+Start from a generated example, then edit its YAML configuration to describe
+**your experiment**. The bundled synthetic motifs, barcodes and thresholds are
+for the demo.
+
+You will need:
+
+- **Reads:** one or more FASTQ or FASTQ.gz files.
+- **References:** FASTA sequences for your designed inserts or assembled constructs.
+- **Assay details:** boundary motifs, plate/well barcode sequences or CSV registries,
+  and the reference library associated with each plate barcode.
+- **Pooling layout, if applicable:** the mapping from pooled PCR plates back to
+  source culture plates.
+
+The [four worked examples](docs/workflows.md) cover inserts versus assembled
+references, with one culture plate per barcode or pooled plates. Use the
+[configuration guide](docs/configuration.md) for individual settings.
+**Relative file paths resolve beside the YAML file**, not beside your terminal.
+
+After saving your configuration as `run.yaml`:
+
+```sh
+nanopore3 validate --config run.yaml
+nanopore3 run --config run.yaml
 ```
 
-MAFFT and SPOA provide the opt-in `mafft_spoa` consensus backend used by the legacy
-notebook; `portable` is the default reference-guided edlib pileup. Minimap2 and mappy are
-reserved optional accelerators. These tools are intentionally not installed by the core package
-because availability differs across operating systems. Nanopore3 locates requested executables,
-reports their versions, and fails preflight when a selected backend is unavailable. The actual
-consensus backend is recorded with each result.
+Input files are read-only. New runs receive their own output directory under
+`output_root`; `--output` overrides that location. Keep original reads and
+complete run directories in durable storage.
 
-For scientifically locked production runs, use a platform-specific environment lock or a
-versioned Linux container in addition to the portable package metadata.
+## Jupyter and Google Colab
 
-## Commands
+The same [notebook](notebooks/Nanopore3_Colab.ipynb) works in local Jupyter on
+macOS, Linux and Windows, and in Colab.
 
-```bash
-nanopore3 doctor --json
-nanopore3 validate --config configs/example.yaml
-nanopore3 run --config configs/example.yaml --output runs
+**Local Jupyter:** after the installation above, run from the repository folder:
+
+```sh
+python -m pip install -e ".[report,notebook,mcp]"
+jupyter lab notebooks/Nanopore3_Colab.ipynb
 ```
 
-The same workflow is available to Python and notebooks through `load_config()` and
-`run_pipeline()`. See [Configuration](docs/configuration.md) and the clean quick-start notebook.
+**Google Colab:** open the notebook below, or upload the `.ipynb` file to Colab.
+No local Python installation is required.
 
-Barcode panels live in reviewable CSV registries and run profiles select one primer family
-explicitly. Named reference libraries are routed by plate barcode rather than pooled. See
-[Barcode registry](docs/barcode_registry.md) and the
-[20260506 pilot report](docs/20260506_lab_biotin_pilot.md). The recovered
-thresholds, decision rules and parallel benchmarks are documented in the
-[demultiplex optimisation audit](docs/demultiplex_optimisation.md) and the
-[assignment optimisation note](docs/assignment_optimisation.md).
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/t-j-fryer/nanopore3/blob/main/notebooks/Nanopore3_Colab.ipynb)
 
-## Lab notebook
+**Private repository access:** the badge and the notebook's default Git install
+require access to the repository. If either fails, upload the notebook and a
+wheel built from an accessible checkout. Build the wheel locally with
+`python -m pip wheel . --no-deps --wheel-dir dist`, upload the resulting `.whl`
+to Colab, and set `PACKAGE_SPEC` in Setup to its path with `[report,mcp]` appended
+(for example, `/content/nanopore3-0.3.0-py3-none-any.whl[report,mcp]`).
 
-[`LAB_NOTEBOOK.md`](LAB_NOTEBOOK.md) is the dated, append-only record of what changed in this
-repository, why, what was learned, and what to do next. **Read the most recent entry before
-starting work, and add an entry when you finish.** It is written so that a person or an agent with
-no prior context can pick up the work. Entries separate scientific changes, which can alter
-results, from performance changes, which must not.
+Run **Setup**, then choose **A — Synthetic example** or **B — Your own data**.
+The notebook includes data staging, resource settings, results and archiving.
+In Colab, keep active inputs and outputs on VM-local disk, then archive to Drive.
+The VM's files are temporary; retain a **complete run archive** for resume/rerun.
+Live Colab execution has not yet been verified; local notebook workflows and a
+simulated Drive mount are tested.
 
-## Performance
+## Connect an AI assistant
 
-By default, `parallel.backend: process`, `parallel.jobs: 0`, and
-`parallel.threads_per_job: 1` use all allocated CPUs for demultiplexing and
-assignment. Shipped profiles use these settings too. Set a positive `jobs`
-value to cap workers, or `backend: serial` to disable process parallelism.
-Linux affinity/cgroup limits are respected. Consensus/chimera groups spill to
-disk and have a configurable memory estimate guard; `maximum_reads: 0` includes
-all eligible reads. See the [resource and reuse guide](docs/configuration.md).
-Resume/rerun require unchanged installed source; older runs without source identity
-remain readable and need a fresh run for recomputation.
+The optional MCP server lets a compatible AI host inspect a project, create
+configs, subsample reads, validate inputs, run analyses, monitor or cancel jobs,
+and read results. The host must support **stdio or Streamable HTTP MCP**.
 
-Reads are matched to references with a k-mer prefilter before any alignment: a specificity-weighted
-index proposes a few candidates and only those are aligned, which costs about four alignments per
-read instead of one per reference. Both demultiplexing and assignment are bound by Python-level work
-rather than by the GIL-releasing edlib calls, so **process workers scale this pipeline and threads do
-not** — on a 16-CPU Mac, four threads demultiplexed *slower* than serial, while eight processes were
-roughly three times faster than serial. Benchmark your own machine with `scripts/benchmark_demux.py`
-and `scripts/benchmark_assignment.py` before changing `parallel` in a run profile, and confirm the
-call counts are unchanged.
+From the installed checkout:
 
-## Repository layout
-
-```text
-LAB_NOTEBOOK.md    dated record of changes, rationale, lessons, and next steps
-src/nanopore3/     installable library and CLI
-configs/           versioned run and assay configuration examples
-scripts/           benchmarking and diagnostic utilities
-fixtures/          small synthetic data suitable for version control
-tests/             unit, integration, and golden tests
-docs/              architecture and operating guidance
-notebooks/          package-driven local/Colab examples (no workflow implementation)
+```sh
+python -m pip install -e ".[report,mcp]"
+python -m nanopore3.mcp_server --help
 ```
 
-Large FASTQ data and generated runs are ignored by Git. Reference manifests and checksums should
-be versioned; raw sequencing data should be managed by the laboratory's durable data system.
+Follow the [MCP setup guide](docs/mcp.md#connect-a-local-ai-using-stdio) to configure
+your host with the environment's **absolute Python path** and an **existing
+workspace directory**. It includes copyable JSON, Windows paths, all 13 tools,
+HTTP setup and a smoke client. For stdio, the AI host launches the server.
 
-## Safety
+Suggested first request once connected:
 
-Do not point experimental development at the only copy of a dataset. Nanopore3 treats inputs as
-read-only and should write intermediate files atomically. It must not infer completion merely
-because some output files exist, and it must not delete or move prior evidence during analysis.
-Nanopore3 includes opt-in positional-signature chimera analysis; its reported origin
-classifications remain dependent on configured references and experimental validation. Until
-the experimental validation suite is complete, compare every result with controls and retain the
-original Nanopore2 analysis.
+> Create the PLACE-seq synthetic example, wait for it to finish, validate it,
+> then run it. Monitor each job to completion and show me the report and QC results.
+
+For Colab, the MCP client must run inside the notebook VM; a desktop client
+cannot directly reach that VM's loopback server.
+
+## Performance and resource settings
+
+**Maximum allocated CPU parallelism is the default** for demultiplexing and
+assignment:
+
+```yaml
+parallel:
+  backend: process
+  jobs: 0
+  threads_per_job: 1
+```
+
+`jobs: 0` uses the detected CPU allocation, respecting exposed affinity and Linux
+cgroup limits. Set a positive `jobs` value to use fewer workers, or
+`backend: serial` for serial execution. Use `nanopore3 doctor --json` for runtime
+information and `nanopore3 validate --config run.yaml --quick` for the configured
+resource plan; even quick validation computes input checksums.
+
+More workers also need more RAM. Grouped reads use temporary disk storage with
+an estimated per-group memory guard; this is not a total process memory limit.
+`consensus.maximum_reads: 0` includes all eligible reads in each consensus;
+positive values cap depth. Maximum CPU use does **not** change that read cap.
+See [resource settings](docs/configuration.md#running-on-a-machine-you-did-not-configure-for)
+and the [performance assessment](docs/repository-assessment.md) for controls,
+measured benchmarks and their limitations.
+
+## Common tasks and troubleshooting
+
+| Task or problem | Command or next step |
+|---|---|
+| Explore commands | `nanopore3 --help` or `nanopore3 run --help` |
+| Check installation and CPUs | `nanopore3 doctor` |
+| Try the first 100,000 reads | `nanopore3 subsample --input reads.fastq.gz --output subset.fastq.gz --reads 100000` — use a new output path on local disk; this selects a prefix, not a random sample |
+| Inspect a pooling layout | `nanopore3 layout --config run.yaml` |
+| Resume an interrupted run | `nanopore3 run --config run.yaml --run-id NAME --resume` — use the original output root, configuration and installed source |
+| Recompute selected stages | See the [rerun guide](docs/architecture.md#reruns-recomputing-the-analysis-without-the-fastq) |
+| `nanopore3` command not found | Activate the environment, or use its Python executable with `-m nanopore3` |
+| Missing files or environment variables | Check paths relative to the YAML and set every `${VARIABLE}` it uses |
+| Source identity missing or changed | Old results remain readable; start a new run from original inputs. Restart Python/MCP after changing installed code |
+| Group memory estimate exceeded | Review the [memory controls](docs/configuration.md#running-on-a-machine-you-did-not-configure-for) and available RAM/disk before increasing the limit |
+
+The optional `mafft_spoa` consensus backend requires separately installed MAFFT
+and SPOA. Use Linux or WSL2 on Windows for that toolchain; the default portable
+backend needs neither. See the [backend policy](docs/architecture.md#portability-and-backend-policy).
+
+## Documentation and development
+
+| Guide | Contents |
+|---|---|
+| [Worked examples](docs/workflows.md) | Choose an assay configuration and interpret results |
+| [Configuration](docs/configuration.md) | Paths, presets, resources, QC and reuse |
+| [References](docs/references.md) | Describe inserts, constant regions and assembled constructs |
+| [Barcode registry](docs/barcode_registry.md) · [Pooling layout](docs/pooling-layout.md) | Barcode panels and source-plate routing |
+| [MCP server](docs/mcp.md) | AI host setup, tools, jobs and troubleshooting |
+| [Repository assessment](docs/repository-assessment.md) | Structure, performance, platform evidence and limitations |
+| [Architecture](docs/architecture.md) | Pipeline stages and reproducibility contracts |
+| [Update and migration guide](docs/updates/2026-09-07-portability-and-mcp.md) | September 2026 changes and compatibility |
+| [Lab notebook](LAB_NOTEBOOK.md) | Dated changes, validation evidence and next steps |
+
+Implementation lives in `src/nanopore3/`; examples and profiles in `configs/`;
+synthetic data in `fixtures/`; checks in `tests/`; utilities in `scripts/`;
+and the notebook in `notebooks/`. Large reads and generated runs are Git-ignored.
+
+Before contributing, read the latest [lab notebook](LAB_NOTEBOOK.md) entry and
+add an entry when finished. Install development tools with
+`python -m pip install -e ".[dev,mcp]"`, then run `python -m pytest -q` and
+`python -m ruff check src scripts tests`. Scientific tuning history is recorded
+in the [demultiplex audit](docs/demultiplex_optimisation.md),
+[assignment note](docs/assignment_optimisation.md) and
+[pilot report](docs/20260506_lab_biotin_pilot.md).
+
+Licensed under the [MIT License](LICENSE).

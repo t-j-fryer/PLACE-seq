@@ -1,4 +1,4 @@
-"""Nanopore3: conservative, reproducible amplicon consensus analysis."""
+"""PLACE-seq: Plate and Library Assignment, Consensus and Evaluation."""
 
 from __future__ import annotations
 

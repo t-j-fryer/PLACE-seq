@@ -1,6 +1,6 @@
 # Configuration guide
 
-Nanopore3 resolves every path relative to the YAML configuration file and rejects unknown keys.
+PLACE-seq resolves every path relative to the YAML configuration file and rejects unknown keys.
 This makes configurations portable while preventing a misspelled threshold from silently using a
 default. Start with `nanopore3 init` and edit the generated example.
 

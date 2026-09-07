@@ -1,6 +1,6 @@
 # References: four ways to describe what you expect to find
 
-Nanopore3 compares each consensus to a reference. The input is always an amplicon;
+PLACE-seq compares each consensus to a reference. The input is always an amplicon;
 what you supply here says **where in it the designed region sits**, so that errors
 in your design are never averaged together with errors in the constant sequence
 around it.

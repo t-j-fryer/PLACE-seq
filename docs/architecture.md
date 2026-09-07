@@ -1,8 +1,8 @@
-# Nanopore3 architecture
+# PLACE-seq architecture
 
 ## Purpose
 
-Nanopore3 separates the useful algorithms developed in Nanopore2 from notebook state, hardcoded
+PLACE-seq separates the useful algorithms developed in Nanopore2 from notebook state, hardcoded
 paths, accumulated output directories, and assay-specific plots. The production path is a small
 Python library with explicit stage contracts. A CLI, notebook, or future workflow engine invokes
 the same functions and receives the same structured results.
@@ -103,7 +103,7 @@ across different algorithms.
 
 ## Parallel execution
 
-Nanopore3 uses a central resource budget rather than independent thread choices in every stage.
+PLACE-seq uses a central resource budget rather than independent thread choices in every stage.
 The main controls are:
 
 - `jobs`: concurrent read batches in demultiplexing and assignment;
@@ -158,7 +158,7 @@ avoids Windows path-length and forbidden-character problems and makes rename ope
 
 The run manifest should contain:
 
-- manifest schema and Nanopore3 version;
+- manifest schema and PLACE-seq version;
 - source revision or source-tree hash;
 - normalized configuration and its hash;
 - Python, operating system, architecture, CPU budget, and package versions;
@@ -188,7 +188,7 @@ Defaults are visible in a resolved configuration stored with the run.
 
 ## Reproducibility levels
 
-Nanopore3 supports three complementary environments:
+PLACE-seq supports three complementary environments:
 
 1. Portable pip installation: easiest use and broadest platform support.
 2. Platform lock: exact Python packages and native tools for macOS/Linux/WSL.

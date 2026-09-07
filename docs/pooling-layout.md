@@ -1,4 +1,4 @@
-# Pooling layout: telling Nanopore3 which culture plate a well came from
+# Pooling layout: telling PLACE-seq which culture plate a well came from
 
 Two experiments need two different amounts of configuration, and most runs are the
 first kind.
@@ -23,7 +23,7 @@ A1 of every culture plate that went into it. What resolves the ambiguity is the
 plate 3, that read came from culture plate 3.
 
 That inference needs one table, and **that table is experimental design.** It is
-what was done at the bench, it is known before any read exists, and Nanopore3 will
+what was done at the bench, it is known before any read exists, and PLACE-seq will
 never infer it from the data. Inferring it would use the reads to construct the
 key that then interprets those same reads, and the result would look like a
 success no matter what was really on the plates.

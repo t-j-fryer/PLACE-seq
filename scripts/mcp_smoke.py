@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect to Nanopore3 via MCP; optionally run a new packaged synthetic example."""
+"""Connect to PLACE-seq via MCP; optionally run a new packaged synthetic example."""
 
 from __future__ import annotations
 

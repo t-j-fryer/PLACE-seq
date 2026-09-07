@@ -1,13 +1,19 @@
-# Nanopore3 MCP server
+# PLACE-seq MCP server
+
+**Plate and Library Assignment, Consensus and Evaluation.**
 
 The optional MCP server lets an AI inspect a project, create a configuration,
 subsample FASTQ safely, validate inputs, start or resume an analysis, rerun selected stages, monitor jobs,
-and read results. It calls the existing Nanopore3 CLI in subprocesses using the
+and read results. It calls the existing PLACE-seq CLI in subprocesses using the
 same Python environment. No analysis algorithms are duplicated in the adapter.
 
 Any **MCP-capable AI host** supporting stdio or Streamable HTTP can connect.
 A model or chat window without MCP/tool support needs a host or a small client
 program; installing this package alone does not give it access to your computer.
+
+The server identifies itself to clients as **PLACE-seq**. The Python package,
+launch commands, `nanopore3://` resource URIs and `.nanopore3-mcp` job directory
+retain their existing names so client configurations and job history still work.
 
 ## Install once
 
@@ -86,7 +92,7 @@ normal. Standard output is reserved for MCP messages; job output goes to files.
 
 Suggested first instruction to your AI:
 
-> Use Nanopore3's guide and workspace_info. Create the synthetic example,
+> Use PLACE-seq's guide and workspace_info. Create the synthetic example,
 > poll its job, validate its configuration and poll again, then run it.
 > Wait for success and show the stage summary and QC output paths.
 

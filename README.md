@@ -1,6 +1,8 @@
-# Nanopore3
+# PLACE-seq
 
-Analyse Nanopore amplicon reads from FASTQ to a browsable report. Nanopore3
+**P**late and **L**ibrary **A**ssignment, **C**onsensus and **E**valuation
+
+Analyse Nanopore amplicon reads from FASTQ to a browsable report. PLACE-seq
 separates reads by plate and well barcode, matches them to reference sequences,
 builds consensus sequences, and reports quality control (QC) for each result.
 Use it from the command line, a Jupyter/Colab notebook, or an AI assistant with
@@ -9,6 +11,9 @@ Model Context Protocol (MCP) support. All three use the same pipeline.
 > **v0.3.0 · pre-alpha.** The workflow runs end to end, but experimental
 > validation is still in progress. Compare results with controls and retain
 > existing Nanopore2 analyses before adopting it as a replacement.
+
+PLACE-seq was previously called Nanopore3. The package, commands and GitHub
+repository still use `nanopore3`; the instructions below use those existing names.
 
 ## Choose how to run
 
@@ -21,7 +26,8 @@ Model Context Protocol (MCP) support. All three use the same pipeline.
 
 **Updating an existing installation?** Read the
 [update and migration guide](docs/updates/2026-09-07-portability-and-mcp.md)
-before resuming older runs. Reuse requires matching installed source code.
+before resuming older runs. Reuse requires matching installed source code,
+including the code changes for this naming update.
 
 ## Install and run the example
 
@@ -206,7 +212,7 @@ HTTP setup and a smoke client. For stdio, the AI host launches the server.
 
 Suggested first request once connected:
 
-> Create the Nanopore3 synthetic example, wait for it to finish, validate it,
+> Create the PLACE-seq synthetic example, wait for it to finish, validate it,
 > then run it. Monitor each job to completion and show me the report and QC results.
 
 For Colab, the MCP client must run inside the notebook VM; a desktop client

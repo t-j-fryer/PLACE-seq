@@ -1,4 +1,4 @@
-"""Optional MCP adapter. Run with ``python -m nanopore3.mcp_server --help``."""
+"""PLACE-seq MCP adapter. Run with ``python -m nanopore3.mcp_server --help``."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from uuid import uuid4
 
 import yaml
 
-GUIDE = """Nanopore3 analyses Nanopore amplicon FASTQ against configured references.
+GUIDE = """PLACE-seq: Plate and Library Assignment, Consensus and Evaluation.
+PLACE-seq analyses Nanopore amplicon FASTQ against configured references.
 Start with workspace_info and read nanopore3://example-config. Tool paths are
 relative to the server workspace, never the AI client's machine. init_example
 creates a complete synthetic project. save_config creates a new YAML file;
@@ -86,7 +87,7 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
             return app
 
     server = NanoporeServer(
-        "Nanopore3", instructions=GUIDE,
+        "PLACE-seq", instructions=GUIDE,
         host="127.0.0.1", port=port, stateless_http=True, json_response=True,
     )
     read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
@@ -106,7 +107,7 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
     def analyse_run(config_path: str) -> str:
         """Guide an AI through validation, execution, and evidence review."""
         return (
-            f"Analyse the Nanopore3 configuration at {config_path!r}. Read the guide, "
+            f"Analyse the PLACE-seq configuration at {config_path!r}. Read the guide, "
             "inspect the config, validate it, poll to completion, and report any errors. "
             "Run the requested configuration, poll the job, then inspect run_summary "
             "and QC artifacts. Report counts, uncertainty, provenance and output paths."

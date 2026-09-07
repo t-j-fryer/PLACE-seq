@@ -1,7 +1,7 @@
 # Nanopore2 migration and validation plan
 
 Nanopore2 remains read-only historical evidence. Algorithms are reimplemented from documented
-behavior rather than moving its mutable output trees into Nanopore3.
+behavior rather than moving its mutable output trees into PLACE-seq.
 
 ## Implemented foundation
 
@@ -24,7 +24,7 @@ behavior rather than moving its mutable output trees into Nanopore3.
 4. Benchmark portable consensus against SPOA and MAFFT-based adapters by accuracy, depth and time.
 5. Add a split-alignment chimera candidate model. Promote it to a biological call only after its
    false-positive rate against truncations, large deletions and close references is acceptable.
-6. Compare clean Nanopore3 runs against archived Nanopore2 outputs by per-read decision—not just
+6. Compare clean PLACE-seq runs against archived Nanopore2 outputs by per-read decision—not just
    aggregate assignment yield—and investigate every major discordant category.
 
 ## Deferred intentionally

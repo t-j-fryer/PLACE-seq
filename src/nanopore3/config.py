@@ -1,4 +1,4 @@
-"""Validated, portable configuration loading for Nanopore3.
+"""Validated, portable configuration loading for PLACE-seq.
 
 Configuration files are deliberately strict: unknown keys are rejected so that a
 misspelled threshold cannot silently change a run.  Every path is expanded and
@@ -650,7 +650,7 @@ class CompressedPcrSettings:
 
 @dataclass(frozen=True, slots=True)
 class PipelineConfig:
-    """Fully resolved and validated Nanopore3 run configuration."""
+    """Fully resolved and validated PLACE-seq run configuration."""
 
     schema_version: int
     run_name: str
@@ -1467,7 +1467,7 @@ def _apply_preset(root: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def load_config(path: str | Path) -> PipelineConfig:
-    """Load and validate a Nanopore3 YAML configuration.
+    """Load and validate a PLACE-seq YAML configuration.
 
     The loader validates structure and value ranges but intentionally does not
     require inputs to exist.  A separate ingest validation step can therefore

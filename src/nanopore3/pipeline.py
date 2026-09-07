@@ -1,4 +1,4 @@
-"""Safe, portable orchestration for the Nanopore3 workflow."""
+"""Safe, portable orchestration for the PLACE-seq workflow."""
 
 from __future__ import annotations
 
@@ -2423,7 +2423,7 @@ def run_pipeline(
                     sections["Culture plate recovery"] = recovery
             write_html_report(
                 stage.output_path("report.html"),
-                title=f"Nanopore3 — {config.run_name}",
+                title=f"PLACE-seq — {config.run_name}",
                 sections=sections,
                 provenance={
                     "run_id": run_id,

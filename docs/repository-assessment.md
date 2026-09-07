@@ -7,7 +7,7 @@ covered by fresh-interpreter equivalence tests. The benchmark tables retain
 their original pre-fix evidence; references below to eight-worker production
 settings describe the configuration at the time of that assessment.
 
-Nanopore3 has a useful, well-tested portable core and unusually strong output
+PLACE-seq (formerly Nanopore3) has a useful, well-tested portable core and unusually strong output
 provenance for a pre-alpha research pipeline. It is suitable for controlled
 analyses and iterative validation. It is not yet a resource-bounded workflow
 engine or a fully locked, production-validated scientific application.

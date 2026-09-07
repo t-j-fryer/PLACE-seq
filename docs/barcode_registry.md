@@ -1,6 +1,6 @@
 # Barcode registry and assay routing
 
-Nanopore3 keeps barcode identity separate from experimental meaning. A reverse
+PLACE-seq keeps barcode identity separate from experimental meaning. A reverse
 primer's full sequence identifies a primer family and vector context; a run
 profile separately maps a called plate barcode to the reference library that was
 actually loaded on that plate.

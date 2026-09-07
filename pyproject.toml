@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nanopore3"
 version = "0.3.0"
-description = "A portable, reproducible pipeline for demultiplexing and consensus analysis of Nanopore amplicons"
+description = "PLACE-seq: Plate and Library Assignment, Consensus and Evaluation for Nanopore amplicons"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 authors = [

@@ -3,7 +3,8 @@
 This update adds an optional MCP server, repairs four reliability issues, and
 aligns the CLI, local Jupyter and Colab workflows. Package version remains
 `0.3.0` (pre-alpha); this is a repository update, not a PyPI release. Install the
-updated checkout or a wheel built from it. The GitHub repository remains private:
+updated checkout or a wheel built from it. The repository is now named
+[PLACE-seq](https://github.com/t-j-fryer/PLACE-seq). When using private forks,
 Colab needs an authenticated checkout or an uploaded wheel to use private code.
 
 ## Before updating an existing analysis
@@ -85,11 +86,11 @@ including notebook execution and real stdio/HTTP MCP sessions. The installed
 wheel also completed the MCP smoke workflow outside the checkout. Lint,
 compilation and diff checks passed. GitHub Actions runs the portable suite on
 Linux (Python 3.10/3.13), macOS and Windows, plus a Linux installed-wheel workflow;
-[pull request #1](https://github.com/t-j-fryer/nanopore3/pull/1) records the
+[pull request #1](https://github.com/t-j-fryer/PLACE-seq/pull/1) records the
 publication and checks. Live Colab is not covered by that matrix; its Drive mount
 branch is simulated in tests.
 
-The [hosted run for implementation commit 827da1e](https://github.com/t-j-fryer/nanopore3/actions/runs/34153711406)
+The [hosted run for implementation commit 827da1e](https://github.com/t-j-fryer/PLACE-seq/actions/runs/34153711406)
 completed successfully on every target:
 
 | Hosted target | Result |

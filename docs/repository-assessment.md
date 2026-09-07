@@ -24,7 +24,7 @@ and MCP now share the updated resource/reuse behavior. MCP has 13 tools includin
 safe subsampling. The interface suite passes 443 tests; installed-wheel stdio
 verification passes. See the latest lab entry and [MCP guide](mcp.md).
 
-**Hosted validation follow-up:** [GitHub Actions run 34153711406](https://github.com/t-j-fryer/nanopore3/actions/runs/34153711406)
+**Hosted validation follow-up:** [GitHub Actions run 34153711406](https://github.com/t-j-fryer/PLACE-seq/actions/runs/34153711406)
 passed Ubuntu/Python 3.10 and 3.13, macOS/Python 3.12, Windows/Python 3.12 and the
 Linux installed-wheel/report/MCP workflow for implementation commit `827da1e`.
 Earlier statements about local-only verification below describe their original

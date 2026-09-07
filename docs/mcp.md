@@ -247,7 +247,7 @@ reporting and MCP extras once in Setup. Its MCP cell uses that same installation
 without fetching a moving branch again mid-analysis. For an independent setup:
 
 ```python
-%pip install "nanopore3[mcp] @ git+https://github.com/t-j-fryer/nanopore3.git@<pinned-revision>"
+%pip install "nanopore3[mcp] @ git+https://github.com/t-j-fryer/PLACE-seq.git@<pinned-revision>"
 ```
 
 An AI client running **inside that notebook runtime** can spawn the stdio server

@@ -12,8 +12,8 @@ Model Context Protocol (MCP) support. All three use the same pipeline.
 > validation is still in progress. Compare results with controls and retain
 > existing Nanopore2 analyses before adopting it as a replacement.
 
-PLACE-seq was previously called Nanopore3. The package, commands and GitHub
-repository still use `nanopore3`; the instructions below use those existing names.
+PLACE-seq was previously called Nanopore3. The GitHub repository is now
+`PLACE-seq`; the Python package and commands still use `nanopore3`.
 
 ## Choose how to run
 
@@ -40,8 +40,8 @@ without additional bioinformatics executables.
 With Git installed and access to this repository:
 
 ```sh
-git clone https://github.com/t-j-fryer/nanopore3.git
-cd nanopore3
+git clone https://github.com/t-j-fryer/PLACE-seq.git
+cd PLACE-seq
 ```
 
 Alternatively, use GitHub's **Code → Download ZIP**, extract it, and open a
@@ -176,11 +176,11 @@ jupyter lab notebooks/Nanopore3_Colab.ipynb
 **Google Colab:** open the notebook below, or upload the `.ipynb` file to Colab.
 No local Python installation is required.
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/t-j-fryer/nanopore3/blob/main/notebooks/Nanopore3_Colab.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/t-j-fryer/PLACE-seq/blob/main/notebooks/Nanopore3_Colab.ipynb)
 
-**Private repository access:** the badge and the notebook's default Git install
-require access to the repository. If either fails, upload the notebook and a
-wheel built from an accessible checkout. Build the wheel locally with
+**Access troubleshooting:** if you use a private fork or the notebook's Git
+install is unavailable, upload the notebook and a wheel built from an accessible
+checkout. Build the wheel locally with
 `python -m pip wheel . --no-deps --wheel-dir dist`, upload the resulting `.whl`
 to Colab, and set `PACKAGE_SPEC` in Setup to its path with `[report,mcp]` appended
 (for example, `/content/nanopore3-0.3.0-py3-none-any.whl[report,mcp]`).

@@ -15,6 +15,32 @@ Conventions:
 
 ---
 
+## 2026-09-07 (repository rename) — GitHub repository is PLACE-seq
+
+**Repository/documentation update; no scientific or package-source changes.**
+The user explicitly requested renaming the GitHub repository itself. Renamed
+`t-j-fryer/nanopore3` to `t-j-fryer/PLACE-seq` and updated this checkout's origin
+to `https://github.com/t-j-fryer/PLACE-seq.git`. GitHub reported public visibility
+before and after the rename; this operation did not change visibility or owner.
+The default branch remains `main`.
+
+Updated clone/cd instructions, the Colab badge, notebook Git installation and
+guide links, MCP installation URL and linked hosted evidence. Notebook Setup
+now recognises folders named `PLACE-seq` or `place-seq` as well as existing
+checkout names. The README explains that package/CLI names remain `nanopore3`;
+private-access instructions now apply to private forks. Older lab entries keep
+their historical names/URLs. The shared local directory was not moved.
+
+Validation: GitHub API verified the new name and `git ls-remote origin
+refs/heads/main` succeeded at the new address. The two existing notebook setup
+and cell-compilation tests passed. Executed Setup with installation mocked to
+verify both a `PLACE-seq` child checkout and the new Git fallback URL. Updated
+local documentation links/anchors and `git diff --check` passed. Source files
+under `src/nanopore3` are unchanged, so this follow-up does not change analysis
+source identity. Separate local RP04 edits are preserved and excluded.
+
+---
+
 ## 2026-09-07 (naming) — PLACE-seq
 
 **Presentation changes; no scientific decision rules or resource defaults

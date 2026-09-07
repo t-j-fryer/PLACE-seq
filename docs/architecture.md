@@ -7,8 +7,32 @@ paths, accumulated output directories, and assay-specific plots. The production 
 Python library with explicit stage contracts. A CLI, notebook, or future workflow engine invokes
 the same functions and receives the same structured results.
 
-This document describes the target contract. Features not yet exposed by `nanopore3 --help` are
-planned v0.1 work, not claims about the current implementation.
+The design sections below describe the original target contract. The current v0.3
+implementation also includes full-length references, pooled-plate deconvolution,
+optional positional-signature chimera analysis, replicate utilities and an optional
+[MCP adapter](mcp.md). See the [2026-09-07 assessment](repository-assessment.md) for
+implementation gaps rather than interpreting every design promise as implemented.
+
+Current run layout (the historical design layout below differs):
+
+```text
+runs/<run-id>/
+  run.json
+  stages/
+    01_ingest/
+    02_demux/
+    03_assignment/
+    03b_chimera/       # optional
+    04_consensus/
+    05_qc/
+    06_report/
+  consensus_by_plate/
+```
+
+Each completed stage contains `manifest.json` and `_SUCCESS`. MCP lifecycle logs
+and job records live separately in `<workspace>/.nanopore3-mcp/jobs/`. The adapter
+starts the CLI in subprocesses; its job state is not scientific provenance and
+does not replace the run/stage manifests.
 
 ## Pipeline model
 
@@ -82,13 +106,18 @@ across different algorithms.
 Nanopore3 uses a central resource budget rather than independent thread choices in every stage.
 The main controls are:
 
-- `jobs`: concurrent samples, chunks, or consensus groups;
+- `jobs`: concurrent read batches in demultiplexing and assignment;
 - `threads_per_job`: threads given to an external tool;
-- `backend`: `auto`, `serial`, `thread`, or `process`.
+- `backend`: `auto`, `serial`, `thread`, or `process`;
+- `group_memory_mb`: estimated retained-data budget for one consensus group/chimera well.
 
-The planner enforces `jobs * threads_per_job` within the available CPU budget and can additionally
-cap workers using an estimated memory-per-job. Defaults should be conservative; users can opt in
-to more parallelism.
+The planner clamps both workers and threads so `jobs * threads_per_job` fits the
+effective allocation, including Linux affinity and cgroup CPU quotas/cpusets.
+Defaults use all allocated CPUs with one thread per worker. Consensus and chimera
+processing use disk-backed grouping and output accumulators, with a configurable
+per-group memory estimate guard. It is not an RSS cap or a RAM-based worker
+planner; reference indexes and worker batches still require capacity planning.
+See [resource configuration](configuration.md#running-on-a-machine-you-did-not-configure-for).
 
 Process workers are module-level callables with serializable inputs and spawn-safe behavior.
 Nothing starts a pool during import. Work is chunked coarsely to limit Windows spawn overhead.
@@ -198,7 +227,8 @@ Stages before `--from` are carried into a **new** run directory and everything f
   hard linked where the filesystem allows, so carrying 600 MB of intermediates
   forward costs no disk and still cannot be modified in place.
 - **Reuse is decided by the stage fingerprint, not by trust.** Every stage records
-  a fingerprint over its parameters, input digests and pipeline version. A stage is
+  a fingerprint over its parameters, input digests, pipeline version and installed
+  source/preset content identity. A stage is
   inherited only if the current configuration reproduces that fingerprint. Change a
   barcode setting and try to rerun from `04_consensus`, and it is refused:
 
@@ -224,3 +254,7 @@ not an error: it is computed if the new configuration calls for it.
 `--resume` continues *the same run under the same configuration*, and refuses if
 the configuration digest differs at all. Use it after an interruption. Use `rerun`
 when the configuration has changed and you want the unaffected stages kept.
+
+Resume/rerun refuse missing or changed implementation identities before reuse.
+Historical results remain inspectable; recomputing with changed code requires a
+new run from the original inputs. See [reuse policy](configuration.md#source-identity-and-safe-reuse).

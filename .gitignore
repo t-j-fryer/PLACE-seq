@@ -32,6 +32,7 @@ runs/
 !configs/runs/*.yaml
 outputs/
 work/
+.nanopore3-mcp/
 *.partial
 *.tmp
 

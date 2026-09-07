@@ -32,7 +32,11 @@ import shutil
 from pathlib import Path
 
 from .errors import Nanopore3Error
-from .provenance import StageValidationError, validate_stage_directory
+from .provenance import (
+    StageValidationError,
+    require_current_implementation,
+    validate_stage_directory,
+)
 
 # Every stage, in the order they run. A rerun from a stage recomputes it and all
 # that follow.
@@ -124,6 +128,8 @@ def prepare_rerun(
     source_stages = source_run / "stages"
     if not (source_run / "run.json").is_file():
         raise RerunError(f"not a run directory (no run.json): {source_run}")
+    source_metadata = json.loads((source_run / "run.json").read_text(encoding="utf-8"))
+    require_current_implementation(source_metadata)
 
     finished = completed_stages(source_run)
     # Some stages are optional - chimera detection only runs when it is enabled -
@@ -148,6 +154,7 @@ def prepare_rerun(
                 expected_stage=stage,
                 verify_checksums=verify_checksums,
             )
+            require_current_implementation(manifest.runtime)
         except StageValidationError as exc:
             if expected is not None:
                 raise RerunError(
@@ -167,8 +174,8 @@ def prepare_rerun(
     for stage in inherited:
         _link_tree(source_stages / stage, destination_run / "stages" / stage)
 
-    source_metadata = json.loads((source_run / "run.json").read_text(encoding="utf-8"))
     return {
+        "analysis_implementation": source_metadata["analysis_implementation"],
         "inherited_from": source_metadata.get("run_id", source_run.name),
         "not_inherited": absent,
         "inherited_run_path": str(source_run.resolve()),

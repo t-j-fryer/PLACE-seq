@@ -82,7 +82,7 @@ barcodes:
     decision_policy: legacy_unique_best
 
 parallel:
-  jobs: 8
+  jobs: 0
 
 random_seed: 141142
 

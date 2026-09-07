@@ -10,6 +10,11 @@ evidence.
 > production-validated replacement for Nanopore2. Keep Nanopore2 and its results unchanged
 > while outputs are compared against synthetic controls and held-out experimental runs.
 
+**September 2026 update:** maximum allocated parallelism, safe subsampling,
+source-aware reuse, disk-backed grouping and a documented MCP server. Read the
+[update and migration guide](docs/updates/2026-09-07-portability-and-mcp.md)
+before resuming an older run.
+
 ## Design promises
 
 - The portable core installs with pip on macOS, native Windows, Linux, and Google Colab.
@@ -21,10 +26,24 @@ evidence.
 
 **Try it without installing anything:**
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/t-j-fryer/nanopore3/blob/main/notebooks/Nanopore3_Colab.ipynb)
-— runs the synthetic example in two cells, then walks through your own data from Drive.
+— runs the synthetic example after Setup, then walks through your own data from Drive.
+For private repository access, use an authenticated checkout or upload a wheel.
 
 **New here? Start with [Worked examples](docs/workflows.md)** — three complete scenarios,
 from what is on the bench to what you read afterwards.
+
+**Using an AI assistant?** The optional [MCP server](docs/mcp.md) exposes project
+inspection, configuration creation, safe FASTQ subsampling, validation, background runs, resume/rerun,
+job logs, cancellation and result previews through stdio or Streamable HTTP:
+
+```bash
+python -m pip install -e ".[mcp]"
+python -m nanopore3.mcp_server --workspace /absolute/path/to/project
+```
+
+The guide includes Windows setup, client configuration, an executable smoke
+client, and Colab usage. See the [repository assessment](docs/repository-assessment.md)
+for measured performance, portability evidence and known core limitations.
 
 See [Architecture](docs/architecture.md) for the stage model and reproducibility contract,
 [Configuration](docs/configuration.md) for the option reference,
@@ -81,17 +100,23 @@ micromamba activate nanopore3
 nanopore3 --help
 ```
 
-### Google Colab
+### Jupyter and Google Colab
 
-Clone or upload this repository, then install it into the active Colab kernel:
+The [notebook](notebooks/Nanopore3_Colab.ipynb) works in local Jupyter on
+Linux/macOS/Windows and in Colab. Clone or upload this repository, then install
+into the active Colab kernel:
 
 ```python
-%pip install -e "/content/Nanopore3[notebook,report]"
+%pip install -e "/content/Nanopore3[notebook,report,mcp]"
 ```
 
-Run the same Python API or CLI from the notebook. Keep datasets on mounted Drive or Colab
-storage rather than committing them to the repository. The portable backend must work without
-apt or conda; an optional setup cell may install native tools for an enhanced run.
+Notebook Setup prefers a nearby checkout, or accepts an explicit wheel/pinned
+package specification, and installs reporting/MCP together.
+The notebook uses checked CLI subprocesses through the kernel's interpreter,
+shows effective CPU/memory budgets, and creates new paths for inputs and runs.
+Stage active data/output on local disk; archive to Drive or other durable storage.
+Keep a full run archive for reuse, and reinstall the same source revision/wheel.
+Summary exports alone cannot resume a run. The portable backend needs no apt or conda.
 
 ## Optional features
 
@@ -143,6 +168,16 @@ results, from performance changes, which must not.
 
 ## Performance
 
+By default, `parallel.backend: process`, `parallel.jobs: 0`, and
+`parallel.threads_per_job: 1` use all allocated CPUs for demultiplexing and
+assignment. Shipped profiles use these settings too. Set a positive `jobs`
+value to cap workers, or `backend: serial` to disable process parallelism.
+Linux affinity/cgroup limits are respected. Consensus/chimera groups spill to
+disk and have a configurable memory estimate guard; `maximum_reads: 0` includes
+all eligible reads. See the [resource and reuse guide](docs/configuration.md).
+Resume/rerun require unchanged installed source; older runs without source identity
+remain readable and need a fresh run for recomputation.
+
 Reads are matched to references with a k-mer prefilter before any alignment: a specificity-weighted
 index proposes a few candidates and only those are aligned, which costs about four alignments per
 read instead of one per reference. Both demultiplexing and assignment are bound by Python-level work
@@ -173,7 +208,7 @@ be versioned; raw sequencing data should be managed by the laboratory's durable 
 Do not point experimental development at the only copy of a dataset. Nanopore3 treats inputs as
 read-only and should write intermediate files atomically. It must not infer completion merely
 because some output files exist, and it must not delete or move prior evidence during analysis.
-Nanopore3 v0.3 intentionally does not make final biological chimera calls. It reports uncertain
-reads conservatively while breakpoint-aware classification is developed and validated. Until
+Nanopore3 includes opt-in positional-signature chimera analysis; its reported origin
+classifications remain dependent on configured references and experimental validation. Until
 the experimental validation suite is complete, compare every result with controls and retain the
 original Nanopore2 analysis.

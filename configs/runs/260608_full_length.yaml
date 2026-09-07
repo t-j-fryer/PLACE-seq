@@ -97,7 +97,7 @@ barcodes:
 
 parallel:
   backend: process
-  jobs: 8
+  jobs: 0
   threads_per_job: 1
   chunk_reads: 1000
 

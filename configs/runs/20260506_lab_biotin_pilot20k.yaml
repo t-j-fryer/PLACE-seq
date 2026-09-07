@@ -97,9 +97,9 @@ barcodes:
 parallel:
   # See the production profile for the measurement.  Process workers cost about
   # one second each to start, so a short pilot favours fewer workers than a
-  # full run does; 8 is used here to match production behaviour.
+  # full run does. Automatic CPU detection is the requested default for both.
   backend: process
-  jobs: 8
+  jobs: 0
   threads_per_job: 1
   chunk_reads: 1000
 

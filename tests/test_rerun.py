@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from nanopore3.provenance import analysis_implementation
 from nanopore3.rerun import (
     INPUT_CONSUMING_STAGES,
     STAGE_ORDER,
@@ -28,9 +29,15 @@ def make_run(root: Path, stages: tuple[str, ...], *, run_id: str = "source") -> 
     run = root / run_id
     (run / "stages").mkdir(parents=True)
     (run / "run.json").write_text(
-        json.dumps({"run_id": run_id, "preflight": {"inputs": [
-            {"sample_id": "s", "sha256": "abc", "path": "/gone/reads.fastq"}
-        ]}}),
+        json.dumps(
+            {
+                "run_id": run_id,
+                "analysis_implementation": analysis_implementation(),
+                "preflight": {
+                    "inputs": [{"sample_id": "s", "sha256": "abc", "path": "/gone/reads.fastq"}]
+                },
+            }
+        ),
         encoding="utf-8",
     )
     for stage in stages:
@@ -50,7 +57,7 @@ def make_run(root: Path, stages: tuple[str, ...], *, run_id: str = "source") -> 
                     "parameters": {"schema": 1},
                     "input_digests": {"s": "abc"},
                     "backend_versions": {},
-                    "runtime": {},
+                    "runtime": {"analysis_implementation": analysis_implementation()},
                     "artifacts": [
                         {
                             "path": "data.txt",

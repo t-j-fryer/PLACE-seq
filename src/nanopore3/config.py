@@ -426,7 +426,7 @@ class LibrarySettings:
 class ParallelSettings:
     """Portable worker and nested-thread resource limits.
 
-    ``jobs`` is the maximum number of independent Python workers; **0 means use
+    ``jobs`` is the maximum number of independent Python workers; **0 (the default) means use
     whatever this machine has**, so one configuration runs sensibly on a workstation
     and on a two-core hosted notebook without being edited.  Any value is bounded by
     the detected CPU budget either way.
@@ -434,15 +434,16 @@ class ParallelSettings:
     callers can prevent nested oversubscription.
     """
 
-    jobs: int = 1
+    jobs: int = 0
     threads_per_job: int = 1
     chunk_reads: int = 25_000
-    backend: str = "auto"
+    backend: str = "process"
+    group_memory_mb: int = 512
 
     def __post_init__(self) -> None:
         if self.jobs < 0:
             raise ConfigError("parallel.jobs must be >= 0 (0 means detect)")
-        for name in ("threads_per_job", "chunk_reads"):
+        for name in ("threads_per_job", "chunk_reads", "group_memory_mb"):
             if getattr(self, name) < 1:
                 raise ConfigError(f"parallel.{name} must be >= 1")
         if self.backend not in {"auto", "serial", "thread", "process"}:
@@ -1170,16 +1171,19 @@ def _parse_parallel(value: Any) -> ParallelSettings:
         return ParallelSettings()
     location = "parallel"
     mapping = _mapping(value, location)
-    _reject_unknown(mapping, {"jobs", "threads_per_job", "chunk_reads", "backend"}, location)
+    _reject_unknown(
+        mapping, {"jobs", "threads_per_job", "chunk_reads", "backend", "group_memory_mb"}, location
+    )
     return ParallelSettings(
-        jobs=_positive_int(mapping.get("jobs", 1), "parallel.jobs", minimum=0),
+        jobs=_positive_int(mapping.get("jobs", 0), "parallel.jobs", minimum=0),
         threads_per_job=_positive_int(
             mapping.get("threads_per_job", 1), "parallel.threads_per_job"
         ),
-        chunk_reads=_positive_int(
-            mapping.get("chunk_reads", 25_000), "parallel.chunk_reads"
+        chunk_reads=_positive_int(mapping.get("chunk_reads", 25_000), "parallel.chunk_reads"),
+        backend=_nonempty_string(mapping.get("backend", "process"), "parallel.backend"),
+        group_memory_mb=_positive_int(
+            mapping.get("group_memory_mb", 512), "parallel.group_memory_mb"
         ),
-        backend=_nonempty_string(mapping.get("backend", "auto"), "parallel.backend"),
     )
 
 

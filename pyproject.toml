@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -30,6 +30,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+  "mcp>=1.28,<2",
+  "psutil>=5.9,<8",
+]
 report = [
   "matplotlib>=3.8,<4",
   "numpy>=1.26,<3",
@@ -48,6 +52,7 @@ dev = [
 
 [project.scripts]
 nanopore3 = "nanopore3.cli:main"
+nanopore3-mcp = "nanopore3.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

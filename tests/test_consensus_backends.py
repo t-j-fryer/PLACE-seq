@@ -82,6 +82,12 @@ class ConsensusBackendTests(unittest.TestCase):
         self.assertEqual(observed_inputs[0], observed_inputs[1])
         mafft_command = run.call_args_list[0].args[0]
         self.assertEqual(mafft_command[1:4], ["--quiet", "--thread", "2"])
+        unlimited = build_reference_consensus(
+            "ACGT", reads, group_id="group", max_reads=0, backend="mafft_spoa", threads=2
+        )
+        self.assertEqual(unlimited.n_reads_used, len(reads))
+        self.assertEqual(set(unlimited.contributor_ids), {read.read_uid for read in reads})
+        self.assertEqual(observed_inputs[-1].count(">"), len(reads))
 
     @patch("nanopore3.consensus.subprocess.run")
     @patch("nanopore3.consensus.shutil.which", return_value="/tools/tool")

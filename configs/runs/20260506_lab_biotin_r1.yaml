@@ -103,9 +103,10 @@ parallel:
   # demultiplexing and assignment are bound by Python-level work rather than by
   # the GIL-releasing edlib calls, so threads do not help and can be slower than
   # serial: demux ran at 591 reads/s serial, 396 with 4 threads, and 1818 with
-  # 8 processes.  Every backend produced identical calls.
+  # 8 processes. Every backend produced identical calls. The current default
+  # uses all detected CPUs; set jobs explicitly to reproduce the older sweep.
   backend: process
-  jobs: 8
+  jobs: 0
   threads_per_job: 1
   chunk_reads: 1000
 

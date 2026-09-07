@@ -1,0 +1,517 @@
+{
+  "schema_version": 2,
+  "order_seed": 0,
+  "platform": "macOS-26.6.1-arm64-arm-64bit",
+  "python": "3.12.10",
+  "cpu_count": 16,
+  "reads": 120000,
+  "repeats": 3,
+  "packages": {
+    "nanopore3": "0.3.0",
+    "edlib": "1.3.9.post1",
+    "PyYAML": "6.0.3",
+    "psutil": "7.2.2"
+  },
+  "reporting_packages": {
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "pandas": "2.3.3",
+    "scipy": "1.18.0"
+  },
+  "memory_method": "20 ms sampling; summed process-tree RSS, includes shared pages per process",
+  "equivalent_successful_runs": true,
+  "all_runs_succeeded": false,
+  "results": [
+    {
+      "seconds": 6.824435709044337,
+      "peak_tree_rss_mib": 1096.53125,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 16,
+      "repeat": 0,
+      "reads_per_second": 17583.87141679209,
+      "resolved_jobs": 16,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.653796709142625,
+      "peak_tree_rss_mib": 689.421875,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 8,
+      "repeat": 0,
+      "reads_per_second": 15678.49324462164,
+      "resolved_jobs": 8,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 28.739425083855167,
+      "peak_tree_rss_mib": 292.375,
+      "returncode": 0,
+      "backend": "thread",
+      "requested_jobs": 4,
+      "repeat": 0,
+      "reads_per_second": 4175.448870318979,
+      "resolved_jobs": 4,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 16.2273462919984,
+      "peak_tree_rss_mib": 324.71875,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 2,
+      "repeat": 0,
+      "reads_per_second": 7394.92445903932,
+      "resolved_jobs": 2,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 10.329510707873851,
+      "peak_tree_rss_mib": 443.0,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 4,
+      "repeat": 0,
+      "reads_per_second": 11617.200794276529,
+      "resolved_jobs": 4,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.458322833059356,
+      "peak_tree_rss_mib": 54.3125,
+      "returncode": 1,
+      "backend": "process",
+      "requested_jobs": 1,
+      "repeat": 0,
+      "reads_per_second": null,
+      "resolved_jobs": 1,
+      "error_tail": "13:18:37 stage 03_assignment: FAILED after 0s\nTraceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"<repo>/src/nanopore3/__main__.py\", line 11, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"<repo>/src/nanopore3/cli.py\", line 351, in main\n    path = run_pipeline(\n           ^^^^^^^^^^^^^\n  File \"<repo>/src/nanopore3/pipeline.py\", line 1789, in run_pipeline\n    for results in _ordered_map(\n                   ^^^^^^^^^^^^^\n  File \"<repo>/src/nanopore3/pipeline.py\", line 784, in _ordered_map\n    yield from map(function, values)\n  File \"<repo>/src/nanopore3/pipeline.py\", line 1287, in _assign_batch_worker\n    config = _ASSIGNMENT_WORKER[\"config\"]\n             ~~~~~~~~~~~~~~~~~~^^^^^^^^^^\nKeyError: 'config'\n"
+    },
+    {
+      "seconds": 26.872251708060503,
+      "peak_tree_rss_mib": 292.71875,
+      "returncode": 0,
+      "backend": "serial",
+      "requested_jobs": 1,
+      "repeat": 0,
+      "reads_per_second": 4465.57293760408,
+      "resolved_jobs": 1,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 6.9254768749233335,
+      "peak_tree_rss_mib": 1075.875,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 0,
+      "repeat": 0,
+      "reads_per_second": 17327.326647282815,
+      "resolved_jobs": 16,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.023637457983568,
+      "peak_tree_rss_mib": 915.9375,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 12,
+      "repeat": 0,
+      "reads_per_second": 17085.16430665131,
+      "resolved_jobs": 12,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.423589624930173,
+      "peak_tree_rss_mib": 57.984375,
+      "returncode": 1,
+      "backend": "process",
+      "requested_jobs": 1,
+      "repeat": 1,
+      "reads_per_second": null,
+      "resolved_jobs": 1,
+      "error_tail": "13:19:25 stage 03_assignment: FAILED after 0s\nTraceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"<repo>/src/nanopore3/__main__.py\", line 11, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"<repo>/src/nanopore3/cli.py\", line 351, in main\n    path = run_pipeline(\n           ^^^^^^^^^^^^^\n  File \"<repo>/src/nanopore3/pipeline.py\", line 1789, in run_pipeline\n    for results in _ordered_map(\n                   ^^^^^^^^^^^^^\n  File \"<repo>/src/nanopore3/pipeline.py\", line 784, in _ordered_map\n    yield from map(function, values)\n  File \"<repo>/src/nanopore3/pipeline.py\", line 1287, in _assign_batch_worker\n    config = _ASSIGNMENT_WORKER[\"config\"]\n             ~~~~~~~~~~~~~~~~~~^^^^^^^^^^\nKeyError: 'config'\n"
+    },
+    {
+      "seconds": 27.208701166091487,
+      "peak_tree_rss_mib": 294.328125,
+      "returncode": 0,
+      "backend": "serial",
+      "requested_jobs": 1,
+      "repeat": 1,
+      "reads_per_second": 4410.353852154786,
+      "resolved_jobs": 1,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 16.184248958015814,
+      "peak_tree_rss_mib": 323.984375,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 2,
+      "repeat": 1,
+      "reads_per_second": 7414.616539284377,
+      "resolved_jobs": 2,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 6.981017166981474,
+      "peak_tree_rss_mib": 1120.734375,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 0,
+      "repeat": 1,
+      "reads_per_second": 17189.472125576634,
+      "resolved_jobs": 16,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 6.929064834024757,
+      "peak_tree_rss_mib": 936.390625,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 12,
+      "repeat": 1,
+      "reads_per_second": 17318.354334158805,
+      "resolved_jobs": 12,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 29.138366208877414,
+      "peak_tree_rss_mib": 287.65625,
+      "returncode": 0,
+      "backend": "thread",
+      "requested_jobs": 4,
+      "repeat": 1,
+      "reads_per_second": 4118.281688814807,
+      "resolved_jobs": 4,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 10.115265416912735,
+      "peak_tree_rss_mib": 411.53125,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 4,
+      "repeat": 1,
+      "reads_per_second": 11863.25766591946,
+      "resolved_jobs": 4,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.718773500062525,
+      "peak_tree_rss_mib": 719.734375,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 8,
+      "repeat": 1,
+      "reads_per_second": 15546.511372438634,
+      "resolved_jobs": 8,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 6.936806249897927,
+      "peak_tree_rss_mib": 1104.828125,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 16,
+      "repeat": 1,
+      "reads_per_second": 17299.02720027185,
+      "resolved_jobs": 16,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.393128790892661,
+      "peak_tree_rss_mib": 55.28125,
+      "returncode": 1,
+      "backend": "process",
+      "requested_jobs": 1,
+      "repeat": 2,
+      "reads_per_second": null,
+      "resolved_jobs": 1,
+      "error_tail": "13:21:24 stage 03_assignment: FAILED after 0s\nTraceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"<repo>/src/nanopore3/__main__.py\", line 11, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"<repo>/src/nanopore3/cli.py\", line 351, in main\n    path = run_pipeline(\n           ^^^^^^^^^^^^^\n  File \"<repo>/src/nanopore3/pipeline.py\", line 1789, in run_pipeline\n    for results in _ordered_map(\n                   ^^^^^^^^^^^^^\n  File \"<repo>/src/nanopore3/pipeline.py\", line 784, in _ordered_map\n    yield from map(function, values)\n  File \"<repo>/src/nanopore3/pipeline.py\", line 1287, in _assign_batch_worker\n    config = _ASSIGNMENT_WORKER[\"config\"]\n             ~~~~~~~~~~~~~~~~~~^^^^^^^^^^\nKeyError: 'config'\n"
+    },
+    {
+      "seconds": 27.30624245805666,
+      "peak_tree_rss_mib": 287.609375,
+      "returncode": 0,
+      "backend": "serial",
+      "requested_jobs": 1,
+      "repeat": 2,
+      "reads_per_second": 4394.599520030051,
+      "resolved_jobs": 1,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 16.435528916073963,
+      "peak_tree_rss_mib": 321.171875,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 2,
+      "repeat": 2,
+      "reads_per_second": 7301.25574983108,
+      "resolved_jobs": 2,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.09181004203856,
+      "peak_tree_rss_mib": 1136.453125,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 0,
+      "repeat": 2,
+      "reads_per_second": 16920.926997292452,
+      "resolved_jobs": 16,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.124566458165646,
+      "peak_tree_rss_mib": 927.5,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 12,
+      "repeat": 2,
+      "reads_per_second": 16843.130133548682,
+      "resolved_jobs": 12,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.822780959075317,
+      "peak_tree_rss_mib": 694.671875,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 8,
+      "repeat": 2,
+      "reads_per_second": 15339.813376825581,
+      "resolved_jobs": 8,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 7.168075792025775,
+      "peak_tree_rss_mib": 1117.578125,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 16,
+      "repeat": 2,
+      "reads_per_second": 16740.894415973624,
+      "resolved_jobs": 16,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 10.153424666961655,
+      "peak_tree_rss_mib": 451.5,
+      "returncode": 0,
+      "backend": "process",
+      "requested_jobs": 4,
+      "repeat": 2,
+      "reads_per_second": 11818.672412124097,
+      "resolved_jobs": 4,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    },
+    {
+      "seconds": 29.021743583027273,
+      "peak_tree_rss_mib": 289.96875,
+      "returncode": 0,
+      "backend": "thread",
+      "requested_jobs": 4,
+      "repeat": 2,
+      "reads_per_second": 4134.830826297402,
+      "resolved_jobs": 4,
+      "digests": {
+        "stages/02_demux/demux_calls.csv.gz": "e777987e3d42ae4228e37df78790c57c6a2d72c9de97fc64727436e2bb26cac9",
+        "stages/03_assignment/assignment_calls.csv.gz": "6db218c45a06b6205ccbc6626f2282ac0ad97bb4e3c255d1532d77e5900ec1eb",
+        "stages/04_consensus/consensus.fasta": "634a29af3cbea7e1fe8c0c4fabb7a61b2351a31578cc2049caf9dd63020253ad",
+        "stages/05_qc/qc.csv.gz": "14f1ba082d9eae7ae12c62d642f75f3c27d6c04d9b7b3b6b291ff71aa3244140"
+      }
+    }
+  ],
+  "medians": {
+    "serial-1": {
+      "seconds": 27.208701166091487,
+      "reads_per_second": 4410.353852154786,
+      "peak_tree_rss_mib": 292.71875
+    },
+    "thread-4": {
+      "seconds": 29.021743583027273,
+      "reads_per_second": 4134.830826297402,
+      "peak_tree_rss_mib": 289.96875
+    },
+    "process-2": {
+      "seconds": 16.2273462919984,
+      "reads_per_second": 7394.92445903932,
+      "peak_tree_rss_mib": 323.984375
+    },
+    "process-4": {
+      "seconds": 10.153424666961655,
+      "reads_per_second": 11818.672412124097,
+      "peak_tree_rss_mib": 443.0
+    },
+    "process-8": {
+      "seconds": 7.718773500062525,
+      "reads_per_second": 15546.511372438634,
+      "peak_tree_rss_mib": 694.671875
+    },
+    "process-12": {
+      "seconds": 7.023637457983568,
+      "reads_per_second": 17085.16430665131,
+      "peak_tree_rss_mib": 927.5
+    },
+    "process-16": {
+      "seconds": 6.936806249897927,
+      "reads_per_second": 17299.02720027185,
+      "peak_tree_rss_mib": 1104.828125
+    },
+    "process-0": {
+      "seconds": 6.981017166981474,
+      "reads_per_second": 17189.472125576634,
+      "peak_tree_rss_mib": 1120.734375
+    }
+  },
+  "source_revision": "5e3c5d78863820293c9706fdc4e35e30a4159889",
+  "source_note": "Analysis code unchanged; assessment and MCP additions uncommitted. Tracebacks use <repo> for the checkout path.",
+  "analysis_source_sha256": {
+    "clustering.py": "685035ac9cfa55703de7b9b7cb32d2d4e032aaa7489c5e5422411f8d987e1999",
+    "config.py": "93957c5e2ccf9b6e201dca64db0358a8d5b23a330667021999be74632842c5b6",
+    "platforms.py": "50dece82d6e8d2f025bee44043cb40e83975ca5946877ef53ae50e4eb986a233",
+    "references.py": "c1584921c05ac3e856708f5125b5e78372f407cfd876d52b8fa8d6ec62fa4000",
+    "qc.py": "134716b2e3dadb7bd6eb2982a9e62c4cf8915f80990adcd944444b12ee418a2e",
+    "layout.py": "b78e62384a4c8afa5fa5fec6fb37f0ed13efab285e6d6ff6f4aa47200e517547",
+    "deconvolution.py": "26ee932c71540eed3a03813773db12e83cab6c75a212993bd59517a16b565382",
+    "sequence.py": "418285c6d314a631cf5598d75f077c3a3ce1832792784aa09b52b8782aa5ae01",
+    "replicate.py": "d6969275cdf69686aca522fcea070dc39d6b9a3ca3b920ec06f617165018a2c9",
+    "io.py": "0a495216b1d4e73be6e3202b975cdefd955b3d3bd7ccf356263a6adde7ecb38c",
+    "__init__.py": "f2f6eb415a1b8c35ee5f8b8d47b63d8a319057694099164030cd05ff481409b8",
+    "export.py": "fe7b949ea47c42d6783ebf7b2e544865ed01c939cd763e402c8e632a3b514235",
+    "runtime.py": "70ca300fbdace6325148face1f01a9bf3c860c1f58a94f9090c9359522cd3ae7",
+    "rerun.py": "cc08c1831a387ef22f105a486a673c93639d00ae18f09ef333b50e94fa611ec7",
+    "cli.py": "177cf940b70b132d148133950cbf84543385394903d120c81cd59db8db037a5e",
+    "consensus.py": "a66cbe9f3d8f87f1dc4f5788dd5b6c0fb8b88a7a1db0096aa61185689727bd55",
+    "pipeline.py": "abba6809d446db1d499b5af7f4e4cc05fadb1e2df655feb50463f55a07ca7754",
+    "figures.py": "517e65ccecb5cab8138ac7c69beee5badefe423bb01771859a0cc80467a60826",
+    "chimera.py": "d0eb43e887a3f1f3e0503c6fb01a5e67540fadaccb28fd9faf7d00b0ecd37a98",
+    "assignment.py": "512017398111293b2650a8cdb36a881459be55c91ce979efc4f8f48a2bf6b48a",
+    "demux.py": "4db1853efcbbf31d65a824a2a6c7fa6a6a11b7458adf09e95e41d8848b7ff99a",
+    "barcodes.py": "f00ee6b8110dbcb7d99612f884359fd0d262aac1fe1dabfa3b592acfec232489",
+    "errors.py": "1bf118a85a6c2a8b163e24bac803d47feb8b21a8cd2c0d51461b5f69df8da8c8",
+    "provenance.py": "f1bb1641ee3acc630f40eb72231854f5f5b339c2f8a47ff8bda31a8e9cb2a234",
+    "fragments.py": "e6d0465083d6777878ed2e6f5842b56ee3f8c9364e1574d0a97668cc4e273d5b",
+    "flanks.py": "fb78b537c8db76ea6431dae1c79ac2c1d8be239a2e56672a98a58a3179bac0fd",
+    "__main__.py": "ca25c743a66737351631c8abcca4b817ba8ccd11684aaa6600ac6212a4c7e5d2",
+    "report.py": "82fb24273daad4091c8ea4d4768bd0f803c38e98551858b741c91a4ca3135aa1"
+  }
+}

@@ -85,8 +85,23 @@ including notebook execution and real stdio/HTTP MCP sessions. The installed
 wheel also completed the MCP smoke workflow outside the checkout. Lint,
 compilation and diff checks passed. GitHub Actions runs the portable suite on
 Linux (Python 3.10/3.13), macOS and Windows, plus a Linux installed-wheel workflow;
-the pull request records the actual hosted outcomes. Live Colab is not covered
-by that matrix; its Drive mount branch is simulated in tests.
+[pull request #1](https://github.com/t-j-fryer/nanopore3/pull/1) records the
+publication and checks. Live Colab is not covered by that matrix; its Drive mount
+branch is simulated in tests.
+
+The [hosted run for implementation commit 827da1e](https://github.com/t-j-fryer/nanopore3/actions/runs/34153711406)
+completed successfully on every target:
+
+| Hosted target | Result |
+|---|---|
+| Ubuntu / Python 3.10 | Passed: portable suite, MCP tests and wheel build |
+| Ubuntu / Python 3.13 | Passed: lint, portable suite, MCP tests and wheel build |
+| macOS / Python 3.12 | Passed: portable suite, MCP tests and wheel build |
+| Windows / Python 3.12 | Passed: portable suite, MCP tests and wheel build |
+| Linux installed wheel / Python 3.12 | Passed: reporting/MCP extras and real stdio workflow outside the checkout |
+
+This table records that specific source revision; subsequent pull-request/main
+checks remain available in GitHub Actions.
 
 The final core-fix benchmark ran 120,000 synthetic reads with 16 automatically
 selected workers. All nine checked artifacts matched the earlier serial results,

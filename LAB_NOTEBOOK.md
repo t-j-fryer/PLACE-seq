@@ -16,6 +16,30 @@ Conventions:
 ---
 
 
+## 2026-09-07 (hosted validation) — All GitHub platform checks passed
+
+The update is published on `codex/portable-mcp-and-interface-update` as commit
+`827da1e14c2d5857e4ceadc481e09fb0665f506e`, with pull request
+https://github.com/t-j-fryer/nanopore3/pull/1 targeting `main`. The repository's
+visibility remains private. The PR describes the problem/behavior, source reuse
+migration, memory/runtime limits, documentation and validation evidence.
+
+GitHub Actions run https://github.com/t-j-fryer/nanopore3/actions/runs/34153711406
+has passed all five jobs: Ubuntu Python 3.10 and 3.13, macOS Python 3.12, Windows
+Python 3.12, and the Linux installed-wheel reporting/MCP workflow. Each OS job
+ran the portable suite, installed/tested MCP, compiled the package and built a
+wheel; Linux 3.13 also ran lint. The wheel job ran the real SDK stdio workflow
+outside the checkout. This adds hosted Windows/Linux evidence to the previous
+local-only checks. Live Colab remains unverified; its Drive branch is simulated.
+
+The update guide now links the PR and the specific passing hosted run with a
+platform table. This entry and table are documentation-only additions after the
+implementation commit; the PR checks verify the resulting head before merge.
+The separate local RP04 clonality edits remain byte-for-byte intact and unstaged.
+
+---
+
+
 ## 2026-09-07 (publication) — GitHub update and migration guide
 
 The user requested publication of the completed repository/MCP work to GitHub

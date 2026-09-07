@@ -15,6 +15,37 @@ Conventions:
 
 ---
 
+## 2026-09-07 (README review) — A complete first-run path
+
+**Documentation only; no scientific or execution changes.** Reviewed the full
+GitHub README against package metadata, CLI behavior, the notebook, MCP guide,
+configuration reference and CI configuration. The previous reading order put
+example commands before installation, assumed a checkout without explaining
+how to obtain one, repeated advanced material, and left output interpretation
+to linked documents. It also described three worked examples where four exist.
+
+Reorganised the README around interface selection, repository access, platform
+installation, a deterministic synthetic example and opening its results. Added
+an input checklist, a Windows activation-free fallback, a private-repository
+Colab wheel route, local Jupyter launch commands, MCP host prerequisites and a
+compact troubleshooting table. Clarified that the base package includes HTML
+and core tables, the report extra adds figures, maximum CPU allocation does not
+remove consensus read caps, and live Colab remains unverified. Retained links
+to migration, technical evidence, scientific history and contributor guidance.
+
+Validation: using the existing Python 3.12 environment from a fresh temporary
+working directory, executed `nanopore3 doctor`, `init nanopore3-example`,
+`validate --config nanopore3-example/configs/example.yaml`, and
+`run --config nanopore3-example/configs/example.yaml --run-id first-run`.
+All commands succeeded; all five documented output paths existed under
+`/private/tmp/nanopore3-readme-eu10eoih/nanopore3-example/runs/first-run`.
+Checked all 30 local README links and section anchors and ran `git diff --check`.
+Installation commands were checked against metadata and existing platform
+guidance; this review did not repeat fresh installations or live Colab testing.
+The separate RP04 configuration edits are outside this documentation change.
+
+---
+
 
 ## 2026-09-07 (hosted validation) — All GitHub platform checks passed
 

@@ -129,7 +129,8 @@ def test_full_requires_references_but_cli_override_does_not(config_file):
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "02_demux/reads/index.csv" in completed.stdout
+    expected_index = config_file.parent / "runs" / "cli" / "stages/02_demux/reads/index.csv"
+    assert str(expected_index) in completed.stdout
     assert "06_report" not in completed.stdout
 
 

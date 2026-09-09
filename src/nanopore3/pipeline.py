@@ -14,7 +14,7 @@ import time
 from collections import Counter, deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from multiprocessing import get_context
@@ -54,6 +54,7 @@ from .demux import (
     prepare_barcode_panel,
     validate_barcodes,
 )
+from .demux_export import DemuxFastqWriter
 from .errors import Nanopore3Error
 from .export import normalized_well, safe_name, write_consensus_tree
 from .flanks import Flanks, from_assembled, from_sequences, from_template
@@ -82,6 +83,7 @@ from .references import read_fasta, read_reference_libraries
 from .report import write_html_report
 from .runtime import doctor_report, effective_cpu_count, group_memory_limit, plan_resources
 from .sequence import reverse_complement
+from .split_qc import SPLIT_FIELDS, insert_spans, split_grades
 
 LOGGER = logging.getLogger(__name__)
 
@@ -623,46 +625,58 @@ def validate_inputs(
     missing = [] if not require_inputs else [
         str(item.path) for item in config.inputs if not item.path.is_file()
     ]
-    missing.extend(
-        str(path)
-        for settings in config.reference_sets.values()
-        for path in settings.fasta
-        if not path.is_file()
-    )
     if missing:
         raise PipelineError("missing input file(s): " + ", ".join(missing))
-    flanks = resolve_flanks(config)
-    config = apply_flanks(config, flanks)
-    reference_collection = read_reference_libraries(
-        {
-            library_id: settings.fasta
-            for library_id, settings in config.reference_sets.items()
-        },
-        transforms=flank_transforms(flanks),
-    )
-    if config.consensus.backend == "mafft_spoa":
-        require_mafft_spoa()
-    # A single library is routed to by default; two or more need to be told which
-    # barcode carries which, and without that *every* read is unroutable. The run
-    # would complete, report nothing, and explain nothing.
-    if len(config.reference_sets) > 1 and not config.plate_reference_map:
-        raise PipelineError(
-            f"{len(config.reference_sets)} reference libraries are configured "
-            f"({', '.join(sorted(config.reference_sets))}) but plate_reference_map "
-            "is empty, so no read can be routed to a library. Map each plate "
-            "barcode to a library, for example:\n"
-            "  plate_reference_map:\n"
-            + "\n".join(
-                f"    BC{index + 1:02d}: {library}"
-                for index, library in enumerate(sorted(config.reference_sets))
+    reference_collection = None
+    if config.workflow != "demux_only":
+        missing.extend(
+            str(path)
+            for settings in config.reference_sets.values()
+            for path in settings.fasta
+            if not path.is_file()
+        )
+        if missing:
+            raise PipelineError("missing input file(s): " + ", ".join(missing))
+        flanks = resolve_flanks(config)
+        config = apply_flanks(config, flanks)
+        reference_collection = read_reference_libraries(
+            {
+                library_id: settings.fasta
+                for library_id, settings in config.reference_sets.items()
+            },
+            transforms=flank_transforms(flanks),
+        )
+        if config.qc.insert_left_boundary:
+            for _, bundle in reference_collection.libraries:
+                for record in bundle.records:
+                    try:
+                        insert_spans(record.sequence, config.qc.insert_left_boundary,
+                                     config.qc.insert_right_boundary)
+                    except ValueError as exc:
+                        raise PipelineError(f"{record.id}: {exc}") from exc
+        if config.consensus.backend == "mafft_spoa":
+            require_mafft_spoa()
+        # A single library is routed to by default; two or more need to be told which
+        # barcode carries which, and without that *every* read is unroutable. The run
+        # would complete, report nothing, and explain nothing.
+        if len(config.reference_sets) > 1 and not config.plate_reference_map:
+            raise PipelineError(
+                f"{len(config.reference_sets)} reference libraries are configured "
+                f"({', '.join(sorted(config.reference_sets))}) but plate_reference_map "
+                "is empty, so no read can be routed to a library. Map each plate "
+                "barcode to a library, for example:\n"
+                "  plate_reference_map:\n"
+                + "\n".join(
+                    f"    BC{index + 1:02d}: {library}"
+                    for index, library in enumerate(sorted(config.reference_sets))
+                )
             )
-        )
-    layout_problems = check_pooling_layout(config, reference_collection)
-    if layout_problems:
-        raise PipelineError(
-            "compressed_pcr layout does not match the references:\n  "
-            + "\n  ".join(layout_problems)
-        )
+        layout_problems = check_pooling_layout(config, reference_collection)
+        if layout_problems:
+            raise PipelineError(
+                "compressed_pcr layout does not match the references:\n  "
+                + "\n  ".join(layout_problems)
+            )
     for label, settings in (
         ("plate", config.plate_barcodes),
         ("well", config.well_barcodes),
@@ -726,19 +740,21 @@ def validate_inputs(
                 "records": count,
             }
         )
+    bundles = reference_collection.libraries if reference_collection else ()
     return {
         "inputs": inputs,
+        "workflow": config.workflow,
         "references": sum(
-            len(bundle.records) for _, bundle in reference_collection.libraries
+            len(bundle.records) for _, bundle in bundles
         ),
-        "reference_digest": reference_collection.digest,
+        "reference_digest": reference_collection.digest if reference_collection else None,
         "reference_libraries": {
             library_id: {
                 "references": len(bundle.records),
                 "digest": bundle.digest,
                 "alias_groups": [list(group) for group in bundle.alias_groups],
             }
-            for library_id, bundle in reference_collection.libraries
+            for library_id, bundle in bundles
         },
         "resources": asdict(
             plan_resources(resolved_jobs(config), config.parallel.threads_per_job)
@@ -989,14 +1005,16 @@ def _demux_one(
     }
     row.update(_call_dict(plate, "plate"))
     row.update(_call_dict(well, "well"))
-    if final_status != "assigned":
+    if final_status != "assigned" and not (
+        config.workflow == "demux_only" and plate.status == "assigned"
+    ):
         return row, None
     accepted = {
         "read_uid": record.read_uid,
         "original_read_id": record.name,
         "sample_id": sample_id,
         "plate_id": plate.barcode_id,
-        "well_id": well.barcode_id,
+        "well_id": well.barcode_id if final_status == "assigned" else None,
         "sequence": sequence,
         "quality": quality,
     }
@@ -1556,6 +1574,9 @@ def run_pipeline(
 
     from .rerun import INPUT_CONSUMING_STAGES
 
+    if inherit and config.workflow == "demux_only":
+        raise PipelineError("demux-only runs do not inherit analysis stages; use run or resume")
+
     implementation = analysis_implementation()
     require_current_implementation({"analysis_implementation": implementation})
     if resume and run_id is not None:
@@ -1584,7 +1605,7 @@ def run_pipeline(
     # declared; the derived anchors and flank digests are recorded in the
     # assignment stage manifest instead.
     config_digest = canonical_digest(config.as_dict())
-    flanks = resolve_flanks(config)
+    flanks = {} if config.workflow == "demux_only" else resolve_flanks(config)
     config = apply_flanks(config, flanks)
     if run_id is None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -1600,7 +1621,7 @@ def run_pipeline(
     edlib_version = str(runtime_report["packages"].get("edlib") or "unknown")
     edlib_backend_versions = {"edlib": edlib_version}
     consensus_backend_versions = dict(edlib_backend_versions)
-    if config.consensus.backend == "mafft_spoa":
+    if config.workflow != "demux_only" and config.consensus.backend == "mafft_spoa":
         optional = runtime_report["optional_binaries"]
         for name in ("mafft", "spoa"):
             details = optional[name]
@@ -1653,6 +1674,8 @@ def run_pipeline(
         "well": asdict(config.well_barcodes),
         "library": asdict(config.library),
     }
+    if config.workflow == "demux_only":
+        demux_parameters["fastq_exports"] = "plate-and-well-v1"
     demux_fp = _stage_fingerprint(
         "02_demux",
         demux_parameters,
@@ -1687,6 +1710,9 @@ def run_pipeline(
             with (
                 _open_gzip_text(calls_path) as call_handle,
                 _open_gzip_text(reads_path) as read_handle,
+                (DemuxFastqWriter(stage.output_path("reads"),
+                                  include_wells=bool(config.well_barcodes.sequences))
+                 if config.workflow == "demux_only" else nullcontext()) as fastqs,
             ):
                 writer: csv.DictWriter[str] | None = None
                 for item in config.inputs:
@@ -1735,7 +1761,9 @@ def run_pipeline(
                                 writer.writeheader()
                             writer.writerow(row)
                             counts[row["call_status"]] += 1
-                            if accepted is not None:
+                            if accepted is not None and fastqs is not None:
+                                fastqs.write(accepted, assigned=row["call_status"] == "assigned")
+                            if accepted is not None and row["call_status"] == "assigned":
                                 read_handle.write(
                                     json.dumps(
                                         accepted,
@@ -1746,6 +1774,24 @@ def run_pipeline(
                                 )
             _report_stage_counts("02_demux", counts, "assigned")
             atomic_write_json(stage.output_path("summary.json"), dict(sorted(counts.items())))
+            if config.workflow == "demux_only":
+                write_html_report(
+                    stage.output_path("report.html"), title=f"PLACE-seq demux — {config.run_name}",
+                    sections={"Demultiplexing": dict(counts), "FASTQ exports": {
+                        "Index": "reads/index.csv — file paths and read counts",
+                        "Plate files": ("Passing reads with a confident plate call, "
+                                        "including unresolved wells."),
+                        "Well files": "Only reads with both plate and well calls accepted.",
+                        "Sequences": ("Full reads in barcode-normalized orientation; "
+                                      "quality strings reversed with sequence."),
+                        "Scope": ("Barcode plates/wells, before reference assignment "
+                                  "or culture-plate deconvolution."),
+                        "Analysis": "Demux only; assignment, consensus and QC were not run.",
+                    }}, provenance={"run_id": run_id, "config_digest": config_digest},
+                )
+
+    if config.workflow == "demux_only":
+        return run_dir
 
     demux_dir = run_dir / "stages" / "02_demux"
     demux_reads = demux_dir / "demuxed_reads.jsonl.gz"
@@ -2168,6 +2214,21 @@ def run_pipeline(
                         or config.qc.downstream_constant
                     )
                     flank = flanks.get(library_id)
+                    spans = (
+                        insert_spans(reference_sequence, config.qc.insert_left_boundary,
+                                     config.qc.insert_right_boundary)
+                        if config.qc.insert_left_boundary else
+                        qc_regions(flank, len(reference_sequence)) if flank else None
+                    )
+                    split = (split_grades(
+                        sequence, reference_sequence, spans,
+                        upstream=upstream, downstream=downstream,
+                        left=config.qc.insert_left_boundary, right=config.qc.insert_right_boundary,
+                        minimum_identity=config.qc.minimum_identity,
+                        minimum_query_coverage=config.qc.minimum_query_coverage,
+                        minimum_reference_coverage=config.qc.minimum_reference_coverage,
+                        length_tolerance=config.qc.length_tolerance,
+                    ) if config.qc.insert_left_boundary else {})
                     result = evaluate_consensus(
                         sequence,
                         reference_sequence,
@@ -2184,9 +2245,7 @@ def run_pipeline(
                             if flank and upstream and downstream
                             else None
                         ),
-                        spans=(
-                            qc_regions(flank, len(reference_sequence)) if flank else None
-                        ),
+                        spans=spans,
                     )
                     # Where each contested position sits, and whether it carries
                     # the G:C -> T:A signature of a pre-transformation lesion. Two
@@ -2195,7 +2254,7 @@ def run_pipeline(
                     mixed = classify_mixed_positions(
                         parse_mixed_alleles(row.get("mixed_alleles", "")),
                         reference_sequence,
-                        spans=qc_regions(flank, len(reference_sequence)) if flank else None,
+                        spans=spans,
                         reading_frame=(
                             reading_frame_span(reference_sequence, upstream, downstream)
                             if flank and upstream and downstream
@@ -2208,6 +2267,7 @@ def run_pipeline(
                             "reference_library_id": library_id,
                             "reference_ids": row["reference_ids"],
                             **result.to_dict(),
+                            **split,
                             "mixed_signature": mixed_signature(mixed),
                             "mixed_detail": " ".join(p.describe() for p in mixed),
                             "mixed_in_reading_frame": sum(1 for p in mixed if p.protein_effect),
@@ -2246,6 +2306,12 @@ def run_pipeline(
                 "mixed_worst_effect",
                 "designed_allele_fraction",
             ]
+            if config.qc.insert_left_boundary:
+                fields.extend(SPLIT_FIELDS)
+                for item in qc_rows:
+                    if item["overall"] == "not_evaluable":
+                        item.update(insert_grade="low_depth", vector_status="not_evaluable",
+                                    insert_coding_status="not_evaluable")
             # Full-length references report accuracy per region as well as over
             # the whole amplicon; the columns exist only when a library declares
             # flanks, so an insert-mode run keeps exactly its old schema.
@@ -2387,6 +2453,23 @@ def run_pipeline(
                     "QC": run_dir / "stages" / "05_qc" / "summary.json",
                 }.items()
             }
+            tree_summary = json.loads((run_dir / "stages" / "05_qc" /
+                                       "consensus_by_plate_summary.json").read_text())
+            if tree_summary.get("insert_grades"):
+                sections["Insert grades (explicit boundaries)"] = tree_summary["insert_grades"]
+                sections["Sequenced vector status"] = tree_summary["vector_statuses"]
+                sections["How to read these results"] = {
+                    "Insert perfect": "Exact DNA match between the configured boundary motifs.",
+                    "Insert screenable": ("Insert differs, but passes insert length, "
+                                          "identity and coding checks."),
+                    "Vector perfect": ("Exact match outside the insert within the "
+                                       "sequenced amplicon only."),
+                    "Vector edited": "Differences or ambiguous bases outside the insert.",
+                    "Coding": ("insert_coding_status assesses the insert; "
+                               "reading_frame/internal_stops assess the whole ORF."),
+                    "Results": ("See ../../consensus_by_plate/index.csv for both grades, "
+                                "metrics and FASTA paths."),
+                }
             chimera_summary = run_dir / "stages" / "03b_chimera" / "summary.json"
             if chimera_summary.exists():
                 sections["Chimeric clones"] = json.loads(

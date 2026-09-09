@@ -126,9 +126,55 @@ Paths below are relative to the completed run directory:
 | `run.json` and stage manifests | Recorded configuration, source identity, checksums and execution details |
 
 Clone files and their index are written by default (`consensus_tree: true`).
+For whole-vector runs, you can report **insert quality and vector exactness
+separately**. Set the two insert boundary motifs in `qc`; the clone index and
+FASTA names then show `insert-perfect__vector-edited`, for example. Vector status
+covers only the sequenced backbone. See [separate insert/vector QC](docs/configuration.md#separate-insert-and-vector-qc)
+for configuration and the meaning of each result.
+
 A completed command means the analysis finished; inspect QC to determine which
 results passed, failed or remain uncertain. See
 [Reading the results](docs/workflows.md#reading-the-results) for column meanings.
+
+## Demultiplex only: reads by plate and well
+
+Use this when you want **FASTQ reads grouped by barcode**, without assigning
+references, building consensus or running protein QC. It needs reads and barcode
+settings; reference sequences are optional.
+
+Try it with the synthetic project created above:
+
+```sh
+nanopore3 validate --config nanopore3-example/configs/example.yaml --demux-only --quick
+nanopore3 run --config nanopore3-example/configs/example.yaml --demux-only --run-id demux-preview
+```
+
+For your data, replace the config path with your own YAML. You can also set
+`workflow: demux_only` in YAML and omit the flags. Omit `barcodes.well` if you
+only want plate bins. Configured read-length and mean-quality filters still apply;
+FASTQs contain full reads in barcode-normalized orientation, with matching quality
+strings. No primer trimming is performed.
+
+The example writes `nanopore3-example/runs/demux-preview/`. Within any demux-only run:
+
+| Path | Contents |
+|---|---|
+| `stages/02_demux/report.html` | Demux summary; only ingest and demux stages run |
+| `stages/02_demux/reads/index.csv` | FASTQ paths and read counts; open this first |
+| `stages/02_demux/reads/by_plate/` | Accepted plate reads, including unresolved wells |
+| `stages/02_demux/reads/by_well/` | Reads with accepted plate and well calls |
+| `stages/02_demux/reads/unresolved_well/` | Plate-assigned reads whose well call was not accepted |
+| `stages/02_demux/demux_calls.csv.gz` | Calls and filter/rejection reasons for every input read |
+
+**Plate and well files overlap:** they are two views of the same reads, so do not
+combine them as independent inputs. Empty bins have no FASTQ file. These are
+barcode plate/well groups, before any culture-plate deconvolution.
+
+**Notebook/Colab:** set `DEMUX_ONLY = True` in the configuration cell; result and
+archive cells support this mode. **MCP:** pass `demux_only: true` to both
+`start_validation` and `start_run`, then inspect `run_summary.outputs.demux_fastq_index`.
+See the [copyable MCP workflow](docs/mcp.md#demultiplex-without-consensus) and
+[full configuration guide](docs/configuration.md#demux-only-read-export).
 
 ## Use your own data
 
@@ -139,7 +185,8 @@ for the demo.
 You will need:
 
 - **Reads:** one or more FASTQ or FASTQ.gz files.
-- **References:** FASTA sequences for your designed inserts or assembled constructs.
+- **References:** FASTA sequences for your designed inserts or assembled constructs;
+  optional for demux-only runs.
 - **Assay details:** boundary motifs, plate/well barcode sequences or CSV registries,
   and the reference library associated with each plate barcode.
 - **Pooling layout, if applicable:** the mapping from pooled PCR plates back to
@@ -187,6 +234,7 @@ to Colab, and set `PACKAGE_SPEC` in Setup to its path with `[report,mcp]` append
 
 Run **Setup**, then choose **A — Synthetic example** or **B — Your own data**.
 The notebook includes data staging, resource settings, results and archiving.
+Set `DEMUX_ONLY = True` in the configuration cell for plate/well FASTQ export.
 In Colab, keep active inputs and outputs on VM-local disk, then archive to Drive.
 The VM's files are temporary; retain a **complete run archive** for resume/rerun.
 Live Colab execution has not yet been verified; local notebook workflows and a
@@ -214,6 +262,15 @@ Suggested first request once connected:
 
 > Create the PLACE-seq synthetic example, wait for it to finish, validate it,
 > then run it. Monitor each job to completion and show me the report and QC results.
+
+For reads without consensus, ask:
+
+> Demultiplex my run.yaml only. Use demux_only=true for validation and the run,
+> wait for completion, and show the plate/well FASTQ index and unresolved-well counts.
+> Do not run reference assignment, consensus or protein QC.
+
+After updating the checkout, rerun the installation command above and restart
+the MCP server through your AI host so it loads the new tools and source identity.
 
 For Colab, the MCP client must run inside the notebook VM; a desktop client
 cannot directly reach that VM's loopback server.

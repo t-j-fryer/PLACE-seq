@@ -229,6 +229,47 @@ class McpSessionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("workspace", str(caught.exception))
             self.assertFalse((Path(outside) / "stolen.yaml").exists())
 
+    async def test_demux_only_without_references(self):
+        import yaml
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "nanopore3.mcp_server", "--workspace", str(self.root)],
+            env=dict(os.environ),
+        )
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            job = await self.call(session, "init_example", {"directory": "example"})
+            self.assertEqual((await self.completed(session, job))["state"], "succeeded")
+            body = yaml.safe_load((self.root / "example/configs/example.yaml").read_text())
+            body.pop("references")
+            await self.call(session, "save_config", {
+                "path": "example/configs/demux.yaml", "yaml_text": yaml.safe_dump(body),
+            })
+            job = await self.call(session, "start_validation", {
+                "config_path": "example/configs/demux.yaml", "demux_only": True,
+            })
+            result = await self.completed(session, job)
+            self.assertEqual(result["state"], "succeeded", result)
+            self.assertEqual(result["result"]["references"], 0)
+            job = await self.call(session, "start_run", {
+                "config_path": "example/configs/demux.yaml", "demux_only": True,
+                "run_id": "demux",
+            })
+            result = await self.completed(session, job)
+            self.assertEqual(result["state"], "succeeded", result)
+            summary = await self.call(session, "run_summary", {"run_dir": "runs/demux"})
+            self.assertEqual(summary["workflow"], "demux_only")
+            self.assertEqual(len(summary["stages"]), 2)
+            self.assertNotIn("clones", summary["outputs"])
+            preview = await self.call(session, "read_artifact", {
+                "path": summary["outputs"]["demux_fastq_index"],
+            })
+            self.assertIn("by_well/P1/A1.fastq.gz", preview["text"])
+
+
 
 @unittest.skipUnless(HAS_MCP, "install nanopore3[mcp] to test job lifecycle")
 class JobLifecycleTests(unittest.TestCase):

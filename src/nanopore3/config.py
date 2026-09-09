@@ -505,7 +505,7 @@ class ConsensusSettings:
 
 @dataclass(frozen=True, slots=True)
 class QcSettings:
-    """Whole-consensus QC thresholds; region-aware QC can extend this contract."""
+    """Whole-consensus thresholds and optional explicit insert boundaries."""
 
     minimum_identity: float = 0.98
     minimum_query_coverage: float = 0.95
@@ -517,8 +517,17 @@ class QcSettings:
     # as not_evaluable because their answer would depend on an assumed frame.
     upstream_constant: str | None = None
     downstream_constant: str | None = None
+    insert_left_boundary: str | None = None
+    insert_right_boundary: str | None = None
 
     def __post_init__(self) -> None:
+        if (self.insert_left_boundary is None) != (self.insert_right_boundary is None):
+            raise ConfigError(
+                "qc insert_left_boundary and insert_right_boundary must be supplied together"
+            )
+        for name in ("insert_left_boundary", "insert_right_boundary"):
+            if getattr(self, name) is not None:
+                _dna(getattr(self, name), f"qc.{name}")
         for name in (
             "minimum_identity",
             "minimum_query_coverage",
@@ -674,6 +683,7 @@ class PipelineConfig:
     # require knowing about a separate script, which meant most runs never
     # produced it. Set false for a very large run where the file count matters.
     consensus_tree: bool = True
+    workflow: str = "full"
     source_path: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
@@ -696,7 +706,9 @@ class PipelineConfig:
             raise ConfigError(
                 "configuration must use either references or reference_libraries, not both"
             )
-        if self.references is None and not self.reference_libraries:
+        if self.workflow not in ("full", "demux_only"):
+            raise ConfigError("workflow must be full or demux_only")
+        if self.workflow == "full" and self.references is None and not self.reference_libraries:
             raise ConfigError(
                 "configuration must define references or reference_libraries"
             )
@@ -1248,12 +1260,16 @@ def _parse_qc(value: Any) -> QcSettings:
             "length_tolerance",
             "upstream_constant",
             "downstream_constant",
+            "insert_left_boundary",
+            "insert_right_boundary",
         },
         location,
     )
     upstream = mapping.get("upstream_constant")
     downstream = mapping.get("downstream_constant")
     return QcSettings(
+        **{name: None if mapping.get(name) is None else _dna(mapping[name], f"qc.{name}")
+           for name in ("insert_left_boundary", "insert_right_boundary")},
         upstream_constant=(
             None if upstream is None else _dna(upstream, "qc.upstream_constant")
         ),
@@ -1466,7 +1482,7 @@ def _apply_preset(root: Mapping[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def load_config(path: str | Path) -> PipelineConfig:
+def load_config(path: str | Path, *, demux_only: bool = False) -> PipelineConfig:
     """Load and validate a PLACE-seq YAML configuration.
 
     The loader validates structure and value ranges but intentionally does not
@@ -1502,6 +1518,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         "chimera",
         "random_seed",
         "consensus_tree",
+        "workflow",
     }
     _reject_unknown(root, allowed, "configuration")
     base_dir = source_path.parent
@@ -1514,9 +1531,12 @@ def load_config(path: str | Path) -> PipelineConfig:
     random_seed = root.get("random_seed", 0)
     if isinstance(random_seed, bool) or not isinstance(random_seed, int):
         raise ConfigError("random_seed must be an integer")
+    workflow = "demux_only" if demux_only else root.get("workflow", "full")
     has_references = "references" in root
     has_reference_libraries = "reference_libraries" in root
-    if has_references == has_reference_libraries:
+    if (has_references and has_reference_libraries) or (
+        workflow != "demux_only" and not has_references and not has_reference_libraries
+    ):
         raise ConfigError(
             "configuration must define exactly one of references or "
             "reference_libraries"
@@ -1537,6 +1557,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         )
     return PipelineConfig(
         schema_version=schema_version,
+        workflow=workflow,
         run_name=_nonempty_string(root.get("run_name", source_path.stem), "run_name"),
         output_root=_path(
             _required(root, "output_root", "configuration"),

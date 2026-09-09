@@ -332,6 +332,61 @@ two marks can touch. Re-check any change:
 python scripts/validate_palette.py "#0072B2,#D55E00,#009E73" --pairs all
 ```
 
+## Separate insert and vector QC
+
+For full-vector amplicons, define the insert explicitly with a pair of unique,
+forward-oriented reference motifs. The insert is **strictly between** these
+motifs; both boundary motifs belong to the vector. Each motif must occur once
+in every analysed reference, in the given order. Validation rejects missing,
+repeated or reversed boundaries.
+
+```yaml
+qc:
+  insert_left_boundary: CCGATGCAGCTT  # synthetic example; replace for your assay
+  insert_right_boundary: TCGGGCCACTAA
+  upstream_constant: ATGCAGCTT       # begins at the actual ORF start codon
+  downstream_constant: TCGGGCCACTAA  # includes the terminal stop
+```
+
+Use this same YAML through the CLI, local notebook, Colab or MCP `save_config` /
+`start_validation` / `start_run` tools. No separate interface option is needed.
+The motifs must remain inside the analysed reference after extraction-anchor
+trimming. Without explicit insert boundaries, existing grading and filenames are
+retained; derived shared flanks alone do not enable these separate grades.
+
+For reference-guided consensuses, the clone index and detailed QC table add:
+
+| Field | Meaning |
+| --- | --- |
+| `insert_grade` | `perfect` means exact, unambiguous insert DNA. `screenable` means differing DNA that passes insert identity, coverage, length and coding checks. Other calls are `mixed_variants`, `frameshift`, `premature_stop`, `truncated`, `mismatched`, `low_depth` or `not_evaluable`. |
+| `vector_status` | `perfect` means exact, unambiguous sequence outside the insert; `edited` means one or more differences or ambiguous bases; `not_evaluable` means unavailable sequence. |
+| `insert_coding_status` | `pass`, `fail` or `not_evaluable`. An exact DNA insert does not establish protein function; without a configured reference reading frame its coding status is not evaluable. |
+| `insert_edit_distance`, `vector_edit_distance` | Edit counts in each scope; vector includes both sequenced flanks. |
+| `insert_ambiguous_bases`, `vector_ambiguous_bases` | Ambiguous consensus bases in each scope. |
+
+FASTA names become `...__insert-perfect__vector-edited.fasta`. Both labels and
+insert coding status also appear in headers. `summary.json` adds `insert_grades`
+and `vector_statuses`; the HTML report presents both. Chimeric clones retain
+their existing scaffold-based grade and do not receive these separate labels. The existing `grade` column
+and `grades` summary remain whole-amplicon classifications for compatibility.
+Whole-ORF `reading_frame` and `internal_stops` remain separate: an edit to a
+boundary or tag can affect the ORF even if the bounded insert is perfect.
+
+When both query boundary motifs are intact and unique, alignments are pinned to
+them to prevent repetitive sequence from moving an edit across a boundary.
+Otherwise the global alignment projects the reference boundaries onto the query.
+An insertion immediately before the right intact motif belongs to the insert.
+Insert coding checks use the reference ORF phase, supplementing partial edge
+codons with reference bases; they describe the insert independently of backbone
+changes. Ambiguous inserts are conservatively `mixed_variants`, without assigning
+a biochemical cause. Neither a grade nor consensus depth proves sample purity.
+
+Vector status covers the **sequenced amplicon outside the insert**, not unsequenced
+plasmid regions or trimmed extraction anchors. For plate-specific backbone
+variants, supply separate reference libraries and route the appropriate plate
+with `plate_reference_map`. Keep original references and previous runs, record
+the intended change, and run again from raw reads after changes to pipeline code.
+
 ## Graded consensus output
 
 Every run writes a browsable copy of the consensuses to
@@ -415,3 +470,115 @@ do not edit old manifests to bypass the check. Configuration-tuning reruns still
 work with unchanged code when the inherited stage fingerprints match. This
 conservative policy invalidates reuse even for code changes unrelated to a
 particular stage; dependency/native-backend versions remain separately recorded.
+
+## Demux-only read export
+
+Use this when you want to inspect or analyse reads by barcode plate and well
+without reference assignment, consensus building, protein QC or pooling
+deconvolution. It runs only `01_ingest` and `02_demux`.
+
+```bash
+python -m nanopore3 validate --config my-run.yaml --demux-only --quick
+python -m nanopore3 run --config my-run.yaml --demux-only --run-id demux-preview
+```
+
+Alternatively set `workflow: demux_only` in YAML and omit both CLI flags. The
+default is `workflow: full`. The flag overrides YAML for that invocation and is
+recorded in `run.json`. It must also be supplied on `--resume` if your YAML still
+says `full`. Resume requires matching code, config and input checksums, and
+verifies the FASTQ exports. Switching workflow is a config change: choose a
+fresh run ID and run from FASTQ to perform a subsequent full analysis. The
+`rerun` command is for full analyses, not demux-only workflows.
+
+Minimal synthetic configuration (replace barcode sequences and filters with
+your experiment's values):
+
+```yaml
+schema_version: 1
+workflow: demux_only
+output_root: runs
+inputs:
+  - path: reads.fastq.gz
+    sample_id: sample1
+library:
+  minimum_read_length: 100
+  maximum_read_length: 10000
+  minimum_mean_quality: 10
+barcodes:
+  plate:
+    sequences:
+      P1: AAAACCCC
+    max_edits: 0
+    search_window: 30
+    search_ends: [head]
+    allow_reverse_complement: true
+  well:
+    sequences:
+      A1: ACGTACGT
+    max_edits: 0
+    search_window: 60
+    search_ends: [head]
+    allow_reverse_complement: false
+parallel:
+  jobs: 0
+```
+
+References and plate-to-reference mappings may be omitted. An existing full
+configuration also works; reference FASTAs and optional consensus executables
+are not required or opened in this mode. YAML schema and barcode validation
+still apply. Read-length and mean-quality gates remain active, including any
+preset defaults. Omit `barcodes.well` for plate-only output; no placeholder well
+FASTQs are then written. Without a plate panel, sample IDs provide the grouping.
+
+```text
+runs/demux-preview/
+  run.json
+  stages/
+    01_ingest/
+    02_demux/
+      report.html
+      summary.json
+      demux_calls.csv.gz
+      demuxed_reads.jsonl.gz
+      reads/
+        index.csv
+        by_plate/P1.fastq.gz
+        by_well/P1/A1.fastq.gz
+        unresolved_well/P1.fastq.gz
+```
+
+| Output | Contents |
+| --- | --- |
+| `by_plate` | Reads passing length/quality gates with an accepted plate call, including unresolved or conflicting well calls. |
+| `by_well` | Reads with accepted plate and well calls and consistent orientation. |
+| `unresolved_well` | The subset of plate reads whose well call was not accepted. Created only when needed. |
+| `index.csv` | Scope, original plate/well IDs, read count and FASTQ path relative to `reads/`. |
+| `demux_calls.csv.gz` | One row per input read, including rejected/ambiguous calls and filter reasons. |
+| `demuxed_reads.jsonl.gz` | Internal fully accepted-read stream; unresolved wells are excluded. |
+
+The plate and well/unresolved files are **overlapping views of the same reads**;
+do not combine them as independent inputs. Reads from multiple input files with
+the same barcode IDs are pooled in the same output file. FASTQ headers preserve
+the original read ID and add unique `read_uid` and `sample_id` provenance.
+Sequences and quality scores are retained in full, with reverse complementation
+and quality reversal when barcode orientation requires it. Primers/adapters are
+not trimmed and reference identity is not checked. Unassigned plate reads and
+reads failing length/quality filters remain accounted for in the call table but
+are not exported to plate/well FASTQ files.
+
+Only occupied bins produce FASTQs; a run with zero accepted reads still writes
+an index header, call table and report. File components that need sanitisation,
+case-collision protection or Windows reserved-name protection get a stable hash
+suffix; consult the index for exact paths. Exporting uses at most 32 open FASTQ
+handles and streams records rather than retaining all reads in memory. Files
+reopened after eviction use concatenated gzip members supported by standard gzip
+readers. Output files are checksummed stage artifacts and only published when the
+whole demux stage succeeds.
+
+In the **local notebook or Colab**, set `DEMUX_ONLY = True` in the configuration
+cell. References are removed from the generated config. The result cell displays
+the FASTQ index and the archive cell copies the demux outputs to durable storage.
+For **MCP**, pass `demux_only: true` to `start_validation` and `start_run`, or use
+YAML `workflow: demux_only`. Poll the job, then read `run_summary.outputs.demux_report`,
+`demux_fastq_index` and `demux_calls`. A completed demux-only run has exactly two
+stages; missing consensus and QC stages are intentional.

@@ -215,7 +215,8 @@ clone:
 
 | column | use |
 |---|---|
-| `grade` | `perfect`, `screenable`, `mixed_damage`, … |
+| `grade` | Legacy whole-amplicon grade: `perfect`, `screenable`, `mixed_damage`, … |
+| `insert_grade`, `vector_status` | Separate bounded-insert and sequenced-vector results when [explicit QC boundaries](configuration.md#separate-insert-and-vector-qc) are configured |
 | `culture_plate`, `well_id` | where to go back to on the bench |
 | `insert_identity`, `insert_edit_distance` | accuracy of the designed region alone |
 | `flank_5p_edit_distance`, `flank_3p_edit_distance` | errors in the constant sequence |
@@ -240,3 +241,12 @@ nanopore3 rerun --config tuned.yaml --from-run runs/<run-id> --from 04_consensus
 Stages before `--from` are carried into a new run; everything after is recomputed.
 A change that reaches back into an inherited stage is refused by name rather than
 silently built upon. See [Architecture](architecture.md#reruns-recomputing-the-analysis-without-the-fastq).
+
+## Inspect demultiplexed reads without making consensus
+
+Use `python -m nanopore3 run --config my-run.yaml --demux-only --run-id demux-preview`.
+Open `stages/02_demux/report.html` and `stages/02_demux/reads/index.csv` in that run.
+The index links plate and well FASTQ bins; references are optional. For a notebook
+or Colab, set `DEMUX_ONLY = True`. For MCP, pass `demux_only=True` to validation and
+run tools. See [demux-only export](configuration.md#demux-only-read-export) for
+filtering, orientation, unresolved wells and overlapping output views.

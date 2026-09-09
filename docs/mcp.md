@@ -140,13 +140,13 @@ submitted, CLI failures appear in its job state and logs.
 | `save_config` | New YAML file only; `path`, `yaml_text` ≤ 64 KiB; syntax check only |
 | `init_example` | Submit creation of a new packaged synthetic project; `directory` |
 | `start_subsample` | `input_path`, new `output_path`, `reads=100000`; validated prefix, atomic no-clobber publication, poll job status |
-| `start_validation` | `config_path`, `quick=true`; quick still hashes all FASTQ bytes |
-| `start_run` | `config_path`, `output_root="runs"`, optional `run_id`, `resume=false` |
+| `start_validation` | `config_path`, `quick=true`, `demux_only=false`; quick still hashes all FASTQ bytes |
+| `start_run` | `config_path`, `output_root="runs"`, optional `run_id`, `resume=false`, `demux_only=false` |
 | `start_rerun` | `config_path`, `from_run`, `from_stage="04_consensus"`, optional output/ID |
 | `list_jobs` | Recent job IDs and states, `limit` ≤ 100 |
 | `job_status` | `job_id`; state, exit code, run directory, stdout/stderr tails |
 | `cancel_job` | Terminate this server's job and descendants; completed stages remain |
-| `run_summary` | `run_dir`; stage markers, summaries, output paths and source-identity compatibility preview |
+| `run_summary` | `run_dir`; workflow, stage markers, summaries, output paths and source-identity compatibility preview |
 
 The server exposes **13 tools**. Resources: `nanopore3://guide`, `nanopore3://example-config`.
 Prompt: `analyse_run(config_path)`.
@@ -283,3 +283,87 @@ vary; see the [Colab FAQ](https://research.google.com/colaboratory/faq.html).
 The adapter does not change scientific settings automatically. The
 [repository assessment](repository-assessment.md) records current correctness,
 performance and portability limitations separately from MCP functionality.
+
+### Reading separate insert and vector results
+
+For a whole-vector assay, configure `qc.insert_left_boundary` and
+`qc.insert_right_boundary` in the YAML passed to `save_config`; see
+[the configuration guide](configuration.md#separate-insert-and-vector-qc).
+Read `outputs.clones` for `insert_grade`, `vector_status` and FASTA paths, and
+`outputs.clone_summary` for counts. Read `outputs.qc` for coding status and edit
+counts. Do not describe an insert-perfect/vector-edited clone as wholly perfect,
+or treat exact DNA as proof of protein function. Vector status excludes regions
+outside the sequenced amplicon. These fields are blank in runs without explicit
+insert boundaries, where the legacy whole-amplicon grade remains available.
+
+## Demultiplex without consensus
+
+Use the existing validation/run tools with `demux_only: true`; there is no
+separate demux server to install. Alternatively save YAML with
+`workflow: demux_only` and omit the flag on both tools. Reference libraries may
+be omitted; barcode panels and input reads are still required for barcode sorting.
+The CLI equivalent is `nanopore3 run --config my-run.yaml --demux-only`.
+
+After updating the checkout, install into the same Python environment that your
+AI host uses, then restart its MCP server:
+
+```sh
+python -m pip install -e ".[report,mcp]"
+```
+
+The server checks source identity; an already-running server must be restarted
+when package code changes. Call `workspace_info` and read `nanopore3://guide`
+after reconnecting. The input schemas for `start_validation` and `start_run`
+should now include `demux_only`.
+
+For a config at `my-run.yaml`, use these **tool calls** (JSON arguments, not shell
+commands). Wait for each submitted job to reach `succeeded` before the next step:
+
+```text
+start_validation {"config_path":"my-run.yaml","quick":true,"demux_only":true}
+job_status       {"job_id":"<validation job ID>"}
+start_run        {"config_path":"my-run.yaml","run_id":"demux-preview","demux_only":true}
+job_status       {"job_id":"<run job ID>"}
+run_summary      {"run_dir":"runs/demux-preview"}
+read_artifact    {"path":"runs/demux-preview/stages/02_demux/reads/index.csv"}
+```
+
+Poll `job_status` every few seconds; if it fails, report its error logs instead
+of treating output presence as completion. `run_summary.workflow` is
+`demux_only`, and a completed run has exactly `01_ingest` and `02_demux`.
+There are no reference-assignment, consensus, protein-QC or culture-deconvolution
+results. Read-length and mean-quality filters still apply.
+
+| `run_summary.outputs` key | What the AI should inspect |
+|---|---|
+| `demux_fastq_index` | CSV of `scope`, `plate_id`, `well_id`, `reads`, `file`; FASTQ paths are relative to the index's directory |
+| `demux_report` | HTML demux report |
+| `demux_calls` | Gzipped call table, including failed/ambiguous calls and filter reasons |
+| `provenance` | Configuration, input checksums, resource plan and source identity |
+
+An index row with `file=by_well/P1/A1.fastq.gz` resolves to
+`runs/demux-preview/stages/02_demux/reads/by_well/P1/A1.fastq.gz`. Preview it with:
+
+```text
+read_artifact {"path":"runs/demux-preview/stages/02_demux/reads/by_well/P1/A1.fastq.gz","max_chars":2000}
+```
+
+Use the paths actually returned by the index: identifiers may need filename
+sanitisation and unoccupied bins have no FASTQ. `read_artifact` transparently
+reads gzip text but returns a bounded preview; use the index's counts rather
+than counting records in a truncated preview. All paths refer to the **server's
+workspace**, not the AI host's filesystem.
+
+Plate files include unresolved wells and **overlap** with well/unresolved files.
+Never sum or concatenate all scopes as independent reads. To browse an entire
+plate use its `plate` row; to browse one well use its `well` row. Report
+`unresolved_well` counts separately. These are full oriented reads, not consensus
+sequences; original IDs, sample IDs and unique read IDs remain in the headers.
+Omit the well panel for plate-only output. See the
+[configuration guide](configuration.md#demux-only-read-export) for filtering,
+orientation and storage details.
+
+To resume an interrupted demux run, use the same config/source/input and
+`start_run(..., run_id="demux-preview", resume=True, demux_only=True)`. Do not
+switch an existing demux run to full analysis with `resume`; choose a new run ID
+and provide the reference configuration for a fresh full run from FASTQ.

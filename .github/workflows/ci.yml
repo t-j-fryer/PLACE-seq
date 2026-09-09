@@ -54,13 +54,13 @@ jobs:
           python -m ruff check src scripts tests
 
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        run: python -m pytest -q
 
       - name: Install and test optional MCP adapter
         run: |
           python -m pip install -e ".[mcp]"
           python -m pip check
-          python -m unittest discover -s tests -p test_mcp.py -v
+          python -m pytest tests/test_mcp.py -q
 
       - name: Compile package
         run: python -m compileall -q src

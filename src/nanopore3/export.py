@@ -217,7 +217,9 @@ def write_consensus_tree(
             directory.mkdir(parents=True, exist_ok=True)
             marker = "chimera__" if row.get("status") == "chimera" else ""
             prefix = f"{plate}_{culture}_{well}" if culture else f"{plate}_{well}"
-            stem = f"{prefix}__{marker}{safe_name(design)}__{grade}"
+            label = (f"insert-{qc['insert_grade']}__vector-{qc['vector_status']}"
+                     if qc.get("insert_grade") and qc.get("vector_status") else grade)
+            stem = f"{prefix}__{marker}{safe_name(design)}__{label}"
             path = directory / f"{stem}.fasta"
             if path in used_paths:  # distinct designs that shorten alike
                 path = directory / f"{stem}__{consensus_id[-8:]}.fasta"
@@ -229,6 +231,12 @@ def write_consensus_tree(
                 f"library={row['reference_library_id']} plate={row['plate_id']} "
                 f"well={row['well_id']}"
             )
+            if qc.get("insert_grade"):
+                header += (
+                    f" insert_grade={qc['insert_grade']}"
+                    f" vector_status={qc.get('vector_status', 'not_evaluable')}"
+                    f" insert_coding_status={qc.get('insert_coding_status', 'not_evaluable')}"
+                )
             if row.get("culture_plate"):
                 header += f" culture_plate={row['culture_plate']}"
             header += (
@@ -256,6 +264,10 @@ def write_consensus_tree(
         index_rows.append(
             {
                 "grade": grade,
+                **{name: qc.get(name, "") for name in (
+                    "insert_grade", "vector_status", "vector_edit_distance",
+                    "insert_ambiguous_bases", "vector_ambiguous_bases",
+                    "insert_query_length", "insert_coding_status")},
                 "kind": "chimera" if row.get("status") == "chimera" else "consensus",
                 "plate_id": row["plate_id"],
                 "well_id": row["well_id"],
@@ -300,6 +312,10 @@ def write_consensus_tree(
             for plate, counts in sorted(per_plate.items())
         },
         "descriptions": {g: GRADE_DESCRIPTIONS[g] for g in GRADES if totals[g]},
+        "insert_grades": dict(Counter(
+            row["insert_grade"] for row in index_rows if row["insert_grade"])),
+        "vector_statuses": dict(Counter(
+            row["vector_status"] for row in index_rows if row["vector_status"])),
         "files_written": sum(1 for row in index_rows if row["file"]),
         "consensuses": len(index_rows),
     }

@@ -28,6 +28,18 @@ terminal state. Quick validation still hashes the entire FASTQ. Validation is
 not a scientific validation of the assay or thresholds. start_run also returns a
 job_id immediately; poll it, then use run_summary and read_artifact on outputs.
 A successful submission is not a successful run. Report failure logs honestly.
+For barcode-only FASTQ export use demux_only=True on start_validation and start_run,
+or workflow: demux_only in YAML. References are optional. Only ingest and demux run.
+outputs.demux_fastq_index lists plate/well FASTQ files and counts. Plate files include
+unresolved wells; well files contain only accepted plate+well calls. Views overlap,
+so do not concatenate plate and well exports together. These are full, oriented reads,
+not consensus sequences or reference-assigned/culture-deconvolved reads.
+For whole-vector assays, qc.insert_left_boundary and qc.insert_right_boundary
+exclude the boundary motifs from the insert. Read insert_grade/vector_status in
+outputs.clones and counts in outputs.clone_summary. Vector status covers only the
+sequenced backbone. Read insert_coding_status and whole-ORF QC separately; exact
+DNA does not establish protein function. Without explicit boundaries the legacy
+whole-amplicon grade remains available.
 Use start_rerun to recompute from an existing run with inherited checksums verified.
 Resume/rerun requires the same installed source identity. Older runs without it,
 or runs made with changed code, remain readable but need a new run from raw inputs.
@@ -214,15 +226,20 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
         return source
 
     @server.tool(annotations=creates)
-    def start_validation(config_path: str, quick: bool = True) -> dict[str, Any]:
+    def start_validation(
+        config_path: str, quick: bool = True, demux_only: bool = False,
+    ) -> dict[str, Any]:
         """Submit preflight; poll job_status for its JSON result and error logs.
 
         quick=True skips record counting but still hashes every input byte.
         Creates job logs; does not create a pipeline run or modify inputs.
+        demux_only=True validates only demultiplexing; reference files are not required.
         """
         arguments = ["validate", "--config", str(config_file(config_path))]
         if quick:
             arguments.append("--quick")
+        if demux_only:
+            arguments.append("--demux-only")
         return jobs.start(arguments)
 
     def destination(output_root: str, run_id: str | None) -> tuple[Path, str, Path]:
@@ -233,7 +250,7 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
     @server.tool(annotations=creates)
     def start_run(
         config_path: str, output_root: str = "runs", run_id: str | None = None,
-        resume: bool = False,
+        resume: bool = False, demux_only: bool = False,
     ) -> dict[str, Any]:
         """Submit a pipeline run and return immediately with a pollable job_id.
 
@@ -241,6 +258,7 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
         are generated unless supplied. Resume needs an explicit existing run_id
         and identical source identity/configuration/input evidence; it verifies
         completed stages. Older or changed-code runs need a fresh run.
+        demux_only=True stops after demux and exports plate/well FASTQ without references.
         """
         source = config_file(config_path)
         if resume and run_id is None:
@@ -253,6 +271,8 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
         arguments = ["run", "--config", str(source), "--output", str(root), "--run-id", name]
         if resume:
             arguments.append("--resume")
+        if demux_only:
+            arguments.append("--demux-only")
         return jobs.start(arguments, run_dir=target)
 
     @server.tool(annotations=creates)
@@ -341,6 +361,7 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
             stages.append(entry)
         return {
             "run_dir": scope.relative(root), "stages": stages,
+            "workflow": metadata.get("config", {}).get("workflow", "full") if metadata else None,
             "checksums_verified": False,
             "analysis_implementation": recorded,
             "implementation_matches_current": (
@@ -349,8 +370,12 @@ def create_server(workspace: Path, *, max_jobs: int = 1, port: int = 8000):
             "provenance_preview_truncated": metadata is None,
             "outputs": {name: scope.relative(path) for name, relative in (
                 ("provenance", "run.json"),
+                ("demux_report", "stages/02_demux/report.html"),
+                ("demux_fastq_index", "stages/02_demux/reads/index.csv"),
+                ("demux_calls", "stages/02_demux/demux_calls.csv.gz"),
                 ("report", "stages/06_report/report.html"),
                 ("clones", "consensus_by_plate/index.csv"),
+                ("clone_summary", "consensus_by_plate/summary.json"),
                 ("qc", "stages/05_qc/qc.csv.gz"),
             ) if (path := scope.path(root / relative)).is_file()},
         }

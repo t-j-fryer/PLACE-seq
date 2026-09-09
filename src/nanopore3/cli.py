@@ -41,6 +41,8 @@ def _parser() -> argparse.ArgumentParser:
         "validate", help="validate configuration, inputs and references"
     )
     validate.add_argument("--config", type=Path, required=True)
+    validate.add_argument("--demux-only", action="store_true",
+                          help="validate demultiplexing without requiring references")
     validate.add_argument("--quick", action="store_true", help="do not scan every FASTQ record")
     validate.add_argument(
         "--quiet", action="store_true", help="suppress preflight progress"
@@ -54,6 +56,8 @@ def _parser() -> argparse.ArgumentParser:
         "installed source identity; legacy or changed-code runs need a fresh run.",
     )
     run.add_argument("--config", type=Path, required=True)
+    run.add_argument("--demux-only", action="store_true",
+                     help="stop after demultiplexing; export plate/well FASTQ without references")
     run.add_argument("--output", type=Path, help="override the configured run root")
     run.add_argument("--run-id", help="portable directory name for this run")
     run.add_argument("--resume", action="store_true",
@@ -250,6 +254,12 @@ def _report_outputs(path: Path) -> None:
     """Name the three things a person actually opens after a run."""
 
     print(f"Completed run: {path}")
+    if (path / "stages/02_demux/report.html").is_file():
+        print("  Demux only: reference assignment, consensus and QC were not run.")
+        print(f"  report:  {path / 'stages/02_demux/report.html'}")
+        print(f"  FASTQ:   {path / 'stages/02_demux/reads'}")
+        print(f"  index:   {path / 'stages/02_demux/reads/index.csv'}")
+        return
     print(f"  report:  {path / 'stages' / '06_report' / 'report.html'}")
     tree = path / "consensus_by_plate"
     if tree.is_dir():
@@ -267,6 +277,9 @@ def _rerun(
     verify: bool,
 ) -> Path:
     """Carry a finished run's earlier stages forward and recompute the rest."""
+
+    if config.workflow == "demux_only":
+        raise PipelineError("demux-only workflows use `run`, not `rerun`; use --resume to recover")
 
     from datetime import datetime, timezone
 
@@ -388,12 +401,12 @@ def main(argv: list[str] | None = None) -> int:
             _print_doctor(args.json)
         elif args.command == "validate":
             _configure_progress(args.quiet)
-            config = load_config(args.config)
+            config = load_config(args.config, demux_only=args.demux_only)
             result = validate_inputs(config, scan_fastq=not args.quick)
             print(json.dumps(result, indent=2, sort_keys=True))
         elif args.command == "run":
             _configure_progress(args.quiet)
-            config = load_config(args.config)
+            config = load_config(args.config, demux_only=args.demux_only)
             path = run_pipeline(
                 config,
                 output_root=args.output,
